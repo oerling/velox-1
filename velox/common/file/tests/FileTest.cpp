@@ -309,6 +309,28 @@ TEST_P(LocalFileTest, readFileDestructor) {
   }
 }
 
+TEST_P(LocalFileTest, mkdirFailIfPresent) {
+  auto tempFolder = exec::test::TempDirectoryPath::create(useFaultyFs_);
+  std::string path = tempFolder->getPath();
+  auto localFs = filesystems::getFileSystem(path, nullptr);
+
+  path += "/level1/level2/level3";
+  EXPECT_FALSE(localFs->exists(path));
+  EXPECT_NO_THROW(localFs->mkdir(path));
+  EXPECT_TRUE(localFs->exists(path));
+
+  // Except that if we try to make the directory again,
+  // it will not fail.
+  EXPECT_NO_THROW(localFs->mkdir(path));
+
+  // We fail if the directory is already present
+  DirectoryOptions options;
+  options.failIfExists = true;
+  VELOX_ASSERT_THROW(
+      localFs->mkdir(path, options),
+      fmt::format("Directory: {} already exists", localFs->extractPath(path)));
+}
+
 TEST_P(LocalFileTest, mkdir) {
   auto tempFolder = exec::test::TempDirectoryPath::create(useFaultyFs_);
 
@@ -654,7 +676,7 @@ TEST_F(FaultyFsTest, fileReadFaultHookInjection) {
 
 TEST_F(FaultyFsTest, fileWriteErrorInjection) {
   // Set write error.
-  fs_->setFileInjectionError(fileError_, {FaultFileOperation::Type::kWrite});
+  fs_->setFileInjectionError(fileError_, {FaultFileOperation::Type::kAppend});
   {
     auto writeFile = fs_->openFileForWrite(writeFilePath_, {});
     VELOX_ASSERT_THROW(writeFile->append("hello"), "InjectedFaultFileError");
@@ -672,7 +694,7 @@ TEST_F(FaultyFsTest, fileWriteErrorInjection) {
 TEST_F(FaultyFsTest, fileWriteDelayInjection) {
   // Set 2 seconds delay.
   const uint64_t injectDelay{2'000'000};
-  fs_->setFileInjectionDelay(injectDelay, {FaultFileOperation::Type::kWrite});
+  fs_->setFileInjectionDelay(injectDelay, {FaultFileOperation::Type::kAppend});
   {
     auto writeFile = fs_->openFileForWrite(writeFilePath_, {});
     uint64_t readDurationUs{0};
@@ -691,14 +713,14 @@ TEST_F(FaultyFsTest, fileWriteFaultHookInjection) {
   // Set to write fake data.
   fs_->setFileInjectionHook([&](FaultFileOperation* op) {
     // Only inject for write.
-    if (op->type != FaultFileOperation::Type::kWrite) {
+    if (op->type != FaultFileOperation::Type::kAppend) {
       return;
     }
     // Only inject for path2.
     if (op->path != path2) {
       return;
     }
-    auto* writeOp = static_cast<FaultFileWriteOperation*>(op);
+    auto* writeOp = static_cast<FaultFileAppendOperation*>(op);
     *writeOp->data = "Error data";
   });
   {
@@ -725,14 +747,14 @@ TEST_F(FaultyFsTest, fileWriteFaultHookInjection) {
   // Set to not delegate.
   fs_->setFileInjectionHook([&](FaultFileOperation* op) {
     // Only inject for write.
-    if (op->type != FaultFileOperation::Type::kWrite) {
+    if (op->type != FaultFileOperation::Type::kAppend) {
       return;
     }
     // Only inject for path2.
     if (op->path != path2) {
       return;
     }
-    auto* writeOp = static_cast<FaultFileWriteOperation*>(op);
+    auto* writeOp = static_cast<FaultFileAppendOperation*>(op);
     writeOp->delegate = false;
   });
   {

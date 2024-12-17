@@ -21,10 +21,6 @@ if(NOT DEFINED CMAKE_NVCC_FLAGS)
     set(CMAKE_NVCC_FLAGS
         "$ENV{NVCCFLAGS}"
         CACHE STRING "NVCC flags")
-  else()
-    set(CMAKE_NVCC_FLAGS
-        "-gencode;arch=compute_60,code=sm_60;-gencode;arch=compute_70,code=sm_70;-gencode;arch=compute_80,code=sm_80;-gencode;arch=compute_90,code=sm_90"
-        CACHE STRING "NVCC flags")
   endif()
 endif()
 if(BREEZE_BUILD_TYPE MATCHES Debug)
@@ -54,7 +50,7 @@ endif()
 # use PTX specialization by default for CUDA
 if(NOT DEFINED CUDA_PLATFORM_SPECIALIZATION_HEADER)
   set(CUDA_PLATFORM_SPECIALIZATION_HEADER
-      platforms/specialization/cuda-ptx.cuh
+      breeze/platforms/specialization/cuda-ptx.cuh
       CACHE STRING "CUDA platform specialization header")
 endif()
 
@@ -87,8 +83,8 @@ function(breeze_add_cuda_test target source)
     "FLAGS;LIBS;DEPENDS"
     ${ARGN})
   list(APPEND arg_FLAGS -I${gtest_SOURCE_DIR}/googletest/include)
-  list(APPEND arg_FLAGS -I${CMAKE_SOURCE_DIR}/test)
-  list(APPEND arg_FLAGS -I${CMAKE_CURRENT_BINARY_DIR})
+  list(APPEND arg_FLAGS -I${CMAKE_SOURCE_DIR})
+  list(APPEND arg_FLAGS -I${CMAKE_BINARY_DIR})
   breeze_add_cuda_object(
     ${target}
     ${source}
@@ -100,9 +96,9 @@ function(breeze_add_cuda_test target source)
     OUTPUT ${target}
     COMMAND
       ${NVCC_EXECUTABLE} -o ${target} ${target}.o ${arg_LIBS}
-      $<TARGET_FILE_DIR:gtest>/libgtest.a
+      $<TARGET_FILE_DIR:GTest::gtest>/libgtest.a
       $<TARGET_FILE_DIR:test_main>/libtest_main.a
-      $<$<BOOL:BUILD_TRACING>:$<TARGET_FILE_DIR:perfetto>/libperfetto.a>
+      $<$<BOOL:${BUILD_TRACING}>:$<TARGET_FILE_DIR:perfetto>/libperfetto.a>
       ${ARCH_LINK_FLAGS}
     DEPENDS ${target}.o test_main
     COMMENT "Linking CUDA executable ${target}")
@@ -111,8 +107,6 @@ function(breeze_add_cuda_test target source)
                PROPERTY IMPORTED_LOCATION ${CMAKE_CURRENT_BINARY_DIR}/${target})
   gtest_discover_tests(${target}_TESTS TEST_PREFIX cuda: DISCOVERY_MODE
                                                          PRE_TEST)
-  install(PROGRAMS ${CMAKE_CURRENT_BINARY_DIR}/${target}
-          DESTINATION ${CMAKE_INSTALL_BINDIR})
   if(DEFINED CUDA_EXPECTED_RESOURCE_USAGE_DIR)
     if(EXISTS "${CUDA_EXPECTED_RESOURCE_USAGE_DIR}/${target}-expected.txt")
       set(GET_RESOURCE_USAGE_CMDLINE

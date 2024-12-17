@@ -29,10 +29,9 @@ function(breeze_add_hip_test target source)
     OUTPUT ${target}.o
     COMMAND
       ${HIPCC_EXECUTABLE} ${HIP_HIPCC_FLAGS} ${NDEBUG_DEFINE} -DPLATFORM_HIP
-      -I${CMAKE_SOURCE_DIR} -I${CMAKE_SOURCE_DIR}/test
-      -I${gtest_SOURCE_DIR}/googletest/include -I${CMAKE_CURRENT_BINARY_DIR}
-      ${CMAKE_CXX_FLAGS} ${COMPILER_WARN_FLAGS} ${OPT_FLAGS} -std=c++17 -c
-      ${source} -MD -MF ${target}.o.d -o ${target}.o
+      -I${CMAKE_SOURCE_DIR} -I${gtest_SOURCE_DIR}/googletest/include
+      -I${CMAKE_BINARY_DIR} ${CMAKE_CXX_FLAGS} ${COMPILER_WARN_FLAGS}
+      ${OPT_FLAGS} -std=c++17 -c ${source} -MD -MF ${target}.o.d -o ${target}.o
     DEPFILE ${target}.o.d
     DEPENDS ${arg_DEPENDS}
     COMMENT "Building HIP object ${target}.o")
@@ -40,9 +39,9 @@ function(breeze_add_hip_test target source)
     OUTPUT ${target}
     COMMAND
       ${HIPCC_EXECUTABLE} -o ${target} ${target}.o
-      $<TARGET_FILE_DIR:gtest>/libgtest.a
+      $<TARGET_FILE_DIR:GTest::gtest>/libgtest.a
       $<TARGET_FILE_DIR:test_main>/libtest_main.a
-      $<$<BOOL:BUILD_TRACING>:$<TARGET_FILE_DIR:perfetto>/libperfetto.a>
+      $<$<BOOL:${BUILD_TRACING}>:$<TARGET_FILE_DIR:perfetto>/libperfetto.a>
       ${ARCH_LINK_FLAGS}
     DEPENDS ${target}.o test_main
     COMMENT "Linking HIP executable ${target}")
@@ -50,6 +49,4 @@ function(breeze_add_hip_test target source)
   set_property(TARGET ${target}_TESTS
                PROPERTY IMPORTED_LOCATION ${CMAKE_CURRENT_BINARY_DIR}/${target})
   gtest_discover_tests(${target}_TESTS TEST_PREFIX hip: DISCOVERY_MODE PRE_TEST)
-  install(PROGRAMS ${CMAKE_CURRENT_BINARY_DIR}/${target}
-          DESTINATION ${CMAKE_INSTALL_BINDIR})
 endfunction()

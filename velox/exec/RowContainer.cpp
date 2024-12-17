@@ -283,6 +283,7 @@ RowContainer::RowContainer(
       ++nullOffsetsPos;
     }
   }
+  rowColumnsStats_.resize(types_.size());
 }
 
 RowContainer::~RowContainer() {
@@ -344,6 +345,7 @@ void RowContainer::eraseRows(folly::Range<char**> rows) {
     firstFreeRow_ = row;
   }
   numFreeRows_ += rows.size();
+  invalidateColumnStats();
 }
 
 int32_t RowContainer::findRows(folly::Range<char**> rows, char** result) const {
@@ -424,33 +426,6 @@ void RowContainer::freeVariableWidthFields(folly::Range<char**> rows) {
   }
 }
 
-void RowContainer::checkConsistency() const {
-  constexpr int32_t kBatch = 1000;
-  std::vector<char*> rows(kBatch);
-
-  RowContainerIterator iter;
-  int64_t allocatedRows = 0;
-  for (;;) {
-    int64_t numRows = listRows(&iter, kBatch, rows.data());
-    if (!numRows) {
-      break;
-    }
-    for (auto i = 0; i < numRows; ++i) {
-      auto row = rows[i];
-      VELOX_CHECK(!bits::isBitSet(row, freeFlagOffset_));
-      ++allocatedRows;
-    }
-  }
-
-  size_t numFree = 0;
-  for (auto free = firstFreeRow_; free; free = nextFree(free)) {
-    ++numFree;
-    VELOX_CHECK(bits::isBitSet(free, freeFlagOffset_));
-  }
-  VELOX_CHECK_EQ(numFree, numFreeRows_);
-  VELOX_CHECK_EQ(allocatedRows, numRows_);
-}
-
 void RowContainer::freeAggregates(folly::Range<char**> rows) {
   for (auto& accumulator : accumulators_) {
     accumulator.destroy(rows);
@@ -491,37 +466,92 @@ void RowContainer::freeRowsExtraMemory(
   numRows_ -= rows.size();
 }
 
+void RowContainer::invalidateColumnStats() {
+  if (rowColumnsStats_.empty()) {
+    return;
+  }
+  rowColumnsStats_.clear();
+}
+
+// static
+RowColumn::Stats RowColumn::Stats::merge(
+    const std::vector<RowColumn::Stats>& statsList) {
+  RowColumn::Stats mergedStats;
+  for (const auto& stats : statsList) {
+    if (mergedStats.numCells() == 0) {
+      mergedStats.minBytes_ = stats.minBytes_;
+      mergedStats.maxBytes_ = stats.maxBytes_;
+    } else {
+      mergedStats.minBytes_ = std::min(mergedStats.minBytes_, stats.minBytes_);
+      mergedStats.maxBytes_ = std::max(mergedStats.maxBytes_, stats.maxBytes_);
+    }
+    mergedStats.nullCount_ += stats.nullCount_;
+    mergedStats.nonNullCount_ += stats.nonNullCount_;
+    mergedStats.sumBytes_ += stats.sumBytes_;
+  }
+  return mergedStats;
+}
+
+std::optional<RowColumn::Stats> RowContainer::columnStats(
+    int32_t columnIndex) const {
+  if (rowColumnsStats_.empty()) {
+    return std::nullopt;
+  }
+  return rowColumnsStats_[columnIndex];
+}
+
+void RowContainer::updateColumnStats(
+    const DecodedVector& decoded,
+    vector_size_t rowIndex,
+    char* row,
+    int32_t columnIndex) {
+  if (rowColumnsStats_.empty()) {
+    // Column stats have been invalidated.
+    return;
+  }
+
+  auto& columnStats = rowColumnsStats_[columnIndex];
+  if (decoded.isNullAt(rowIndex)) {
+    columnStats.addNullCell();
+  } else if (types_[columnIndex]->isFixedWidth()) {
+    columnStats.addCellSize(fixedSizeAt(columnIndex));
+  } else {
+    columnStats.addCellSize(variableSizeAt(row, columnIndex));
+  }
+}
+
 void RowContainer::store(
     const DecodedVector& decoded,
-    vector_size_t index,
+    vector_size_t rowIndex,
     char* row,
-    int32_t column) {
+    int32_t columnIndex) {
   auto numKeys = keyTypes_.size();
-  bool isKey = column < numKeys;
+  bool isKey = columnIndex < numKeys;
   if (isKey && !nullableKeys_) {
     VELOX_DYNAMIC_TYPE_DISPATCH(
         storeNoNulls,
-        typeKinds_[column],
+        typeKinds_[columnIndex],
         decoded,
-        index,
+        rowIndex,
         isKey,
         row,
-        offsets_[column]);
+        offsets_[columnIndex]);
   } else {
     VELOX_DCHECK(isKey || accumulators_.empty());
-    auto rowColumn = rowColumns_[column];
+    auto rowColumn = rowColumns_[columnIndex];
     VELOX_DYNAMIC_TYPE_DISPATCH_ALL(
         storeWithNulls,
-        typeKinds_[column],
+        typeKinds_[columnIndex],
         decoded,
-        index,
+        rowIndex,
         isKey,
         row,
         rowColumn.offset(),
         rowColumn.nullByte(),
         rowColumn.nullMask(),
-        column);
+        columnIndex);
   }
+  updateColumnStats(decoded, rowIndex, row, columnIndex);
 }
 
 void RowContainer::store(
@@ -537,7 +567,8 @@ void RowContainer::store(
         decoded,
         rows,
         isKey,
-        offsets_[column]);
+        offsets_[column],
+        column);
   } else {
     const auto rowColumn = rowColumns_[column];
     VELOX_DYNAMIC_TYPE_DISPATCH_ALL(

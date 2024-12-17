@@ -558,17 +558,29 @@ void configureReaderOptions(
   auto sessionProperties = connectorQueryCtx->sessionProperties();
   readerOptions.setLoadQuantum(hiveConfig->loadQuantum());
   readerOptions.setMaxCoalesceBytes(hiveConfig->maxCoalescedBytes());
-  readerOptions.setMaxCoalesceDistance(hiveConfig->maxCoalescedDistanceBytes());
+  readerOptions.setMaxCoalesceDistance(
+      hiveConfig->maxCoalescedDistanceBytes(sessionProperties));
   readerOptions.setFileColumnNamesReadAsLowerCase(
       hiveConfig->isFileColumnNamesReadAsLowerCase(sessionProperties));
+  bool useColumnNamesForColumnMapping = false;
+  switch (hiveSplit->fileFormat) {
+    case dwio::common::FileFormat::DWRF:
+    case dwio::common::FileFormat::ORC: {
+      useColumnNamesForColumnMapping =
+          hiveConfig->isOrcUseColumnNames(sessionProperties);
+      break;
+    }
+    case dwio::common::FileFormat::PARQUET: {
+      useColumnNamesForColumnMapping =
+          hiveConfig->isParquetUseColumnNames(sessionProperties);
+      break;
+    }
+    default:
+      useColumnNamesForColumnMapping = false;
+  }
+
   readerOptions.setUseColumnNamesForColumnMapping(
-      (hiveSplit->fileFormat == dwio::common::FileFormat::DWRF ||
-       hiveSplit->fileFormat == dwio::common::FileFormat::ORC)
-          ? hiveConfig->isOrcUseColumnNames(sessionProperties)
-          : (hiveSplit->fileFormat == dwio::common::FileFormat::PARQUET)
-          ? hiveConfig->isParquetUseColumnNames(sessionProperties)
-          : false // or some default value if none of the conditions are met
-  );
+      useColumnNamesForColumnMapping);
   readerOptions.setFileSchema(fileSchema);
   readerOptions.setFooterEstimatedSize(hiveConfig->footerEstimatedSize());
   readerOptions.setFilePreloadThreshold(hiveConfig->filePreloadThreshold());
@@ -652,6 +664,13 @@ bool applyPartitionFilter(
     }
     case TypeKind::BOOLEAN: {
       return applyFilter(*filter, folly::to<bool>(partitionValue));
+    }
+    case TypeKind::TIMESTAMP: {
+      auto result = util::fromTimestampString(
+          StringView(partitionValue), util::TimestampParseMode::kPrestoCast);
+      VELOX_CHECK(!result.hasError());
+      result.value().toGMT(Timestamp::defaultTimezone());
+      return applyFilter(*filter, result.value());
     }
     case TypeKind::VARCHAR: {
       return applyFilter(*filter, partitionValue);
@@ -887,16 +906,15 @@ core::TypedExprPtr extractFiltersFromRemainingFilter(
 namespace {
 
 #ifdef VELOX_ENABLE_PARQUET
-std::optional<TimestampUnit> getTimestampUnit(
+std::optional<TimestampPrecision> getTimestampUnit(
     const config::ConfigBase& config,
     const char* configKey) {
   if (const auto unit = config.get<uint8_t>(configKey)) {
     VELOX_CHECK(
-        unit == 0 /*second*/ || unit == 3 /*milli*/ || unit == 6 /*micro*/ ||
-            unit == 9 /*nano*/,
+        unit == 3 /*milli*/ || unit == 6 /*micro*/ || unit == 9 /*nano*/,
         "Invalid timestamp unit: {}",
         unit.value());
-    return std::optional(static_cast<TimestampUnit>(unit.value()));
+    return std::optional(static_cast<TimestampPrecision>(unit.value()));
   }
   return std::nullopt;
 }

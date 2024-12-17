@@ -50,7 +50,7 @@ target_link_libraries(
   velox_exception
   velox_common_base
   velox_exec
-  CUDA::nvrtc)
+  CUDA::cudart)
 
 if(${VELOX_BUILD_TESTING})
   add_subdirectory(tests)

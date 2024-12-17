@@ -14,9 +14,16 @@
  * limitations under the License.
  */
 
-// Copyright (c) 2024 by Rivos Inc.
-// Licensed under the Apache License, Version 2.0, see LICENSE for details.
-// SPDX-License-Identifier: Apache-2.0
+/*
+ * Copyright (c) 2024 by Rivos Inc.
+ * Licensed under the Apache License, Version 2.0, see LICENSE for details.
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/*
+ * This file is auto-generated from test_fixture_generator.py
+ * DO NOT EDIT!
+ */
 
 #include <gtest/gtest.h>
 #include <omp.h>
@@ -156,17 +163,20 @@ class FunctionTest : public ::testing::Test {
         in.data(), out.data(), in.size());
   }
 
-  template <int BLOCK_THREADS, int ITEMS_PER_THREAD, int RADIX_BITS>
-  void BlockRadixSort(const std::vector<T>& in, std::vector<T>& out) {
+  template <int BLOCK_THREADS, int ITEMS_PER_THREAD, int RADIX_BITS, typename U>
+  void BlockRadixSort(const std::vector<T>& keys_in,
+                      const std::vector<U>& values_in, std::vector<T>& keys_out,
+                      std::vector<U>& values_out) {
     using PlatformT =
         OpenMPPlatform<BLOCK_THREADS, /*WARP_THREADS=*/BLOCK_THREADS>;
     using SharedMemType =
         typename breeze::functions::BlockRadixSort<PlatformT, ITEMS_PER_THREAD,
-                                                   RADIX_BITS, T>::Scratch;
+                                                   RADIX_BITS, T, U>::Scratch;
     OpenMPTestLaunch<BLOCK_THREADS, SharedMemType>(
         /*num_blocks=*/1,
         &kernels::BlockRadixSort<BLOCK_THREADS, ITEMS_PER_THREAD, RADIX_BITS, T,
-                                 SharedMemType>,
-        in.data(), out.data(), in.size());
+                                 U, SharedMemType>,
+        keys_in.data(), values_in.data(), keys_out.data(), values_out.data(),
+        keys_in.size());
   }
 };

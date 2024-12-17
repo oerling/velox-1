@@ -20,10 +20,11 @@
 #include "velox/vector/fuzzer/VectorFuzzer.h"
 #include "velox/vector/tests/utils/VectorTestBase.h"
 
+using namespace facebook;
 using namespace facebook::velox;
 
 class UnsafeRowSerializerTest : public ::testing::Test,
-                                public test::VectorTestBase,
+                                public velox::test::VectorTestBase,
                                 public testing::WithParamInterface<bool> {
  protected:
   static void SetUpTestCase() {
@@ -300,20 +301,17 @@ TEST_P(UnsafeRowSerializerTest, incompleteRow) {
   // Cut in the middle of the row.
   buffers = {{rawData, 10}};
   VELOX_ASSERT_RUNTIME_THROW(
-      testDeserialize(buffers, expected),
-      "Unable to read full serialized UnsafeRow");
+      testDeserialize(buffers, expected), "Unable to read full serialized row");
 
   // Still incomplete row.
   buffers = {{rawData, 10}, {rawData, 5}};
   VELOX_ASSERT_RUNTIME_THROW(
-      testDeserialize(buffers, expected),
-      "Unable to read full serialized UnsafeRow");
+      testDeserialize(buffers, expected), "Unable to read full serialized row");
 
   // Cut right after the row size.
   buffers = {{rawData, 4}};
   VELOX_ASSERT_RUNTIME_THROW(
-      testDeserialize(buffers, expected),
-      "Unable to read full serialized UnsafeRow");
+      testDeserialize(buffers, expected), "Unable to read full serialized row");
 
   // Cut in the middle of the `size` integer.
   buffers = {{rawData, 2}};

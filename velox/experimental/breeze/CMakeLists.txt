@@ -39,6 +39,7 @@ option(BUILD_OPENCL "Build OpenCL tests." OFF)
 option(BUILD_OPENMP "Build OpenMP tests." OFF)
 option(BUILD_METAL "Build Metal tests." OFF)
 option(BUILD_TRACING "Build tracing." ON)
+option(BUILD_GENERATE_TEST_FIXTURES "Generate test fixtures at build time." ON)
 
 if(NOT DEFINED PERFTEST_EXT_TYPES)
   set(PERFTEST_EXT_TYPES
@@ -77,6 +78,11 @@ if(CMAKE_BUILD_TYPE MATCHES Asan)
   set(OPT_FLAGS "-O1;-g")
   set(SANITIZE_COMPILE_FLAGS "-fsanitize=address;-fno-omit-frame-pointer")
   set(SANITIZE_LINK_FLAGS "-fsanitize=address;-fno-omit-frame-pointer")
+endif()
+if(CMAKE_BUILD_TYPE MATCHES Ubsan)
+  set(OPT_FLAGS "-O1;-g")
+  set(SANITIZE_COMPILE_FLAGS "-fsanitize=undefined;-fno-omit-frame-pointer")
+  set(SANITIZE_LINK_FLAGS "-fsanitize=undefined;-fno-omit-frame-pointer")
 endif()
 
 set(WARN_FLAGS "-Wall;-Wextra;-Werror")
@@ -120,7 +126,7 @@ endif()
 
 if(NOT DISABLE_GOOGLETEST)
   set(GTest_SOURCE AUTO)
-  resolve_dependency(GTest)
+  velox_resolve_dependency(GTest)
 endif()
 
 if(BUILD_TESTING)

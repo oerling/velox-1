@@ -107,7 +107,7 @@ struct NonPOD {
 
 int NonPOD::alive = 0;
 
-class VectorTest : public testing::Test, public test::VectorTestBase {
+class VectorTest : public testing::Test, public velox::test::VectorTestBase {
  protected:
   static void SetUpTestCase() {
     memory::MemoryManager::testingSetInstance({});
@@ -164,7 +164,6 @@ class VectorTest : public testing::Test, public test::VectorTestBase {
     BufferPtr nulls;
     if (withNulls) {
       nulls = allocateNulls(numRows, pool());
-      int32_t childCounter = 0;
       auto rawNulls = nulls->asMutable<uint64_t>();
       for (int32_t i = 0; i < numRows; ++i) {
         bits::setNull(rawNulls, i, i % 8 == 0);
@@ -3899,6 +3898,38 @@ TEST_F(VectorTest, testOverSizedArray) {
   auto array = makeArrayVector(offsets, flat);
   auto constArray = BaseVector::wrapInConstant(21474830, 0, array);
   EXPECT_THROW(BaseVector::flattenVector(constArray), VeloxUserError);
+}
+
+TEST_F(VectorTest, testFlatteningOfRedundantDictionary) {
+  // Verify that BaseVector::wrapInDictionary() API flattens the output if
+  // 'flattenIfRedundant' is set to true and the wrapped vector has a size less
+  // than 1/8 the size of the base.
+  auto vectorSize = 100;
+  auto flat =
+      makeFlatVector<int32_t>(vectorSize, [](auto /*row*/) { return 1; });
+  {
+    auto dictionarySize = vectorSize / 10;
+    auto indices = makeIndices(dictionarySize, [](auto i) { return i; });
+    auto wrapped =
+        BaseVector::wrapInDictionary(nullptr, indices, dictionarySize, flat);
+    EXPECT_EQ(wrapped->encoding(), VectorEncoding::Simple::DICTIONARY);
+
+    wrapped = BaseVector::wrapInDictionary(
+        nullptr, indices, dictionarySize, flat, true /*flattenIfRedundant*/);
+    EXPECT_EQ(wrapped->encoding(), VectorEncoding::Simple::FLAT);
+  }
+
+  {
+    auto dictionarySize = vectorSize / 3;
+    auto indices = makeIndices(dictionarySize, [](auto i) { return i; });
+    auto wrapped =
+        BaseVector::wrapInDictionary(nullptr, indices, dictionarySize, flat);
+    EXPECT_EQ(wrapped->encoding(), VectorEncoding::Simple::DICTIONARY);
+
+    wrapped = BaseVector::wrapInDictionary(
+        nullptr, indices, dictionarySize, flat, true /*flattenIfRedundant*/);
+    EXPECT_EQ(wrapped->encoding(), VectorEncoding::Simple::DICTIONARY);
+  }
 }
 
 TEST_F(VectorTest, hasOverlappingRanges) {
