@@ -148,7 +148,15 @@ VectorPtr BaseVector::wrapInDictionary(
     }
     return BaseVector::wrapInConstant(size, 0, std::move(vector));
   }
-
+  bool shouldFlatten = false;
+  if (flattenIfRedundant) {
+    auto base = vector;
+    while (base->encoding() == VectorEncoding::Simple::DICTIONARY) {
+      base = base->valueVector();
+    }
+    shouldFlatten = !isLazyNotLoaded(*base) && (base->size() / 8) > size;
+  }
+  
   if (vector->encoding() == VectorEncoding::Simple::DICTIONARY) {
     auto base = vector->valueVector();
     if (isLazyNotLoaded(*base)) {
@@ -156,7 +164,7 @@ VectorPtr BaseVector::wrapInDictionary(
       // different dictionaries.
       base->containsLazyAndIsWrapped_ = false;
     }
-    auto rawNulls = vector->rawNulls();
+    auto* rawNulls = vector->rawNulls();
     if (indices->refCount() > 1) {
       indices = AlignedBuffer::copy(vector->pool(), indices);
     }
@@ -164,7 +172,7 @@ VectorPtr BaseVector::wrapInDictionary(
       auto newNulls = AlignedBuffer::allocate<bool>(size, vector->pool());
       transposeIndicesWithNulls(
           vector->wrapInfo()->as<vector_size_t>(),
-          vector->rawNulls(),
+          rawNulls,
           size,
           indices->as<vector_size_t>(),
           nulls ? nulls->as<uint64_t>() : nullptr,
@@ -189,7 +197,7 @@ VectorPtr BaseVector::wrapInDictionary(
       size,
       std::move(vector));
 
-  if (false /*shouldFlatten*/) {
+  if (shouldFlatten) {
     BaseVector::flattenVector(result);
   }
 
@@ -201,20 +209,19 @@ VectorPtr BaseVector::wrapInSequence(
     BufferPtr lengths,
     vector_size_t size,
     VectorPtr vector) {
-  auto numLengths = lengths->size() / sizeof(vector_size_t);
+  const auto numLengths = lengths->size() / sizeof(vector_size_t);
   int64_t numIndices = 0;
-  auto rawLengths = lengths->as<vector_size_t>();
+  auto* rawLengths = lengths->as<vector_size_t>();
   for (auto i = 0; i < numLengths; ++i) {
     numIndices += rawLengths[i];
   }
   VELOX_CHECK_LT(numIndices, std::numeric_limits<int32_t>::max());
   BufferPtr indices =
       AlignedBuffer::allocate<vector_size_t>(numIndices, vector->pool());
-  auto rawIndices = indices->asMutable<vector_size_t>();
+  auto* rawIndices = indices->asMutable<vector_size_t>();
   int32_t fill = 0;
   for (auto i = 0; i < numLengths; ++i) {
     std::fill(rawIndices + fill, rawIndices + fill + rawLengths[i], i);
-    ;
     fill += rawLengths[i];
   }
   return wrapInDictionary(nullptr, indices, numIndices, vector);
@@ -1047,67 +1054,70 @@ void BaseVector::transposeIndices(
 
 // static
 void BaseVector::transposeIndicesWithNulls(
-    const vector_size_t* base,
-    const uint64_t* nulls,
+    const vector_size_t* baseIndices,
+    const uint64_t* baseNulls,
     vector_size_t size,
-    const vector_size_t* indices,
-    const uint64_t* extraNulls,
+    const vector_size_t* wrapIndices,
+    const uint64_t* wrapNulls,
     vector_size_t* result,
     uint64_t* resultNulls) {
   constexpr int32_t kBatch = xsimd::batch<int32_t>::size;
+  static_assert(kBatch == 8);
   for (auto i = 0; i < size; i += kBatch) {
-    auto indexBatch = xsimd::load_unaligned(indices + i);
-    uint8_t extraNullsByte = i + kBatch > size ? bits::lowMask(size - i) : 0xff;
+    static_assert(sizeof(vector_size_t) == sizeof(int32_t));
+    auto indexBatch = xsimd::load_unaligned(wrapIndices + i);
+    uint8_t wrapNullsByte = i + kBatch > size ? bits::lowMask(size - i) : 0xff;
 
-    if (extraNulls) {
-      extraNullsByte &= reinterpret_cast<const uint8_t*>(extraNulls)[i / 8];
+    if (wrapNulls) {
+      wrapNullsByte &= reinterpret_cast<const uint8_t*>(wrapNulls)[i / 8];
     }
-    if (extraNullsByte != 0xff) {
-      auto mask = simd::fromBitMask<int32_t>(extraNullsByte);
+    if (wrapNullsByte != 0xff) {
+      // Zero out indices at null positions.
+      auto mask = simd::fromBitMask<int32_t>(wrapNullsByte);
       indexBatch = indexBatch &
           xsimd::load_unaligned(reinterpret_cast<const vector_size_t*>(&mask));
     }
-    if (nulls) {
-      uint8_t flags = simd::gather8Bits(nulls, indexBatch, 8);
-      extraNullsByte &= flags;
+    if (baseNulls) {
+      uint8_t baseNullBits = simd::gather8Bits(baseNulls, indexBatch, 8);
+      wrapNullsByte &= baseNullBits;
     }
-    reinterpret_cast<uint8_t*>(resultNulls)[i / 8] = extraNullsByte;
-    simd::gather<int32_t>(base, indexBatch).store_unaligned(result + i);
+    reinterpret_cast<uint8_t*>(resultNulls)[i / 8] = wrapNullsByte;
+    simd::gather<int32_t>(baseIndices, indexBatch).store_unaligned(result + i);
   }
 }
 
 // static
 void BaseVector::transposeDictionaryValues(
     vector_size_t size,
-    BufferPtr& nulls,
-    BufferPtr& indices,
+    BufferPtr& wrapNulls,
+    BufferPtr& wrapIndices,
     std::shared_ptr<BaseVector>& dictionaryValues) {
-  if (indices->refCount() > 1) {
-    indices = AlignedBuffer::copy(dictionaryValues->pool(), indices);
+  if (wrapIndices->refCount() > 1) {
+    wrapIndices = AlignedBuffer::copy(dictionaryValues->pool(), wrapIndices);
   }
-  auto rawNulls = dictionaryValues->rawNulls();
+  auto* rawBaseNulls = dictionaryValues->rawNulls();
   auto baseIndices = dictionaryValues->wrapInfo();
-  if (!rawNulls && !nulls) {
+  if (!rawBaseNulls && !wrapNulls) {
     transposeIndices(
         baseIndices->as<vector_size_t>(),
         size,
-        indices->as<vector_size_t>(),
-        indices->asMutable<vector_size_t>());
+        wrapIndices->as<vector_size_t>(),
+        wrapIndices->asMutable<vector_size_t>());
   } else {
     BufferPtr newNulls;
-    if (!nulls || nulls->refCount() > 1) {
+    if (!wrapNulls || wrapNulls->refCount() > 1) {
       newNulls = AlignedBuffer::allocate<bool>(
           size, dictionaryValues->pool(), bits::kNull);
     } else {
-      newNulls = nulls;
+      newNulls = wrapNulls;
     }
     transposeIndicesWithNulls(
         baseIndices->as<vector_size_t>(),
-        rawNulls,
+        rawBaseNulls,
         size,
-        indices->as<vector_size_t>(),
-        nulls ? nulls->as<uint64_t>() : nullptr,
-        indices->asMutable<vector_size_t>(),
+        wrapIndices->as<vector_size_t>(),
+        wrapNulls ? wrapNulls->as<uint64_t>() : nullptr,
+        wrapIndices->asMutable<vector_size_t>(),
         newNulls->asMutable<uint64_t>());
   }
   dictionaryValues = dictionaryValues->valueVector();

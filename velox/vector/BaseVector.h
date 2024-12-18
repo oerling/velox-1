@@ -549,16 +549,16 @@ class BaseVector {
       vector_size_t* result);
 
   /// Transposes two levels of indices into a single level with nulls. sets
-  /// result[i] = base[indices[i]] where i is not null in 'extraNulls' and
-  /// indices[i] is not null in 'nulls'. If indices[i] is null in 'nulls' or i
-  /// is null in 'extraNulls', then 'resultNulls' is null at i. 'extraNulls' may
+  /// result[i] = base[indices[i]] where i is not null in 'wrapNulls' and
+  /// indices[i] is not null in 'baseNulls'. If indices[i] is null in 'baseNulls' or i
+  /// is null in 'wrapNulls', then 'resultNulls' is null at i. 'wrapNulls' may
   /// be nullptr, meaning that no new nulls are added.
   static void transposeIndicesWithNulls(
-      const vector_size_t* base,
-      const uint64_t* nulls,
+      const vector_size_t* baseIndices,
+      const uint64_t* baseNulls,
       vector_size_t size,
-      const vector_size_t* indices,
-      const uint64_t* extraNulls,
+      const vector_size_t* wrapIndices,
+      const uint64_t* wrapNulls,
       vector_size_t* result,
       uint64_t* resultNulls);
 
