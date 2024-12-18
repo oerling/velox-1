@@ -54,7 +54,13 @@ class LocalRunnerTestBase : public HiveConnectorTestBase {
   void SetUp() override;
 
   void ensureTestData();
+
   void updateConnector();
+
+  /// Returns a split source factory that contains splits for the table scans in
+  /// 'plan'. 'plan' should refer to testing tables created by 'this'.
+  std::shared_ptr<runner::TestingSplitSourceFactory>
+  makeTestingSplitSourceFactory(const runner::MultiFragmentPlanPtr& plan);
 
   void makeTables(
       std::vector<TableSpec> specs,
@@ -75,6 +81,9 @@ class LocalRunnerTestBase : public HiveConnectorTestBase {
 
   // The top level directory with the test data.
   inline static std::shared_ptr<TempDirectoryPath> files_;
+  /// Map from table name to list of file system paths.
+  inline static std::unordered_map<std::string, std::vector<std::string>>
+      filePaths_;
   inline static std::unique_ptr<folly::CPUThreadPoolExecutor> schemaExecutor_;
 };
 

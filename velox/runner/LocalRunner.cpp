@@ -40,8 +40,7 @@ RowVectorPtr LocalRunner::next() {
 }
 
 namespace {
-std::vector<exec::Split> listAllSplits(
-    std::shared_ptr<connector::SplitSource> source) {
+std::vector<exec::Split> listAllSplits(std::shared_ptr<SplitSource> source) {
   std::vector<exec::Split> result;
   bool done = false;
   for (;;) {
@@ -100,14 +99,9 @@ void LocalRunner::start() {
   }
 }
 
-std::shared_ptr<connector::SplitSource> LocalRunner::splitSourceForScan(
+std::shared_ptr<SplitSource> LocalRunner::splitSourceForScan(
     const core::TableScanNode& scan) {
-  auto handle = scan.tableHandle();
-  auto connector = connector::getConnector(handle->connectorId());
-  auto partitions =
-      connector->metadata()->splitManager()->listPartitions(handle);
-  return connector->metadata()->splitManager()->getSplitSource(
-      handle, partitions);
+  return splitSourceFactory_->splitSourceForScan(scan);
 }
 
 void LocalRunner::abort() {
@@ -210,7 +204,7 @@ LocalRunner::makeStages() {
     auto& fragment = fragments_[fragmentIndex];
     for (auto& scan : fragment.scans) {
       auto source = splitSourceForScan(*scan);
-      std::vector<connector::SplitSource::SplitAndGroup> splits;
+      std::vector<SplitSource::SplitAndGroup> splits;
       int32_t splitIdx = 0;
       auto nextSplit = [&]() {
         if (splitIdx < splits.size()) {
@@ -285,6 +279,25 @@ std::vector<exec::TaskStats> LocalRunner::stats() const {
     result.push_back(std::move(stats));
   }
   return result;
+}
+
+std::vector<SplitSource::SplitAndGroup> TestingSplitSource::getSplits(
+    uint64_t targetBytes) {
+  std::vector<SplitSource::SplitAndGroup> result;
+  if (splitIdx_ >= splits_.size()) {
+    return {{nullptr, 0}};
+  }
+  result.push_back(SplitAndGroup{std::move(splits_[splitIdx_++]), 0});
+  return result;
+}
+
+std::shared_ptr<SplitSource> TestingSplitSourceFactory::splitSourceForScan(
+    const core::TableScanNode& scan) {
+  auto it = splitMap_.find(scan.id());
+  if (it == splitMap_.end()) {
+    VELOX_FAIL("Splits aare not provided for scan {}", scan.id());
+  }
+  return std::make_shared<TestingSplitSource>(it->second);
 }
 
 } // namespace facebook::velox::runner

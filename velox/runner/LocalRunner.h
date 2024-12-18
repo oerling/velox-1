@@ -16,7 +16,6 @@
 #pragma once
 
 #include "velox/connectors/Connector.h"
-#include "velox/connectors/hive/LocalHiveConnectorMetadata.h"
 #include "velox/exec/Cursor.h"
 #include "velox/exec/Exchange.h"
 #include "velox/runner/MultiFragmentPlan.h"
@@ -24,16 +23,43 @@
 
 namespace facebook::velox::runner {
 
+/// Testing proxy for a split source managed by a system with full metadata access.
+  class TestingSplitSource : public SplitSource {
+  public:
+    TestingSplitSource(std::vector<std::shared_ptr<connector::ConnectorSplit>> splits)
+      : splits_(std::move(splits)) {};
+    
+    virtual std::vector<SplitAndGroup> getSplits(uint64_t targetBytes) override;
+  private:
+    std::vector<std::shared_ptr<connector::ConnectorSplit>> splits_;
+    int32_t splitIdx_{0};
+  };
+
+  /// Testing proxy for a split source factory that uses connector metadata to enumerate splits. This takes a precomputed split list for each scan.
+class TestingSplitSourceFactory : public SplitSourceFactory {
+public:
+  TestingSplitSourceFactory(std::unordered_map<core::PlanNodeId, std::vector<std::shared_ptr<connector::ConnectorSplit>>> splitMap)
+    : splitMap_(std::move(splitMap)) {}
+
+  std::shared_ptr<SplitSource> splitSourceForScan(
+						  const core::TableScanNode& scan) override;
+    
+  private:
+    std::unordered_map<core::PlanNodeId, std::vector<std::shared_ptr<connector::ConnectorSplit>>> splitMap_;
+  };
+  
 /// Runner for in-process execution of a distributed plan.
 class LocalRunner : public Runner,
                     public std::enable_shared_from_this<LocalRunner> {
  public:
   LocalRunner(
       MultiFragmentPlanPtr plan,
-      std::shared_ptr<core::QueryCtx> queryCtx)
+      std::shared_ptr<core::QueryCtx> queryCtx,
+      std::shared_ptr<SplitSourceFactory> splitSourceFactory)
       : plan_(std::move(plan)),
         fragments_(plan_->fragments()),
-        options_(plan_->options()) {
+        options_(plan_->options()),
+	splitSourceFactory_(std::move(splitSourceFactory)){
     params_.queryCtx = std::move(queryCtx);
   }
 
@@ -54,7 +80,7 @@ class LocalRunner : public Runner,
 
   // Creates all stages except for the single worker final consumer stage.
   std::vector<std::shared_ptr<exec::RemoteConnectorSplit>> makeStages();
-  std::shared_ptr<connector::SplitSource> splitSourceForScan(
+  std::shared_ptr<SplitSource> splitSourceForScan(
       const core::TableScanNode& scan);
 
   // Serializes 'cursor_' and 'error_'.
@@ -71,6 +97,7 @@ class LocalRunner : public Runner,
   std::unique_ptr<exec::test::TaskCursor> cursor_;
   std::vector<std::vector<std::shared_ptr<exec::Task>>> stages_;
   std::exception_ptr error_;
+  std::shared_ptr<SplitSourceFactory> splitSourceFactory_;
 };
 
 } // namespace facebook::velox::runner

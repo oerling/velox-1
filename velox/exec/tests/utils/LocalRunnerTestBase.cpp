@@ -87,9 +87,36 @@ void LocalRunnerTestBase::makeTables(
           spec.customizeData(vector);
         }
       }
-      writeToFile(fmt::format("{}/f{}", tablePath, i), vectors);
+      auto filePath = fmt::format("{}/f{}", tablePath, i);
+      filePaths_[spec.name].push_back(filePath);
+      writeToFile(filePath, vectors);
     }
   }
+}
+
+std::shared_ptr<runner::TestingSplitSourceFactory>
+LocalRunnerTestBase::makeTestingSplitSourceFactory(
+    const runner::MultiFragmentPlanPtr& plan) {
+  std::unordered_map<
+      core::PlanNodeId,
+      std::vector<std::shared_ptr<connector::ConnectorSplit>>>
+      map;
+  for (auto& fragment : plan->fragments()) {
+    for (auto& scan : fragment.scans) {
+      auto& name = scan->tableHandle()->tableName();
+      auto files = filePaths_[name];
+      VELOX_CHECK(!files.empty(), "No splits known for {}", name);
+      std::vector<std::shared_ptr<connector::ConnectorSplit>> splits;
+      for (auto& file : files) {
+        splits.push_back(connector::hive::HiveConnectorSplitBuilder(file)
+                             .connectorId(kHiveConnectorId)
+                             .fileFormat(dwio::common::FileFormat::DWRF)
+                             .build());
+      }
+      map[scan->id()] = std::move(splits);
+    }
+  };
+  return std::make_shared<runner::TestingSplitSourceFactory>(std::move(map));
 }
 
 std::vector<RowVectorPtr> readCursor(
