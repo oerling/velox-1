@@ -287,8 +287,10 @@ void LocalPartition::allocateIndexBuffers(
   }
 }
 
-RowVectorPtr
-LocalPartition::wrapChildren(const RowVectorPtr& input, vector_size_t size, BufferPtr indices) {
+RowVectorPtr LocalPartition::wrapChildren(
+    const RowVectorPtr& input,
+    vector_size_t size,
+    BufferPtr indices) {
   VELOX_CHECK_EQ(childVectors_.size(), input->type()->size());
   WrapState state;
   for (auto i = 0; i < input->type()->size(); i++) {

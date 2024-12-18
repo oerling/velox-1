@@ -156,7 +156,7 @@ VectorPtr BaseVector::wrapInDictionary(
     }
     shouldFlatten = !isLazyNotLoaded(*base) && (base->size() / 8) > size;
   }
-  
+
   if (vector->encoding() == VectorEncoding::Simple::DICTIONARY) {
     auto base = vector->valueVector();
     if (isLazyNotLoaded(*base)) {
