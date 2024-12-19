@@ -16,7 +16,7 @@
 
 #pragma once
 
-#include "velox/experimental/query/QueryGraphContext.h"
+#include "velox/optimizer/QueryGraphContext.h"
 
 namespace facebook::velox::optimizer {
 

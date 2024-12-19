@@ -14,7 +14,7 @@ P *
  * limitations under the License.
  */
 
-#include "velox/experimental/query/tests/ParquetTpchTest.h"
+#include "velox/optimizer/tests/ParquetTpchTest.h"
 
 DEFINE_string(
     data_path,

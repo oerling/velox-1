@@ -16,7 +16,7 @@
 
 #pragma once
 
-#include "velox/experimental/query/Schema.h"
+#include "velox/optimizer/Schema.h"
 
 #include "velox/core/PlanNode.h"
 

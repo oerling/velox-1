@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-#include "velox/connectors/hive/LocalHiveConnectorMetadata.h"
+#include "velox/optimizer/connectors/hive/LocalHiveConnectorMetadata.h"
 #include "velox/common/base/Fs.h"
 #include "velox/connectors/Connector.h"
 #include "velox/connectors/hive/HiveConnectorSplit.h"
@@ -96,7 +96,7 @@ std::vector<SplitSource::SplitAndGroup> LocalHiveSplitSource::getSplits(
 
 LocalHiveConnectorMetadata::LocalHiveConnectorMetadata(
     HiveConnector* hiveConnector)
-    : hiveConnector_(hiveConnector),
+    : HiveConnectorMetadata(hiveConnector),
       hiveConfig_(
           std::make_shared<HiveConfig>(hiveConnector_->connectorConfig())),
       splitManager_(this) {}
@@ -466,13 +466,13 @@ void LocalTable::sampleNumDistincts(float samplePct, memory::MemoryPool* pool) {
   std::vector<connector::ColumnHandlePtr> columns;
   for (auto i = 0; i < type_->size(); ++i) {
     columns.push_back(
-        layout->connector()->createColumnHandle(*layout, type_->nameOf(i)));
+		      layout->connector()->metadata()->createColumnHandle(*layout, type_->nameOf(i)));
   }
   auto* metadata = dynamic_cast<const LocalHiveConnectorMetadata*>(
       layout->connector()->metadata());
   auto& evaluator = *metadata->connectorQueryCtx()->expressionEvaluator();
   std::vector<core::TypedExprPtr> ignore;
-  auto handle = layout->connector()->createTableHandle(
+  auto handle = layout->connector()->metadata()->createTableHandle(
       *layout, columns, evaluator, {}, ignore);
   std::vector<std::unique_ptr<dwrf::StatisticsBuilder>> statsBuilders;
   auto* localLayout = dynamic_cast<LocalHiveTableLayout*>(layout);
@@ -540,4 +540,28 @@ const Table* LocalHiveConnectorMetadata::findTable(const std::string& name) {
   return it->second.get();
 }
 
+
+
+namespace {
+  class LocalHiveConnectorMetadataFactory : public HiveConnectorMetadataFactory {
+  public:
+  std::shared_ptr<ConnectorMetadata> create(
+    HiveConnector* connector) override {
+  auto hiveConfig = std::make_shared<HiveConfig>(connector->connectorConfig());
+  auto path = hiveConfig->localDataPath();
+  if (path.empty()) {
+    return nullptr;
+  }
+  return std::make_shared<LocalHiveConnectorMetadata>(connector);
+}
+    void initialize(ConnectorMetadata* metadata) override {
+      dynamic_cast<LocalHiveConnectorMetadata*>(metadata)->initialize();
+    }
+    
+  };
+
+  bool dummy =
+    registerHiveConnectorMetadataFactory(std::make_unique<LocalHiveConnectorMetadataFactory>());
+} // namespace
+  
 } // namespace facebook::velox::connector::hive

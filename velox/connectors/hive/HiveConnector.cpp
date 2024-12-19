@@ -21,7 +21,6 @@
 #include "velox/connectors/hive/HiveDataSink.h"
 #include "velox/connectors/hive/HiveDataSource.h"
 #include "velox/connectors/hive/HivePartitionFunction.h"
-#include "velox/connectors/hive/LocalHiveConnectorMetadata.h"
 #include "velox/connectors/hive/TableHandle.h"
 #include "velox/expression/ExprToSubfieldFilter.h"
 #include "velox/expression/FieldReference.h"
@@ -56,30 +55,15 @@ HiveConnector::HiveConnector(
               << " created with file handle cache disabled";
   }
   for (auto& factory : hiveConnectorMetadataFactories()) {
-    metadata_ = factory(this);
+    metadata_ = factory->create(this);
     if (metadata_ != nullptr) {
       // Two-phase construction. The Connector and ConnectorMetadata need to be
       // coupled to finalize metadata setup.
-      metadata_->initialize();
+      factory->initialize(metadata_.get());
       break;
     }
   }
 }
-
-namespace {
-HiveColumnHandle::ColumnType columnType(
-    const HiveTableLayout& layout,
-    const std::string& columnName) {
-  auto& columns = layout.hivePartitionColumns();
-  for (auto& c : columns) {
-    if (c->name() == columnName) {
-      return HiveColumnHandle::ColumnType::kPartitionKey;
-    }
-  }
-  // TODO recognize special names like $path, $bucket etc.
-  return HiveColumnHandle::ColumnType::kRegular;
-}
-} // namespace
 
 std::unique_ptr<DataSource> HiveConnector::createDataSource(
     const RowTypePtr& outputType,
@@ -207,30 +191,15 @@ void registerHivePartitionFunctionSerDe() {
       "HivePartitionFunctionSpec", HivePartitionFunctionSpec::deserialize);
 }
 
-std::vector<HiveConnectorMetadataFactory>& hiveConnectorMetadataFactories() {
-  static std::vector<HiveConnectorMetadataFactory> factories;
+  std::vector<std::unique_ptr<HiveConnectorMetadataFactory>>& hiveConnectorMetadataFactories() {
+    static std::vector<std::unique_ptr<HiveConnectorMetadataFactory>> factories;
   return factories;
 }
 
 bool registerHiveConnectorMetadataFactory(
-    HiveConnectorMetadataFactory factory) {
-  hiveConnectorMetadataFactories().push_back(factory);
+					  std::unique_ptr<HiveConnectorMetadataFactory> factory) {
+  hiveConnectorMetadataFactories().push_back(std::move(factory));
   return true;
 }
-
-namespace {
-std::unique_ptr<LocalHiveConnectorMetadata> localHiveConnectorMetadataFactory(
-    HiveConnector* connector) {
-  auto hiveConfig = std::make_shared<HiveConfig>(connector->connectorConfig());
-  auto path = hiveConfig->localDataPath();
-  if (path.empty()) {
-    return nullptr;
-  }
-  return std::make_unique<LocalHiveConnectorMetadata>(connector);
-}
-
-bool dummy =
-    registerHiveConnectorMetadataFactory(localHiveConnectorMetadataFactory);
-} // namespace
 
 } // namespace facebook::velox::connector::hive

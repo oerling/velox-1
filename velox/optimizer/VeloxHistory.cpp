@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-#include "velox/experimental/query/VeloxHistory.h"
+#include "velox/optimizer/VeloxHistory.h"
 #include "velox/exec/Operator.h"
 #include "velox/exec/TaskStats.h"
 

@@ -14,10 +14,30 @@
  * limitations under the License.
  */
 
+#include "velox/connectors/hive/HiveConnector.h"
+#include "velox/connectors/hive/TableHandle.h"
 #include "velox/optimizer/connectors/hive/HiveConnectorMetadata.h"
+#include "velox/expression/ExprToSubfieldFilter.h"
+#include "velox/expression/FieldReference.h"
 
-namespace facebook::velox::connector {
+namespace facebook::velox::connector::hive {
 
+namespace {
+HiveColumnHandle::ColumnType columnType(
+    const HiveTableLayout& layout,
+    const std::string& columnName) {
+  auto& columns = layout.hivePartitionColumns();
+  for (auto& c : columns) {
+    if (c->name() == columnName) {
+      return HiveColumnHandle::ColumnType::kPartitionKey;
+    }
+  }
+  // TODO recognize special names like $path, $bucket etc.
+  return HiveColumnHandle::ColumnType::kRegular;
+}
+} // namespace
+
+  
 ColumnHandlePtr HiveConnectorMetadata::createColumnHandle(
     const TableLayout& layout,
     const std::string& columnName,
@@ -84,12 +104,12 @@ ConnectorTableHandlePtr HiveConnectorMetadata::createTableHandle(
   }
   return std::dynamic_pointer_cast<const ConnectorTableHandle>(
       std::make_shared<HiveTableHandle>(
-          connectorId(),
+					hiveConnector_->connectorId(),
           hiveLayout->table()->name(),
           true,
           std::move(subfieldFilters),
           remainingFilter,
           std::move(dataColumns)));
 }
-
+  
 } // namespace facebook::velox::connector

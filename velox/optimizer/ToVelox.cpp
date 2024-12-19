@@ -16,8 +16,8 @@
 
 #include "velox/core/PlanNode.h"
 #include "velox/exec/HashPartitionFunction.h"
-#include "velox/experimental/query/Plan.h"
-#include "velox/experimental/query/PlanUtils.h"
+#include "velox/optimizer/Plan.h"
+#include "velox/optimizer/PlanUtils.h"
 #include "velox/expression/ExprToSubfieldFilter.h"
 #include "velox/expression/ScopedVarSetter.h"
 
@@ -67,14 +67,14 @@ void filterUpdated(BaseTableCP table) {
   for (int32_t i = 0; i < dataColumns->size(); ++i) {
     // Add subfield pruning here.
     columns.push_back(
-        connector->createColumnHandle(*layout, dataColumns->nameOf(i)));
+		      connector->metadata()->createColumnHandle(*layout, dataColumns->nameOf(i)));
   }
   auto allFilters = std::move(pushdownConjuncts);
   if (remainingFilter) {
     allFilters.push_back(remainingFilter);
   }
   std::vector<core::TypedExprPtr> rejectedFilters;
-  auto handle = connector->createTableHandle(
+  auto handle = connector->metadata()->createTableHandle(
       *layout,
       columns,
       *optimization->evaluator(),
@@ -564,7 +564,7 @@ core::PlanNodePtr Optimization::makeFragment(
         // non-const shared_ptr.
         assignments[column->toString()] =
             std::const_pointer_cast<connector::ColumnHandle>(
-                scan->index->layout->connector()->createColumnHandle(
+							     scan->index->layout->connector()->metadata()->createColumnHandle(
                     *scan->index->layout, column->name()));
       }
       auto scanNode = std::make_shared<core::TableScanNode>(

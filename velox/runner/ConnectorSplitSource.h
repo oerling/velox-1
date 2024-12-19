@@ -24,7 +24,7 @@ namespace facebook::velox::runner {
 /// proxy between the two.
 class ConnectorSplitSource : public SplitSource {
  public:
-  ConectorSplitSource(std::shared_ptr<connector::SplitSource> source)
+  ConnectorSplitSource(std::shared_ptr<connector::SplitSource> source)
       : source_(std::move(source)) {}
 
   std::vector<SplitAndGroup> getSplits(uint64_t targetBytes) override;
@@ -36,7 +36,7 @@ class ConnectorSplitSource : public SplitSource {
 /// Generic SplitSourceFactory that delegates the work to ConnectorMetadata.
 class ConnectorSplitSourceFactory : public SplitSourceFactory {
  public:
-  std::shared_ptr<SplitSource> ConnectorSplitSourceFactory::splitSourceForScan(
+  std::shared_ptr<SplitSource> splitSourceForScan(
       const core::TableScanNode& scan) override;
 };
 

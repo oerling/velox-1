@@ -18,7 +18,6 @@
 #include "velox/connectors/Connector.h"
 #include "velox/connectors/hive/FileHandle.h"
 #include "velox/connectors/hive/HiveConfig.h"
-#include "velox/connectors/hive/HiveConnectorMetadata.h"
 #include "velox/core/PlanNode.h"
 
 namespace facebook::velox::dwio::common {
@@ -85,7 +84,7 @@ class HiveConnector : public Connector {
   const std::shared_ptr<HiveConfig> hiveConfig_;
   FileHandleFactory fileHandleFactory_;
   folly::Executor* executor_;
-  std::unique_ptr<ConnectorMetadata> metadata_;
+  std::shared_ptr<ConnectorMetadata> metadata_;
 };
 
 class HiveConnectorFactory : public ConnectorFactory {
@@ -156,8 +155,16 @@ class HivePartitionFunctionSpec : public core::PartitionFunctionSpec {
 
 void registerHivePartitionFunctionSerDe();
 
-std::vector<HiveConnectorMetadataFactory>& hiveConnectorMetadataFactories();
+  class HiveConnectorMetadataFactory {
+  public:
+    virtual ~HiveConnectorMetadataFactory() = default;
+    virtual std::shared_ptr<ConnectorMetadata> create(HiveConnector* connector) = 0;
+    virtual void initialize(ConnectorMetadata* metadata) = 0;
+    
+  };
+  
+  std::vector<std::unique_ptr<HiveConnectorMetadataFactory>>& hiveConnectorMetadataFactories();
 
-bool registerHiveConnectorMetadataFactory(HiveConnectorMetadataFactory);
+  bool registerHiveConnectorMetadataFactory(std::unique_ptr<HiveConnectorMetadataFactory>);
 
 } // namespace facebook::velox::connector::hive

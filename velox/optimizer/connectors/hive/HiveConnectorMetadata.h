@@ -94,6 +94,9 @@ class HiveTableLayout : public TableLayout {
 
 class HiveConnectorMetadata : public ConnectorMetadata {
 public:
+  explicit HiveConnectorMetadata(HiveConnector* hiveConnector)
+    : hiveConnector_(hiveConnector) {}
+
   ColumnHandlePtr createColumnHandle(
       const TableLayout& layout,
       const std::string& columnName,
@@ -109,16 +112,9 @@ public:
       std::vector<core::TypedExprPtr>& rejectedFilters,
       std::optional<LookupKeys> lookupKeys = std::nullopt) override;
 
+protected:
+  HiveConnector* const hiveConnector_;
 };
 
-
-/// Registered HiveConnectorMetadataFactory functions are applied to the
-/// connector. The first one to return non-nullptr supplies the metadata. The
-/// function can use the config in 'connector' and can use the connector to
-/// access data. Setting the metadata is the final part of HiveConnector
-/// initialization.
-using HiveConnectorMetadataFactory =
-    std::function<std::unique_ptr<HiveConnectorMetadata>(
-        HiveConnector* connector)>;
 
 } // namespace facebook::velox::connector::hive

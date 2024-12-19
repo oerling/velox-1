@@ -115,7 +115,9 @@ class ConnectorTableHandle : public ISerializable {
   const std::string connectorId_;
 };
 
-/// Represents a request for writing to connector
+using ConnectorTableHandlePtr = std::shared_ptr<const ConnectorTableHandle>;
+
+  /// Represents a request for writing to connector
 class ConnectorInsertTableHandle : public ISerializable {
  public:
   virtual ~ConnectorInsertTableHandle() {}

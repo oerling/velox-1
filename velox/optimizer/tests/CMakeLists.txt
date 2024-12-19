@@ -32,6 +32,7 @@ target_link_libraries(
   velox_sql
   velox_local_runner
   velox_verax
+  velox_connector_split_source
   velox_hive_connector_metadata
   velox_exec_test_lib
   velox_dwio_common

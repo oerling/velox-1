@@ -19,6 +19,7 @@
 #include "velox/common/base/Fs.h"
 #include "velox/common/memory/HashStringAllocator.h"
 #include "velox/connectors/hive/HiveConnector.h"
+#include "velox/optimizer/connectors/hive/HiveConnectorMetadata.h"
 #include "velox/connectors/hive/TableHandle.h"
 #include "velox/core/QueryCtx.h"
 #include "velox/dwio/common/Options.h"
@@ -221,7 +222,6 @@ class LocalHiveConnectorMetadata : public HiveConnectorMetadata {
 
   void loadTable(const std::string& tableName, const fs::path& tablePath);
 
-  HiveConnector* const hiveConnector_;
   std::shared_ptr<HiveConfig> hiveConfig_;
   std::shared_ptr<memory::MemoryPool> rootPool_{
       memory::memoryManager()->addRootPool()};

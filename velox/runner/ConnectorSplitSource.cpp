@@ -18,9 +18,9 @@
 
 namespace facebook::velox::runner {
 
-std::vector<SplitAndGroup> ConnectorSplitSource::getSplits(
-    uint64_t targetBytes) override {
-  auto splits = source->getSplits(targetBytes);
+  std::vector<SplitSource::SplitAndGroup> ConnectorSplitSource::getSplits(
+    uint64_t targetBytes) {
+  auto splits = source_->getSplits(targetBytes);
   std::vector<SplitAndGroup> runnerSplits;
   // convert the connector::SplitSource::SplitAndGroup to
   // runner::SplitSource::SplitAndGroup.

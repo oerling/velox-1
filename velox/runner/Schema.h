@@ -17,7 +17,7 @@
 #pragma once
 
 #include <string>
-#include "velox/connectors/Connector.h"
+#include "velox/optimizer/connectors/ConnectorMetadata.h"
 #include "velox/vector/ComplexVector.h"
 
 namespace facebook::velox::runner {
