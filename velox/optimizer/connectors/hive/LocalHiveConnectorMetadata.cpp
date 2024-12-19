@@ -287,6 +287,7 @@ std::pair<int64_t, int64_t> LocalHiveTableLayout::sample(
 
       auto data = dataSource->next(kBatchSize, ignore).value();
       if (data == nullptr) {
+        scannedRows += dataSource->getCompletedRows();
         break;
       }
       passingRows += data->size();
@@ -335,11 +336,10 @@ std::pair<int64_t, int64_t> LocalHiveTableLayout::sample(
             break;
         }
       }
-      break;
-    }
-    scannedRows += dataSource->getCompletedRows();
-    if (scannedRows > table()->numRows() * (pct / 100)) {
-      break;
+      if (scannedRows + dataSource->getCompletedRows() >
+          table()->numRows() * (pct / 100)) {
+        break;
+      }
     }
   }
   if (statsBuilders) {
