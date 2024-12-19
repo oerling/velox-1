@@ -15,8 +15,8 @@
  */
 #pragma once
 
-#include "velox/connectors/Connector.h"
 #include "velox/common/memory/HashStringAllocator.h"
+#include "velox/connectors/Connector.h"
 #include "velox/type/Subfield.h"
 #include "velox/type/Type.h"
 #include "velox/type/Variant.h"
@@ -392,7 +392,8 @@ struct SubfieldPtrComparer {
   }
 };
 
-  /// Subfield and default value for use in pushing down a complex type cast into a ColumnHandle.
+/// Subfield and default value for use in pushing down a complex type cast into
+/// a ColumnHandle.
 struct TargetSubfield {
   SubfieldPtr target;
   variant defaultValue;
@@ -441,7 +442,6 @@ struct LookupKeys {
   bool isAscending{true};
 };
 
-  
 class ConnectorMetadata {
  public:
   virtual ~ConnectorMetadata() = default;
@@ -450,7 +450,6 @@ class ConnectorMetadata {
   /// the ConnectorMetadata to the connector so that Connector methods
   /// that refer to metadata are available.
   virtual void initialize() = 0;
-
 
   /// Creates a ColumnHandle for 'columnName'. If the type is a
   /// complex type, 'subfields' specifies which subfields need to be
@@ -492,7 +491,7 @@ class ConnectorMetadata {
       std::optional<LookupKeys> = std::nullopt) {
     VELOX_UNSUPPORTED();
   }
-  
+
   virtual const Table* findTable(const std::string& name) = 0;
 
   /// Returns a SplitManager for split enumeration for TableLayouts accessed

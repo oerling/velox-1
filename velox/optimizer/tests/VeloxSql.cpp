@@ -24,26 +24,26 @@
 #include "velox/common/file/FileSystems.h"
 #include "velox/common/memory/MmapAllocator.h"
 #include "velox/connectors/hive/HiveConnector.h"
-#include "velox/optimizer/connectors/hive/LocalHiveConnectorMetadata.h"
 #include "velox/dwio/common/Options.h"
 #include "velox/dwio/dwrf/RegisterDwrfReader.h"
 #include "velox/dwio/dwrf/reader/DwrfReader.h"
 #include "velox/dwio/parquet/RegisterParquetReader.h"
 #include "velox/exec/Exchange.h"
+#include "velox/optimizer/connectors/hive/LocalHiveConnectorMetadata.h"
 
 #include "velox/exec/PlanNodeStats.h"
 #include "velox/exec/Split.h"
 #include "velox/exec/tests/utils/HiveConnectorTestBase.h"
 #include "velox/exec/tests/utils/LocalExchangeSource.h"
-#include "velox/optimizer/Plan.h"
-#include "velox/optimizer/VeloxHistory.h"
 #include "velox/expression/Expr.h"
 #include "velox/functions/prestosql/aggregates/RegisterAggregateFunctions.h"
 #include "velox/functions/prestosql/registration/RegistrationFunctions.h"
+#include "velox/optimizer/Plan.h"
+#include "velox/optimizer/VeloxHistory.h"
 #include "velox/parse/QueryPlanner.h"
 #include "velox/parse/TypeResolver.h"
-#include "velox/runner/LocalRunner.h"
 #include "velox/runner/ConnectorSplitSource.h"
+#include "velox/runner/LocalRunner.h"
 #include "velox/runner/Schema.h"
 #include "velox/serializers/PrestoSerializer.h"
 #include "velox/vector/VectorSaver.h"
@@ -510,7 +510,10 @@ class VeloxRunner {
     facebook::velox::optimizer::queryCtx() = nullptr;
     RunStats runStats;
     try {
-      runner = std::make_shared<LocalRunner>(fragmentedPlan, queryCtx, std::make_shared<runner::ConnectorSplitSourceFactory>());
+      runner = std::make_shared<LocalRunner>(
+          fragmentedPlan,
+          queryCtx,
+          std::make_shared<runner::ConnectorSplitSourceFactory>());
       std::vector<RowVectorPtr> results;
       runInner(*runner, results, runStats);
 

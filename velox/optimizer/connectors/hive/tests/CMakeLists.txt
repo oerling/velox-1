@@ -11,10 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-add_executable(
-  velox_hive_connector_metadata_test
-  HiveConnectorMetadataTest.cpp
-)
+add_executable(velox_hive_connector_metadata_test HiveConnectorMetadataTest.cpp)
 
 add_test(velox_hive_connector_metadata_test velox_hive_connector_metadata_test)
 
@@ -31,4 +28,3 @@ target_link_libraries(
   velox_exec_test_lib
   GTest::gtest
   GTest::gtest_main)
-

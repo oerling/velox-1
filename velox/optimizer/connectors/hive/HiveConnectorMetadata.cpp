@@ -14,9 +14,9 @@
  * limitations under the License.
  */
 
+#include "velox/optimizer/connectors/hive/HiveConnectorMetadata.h"
 #include "velox/connectors/hive/HiveConnector.h"
 #include "velox/connectors/hive/TableHandle.h"
-#include "velox/optimizer/connectors/hive/HiveConnectorMetadata.h"
 #include "velox/expression/ExprToSubfieldFilter.h"
 #include "velox/expression/FieldReference.h"
 
@@ -37,7 +37,6 @@ HiveColumnHandle::ColumnType columnType(
 }
 } // namespace
 
-  
 ColumnHandlePtr HiveConnectorMetadata::createColumnHandle(
     const TableLayout& layout,
     const std::string& columnName,
@@ -104,12 +103,12 @@ ConnectorTableHandlePtr HiveConnectorMetadata::createTableHandle(
   }
   return std::dynamic_pointer_cast<const ConnectorTableHandle>(
       std::make_shared<HiveTableHandle>(
-					hiveConnector_->connectorId(),
+          hiveConnector_->connectorId(),
           hiveLayout->table()->name(),
           true,
           std::move(subfieldFilters),
           remainingFilter,
           std::move(dataColumns)));
 }
-  
-} // namespace facebook::velox::connector
+
+} // namespace facebook::velox::connector::hive

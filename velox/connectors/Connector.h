@@ -117,7 +117,7 @@ class ConnectorTableHandle : public ISerializable {
 
 using ConnectorTableHandlePtr = std::shared_ptr<const ConnectorTableHandle>;
 
-  /// Represents a request for writing to connector
+/// Represents a request for writing to connector
 class ConnectorInsertTableHandle : public ISerializable {
  public:
   virtual ~ConnectorInsertTableHandle() {}
@@ -413,7 +413,7 @@ class ConnectorQueryCtx {
 };
 
 class ConnectorMetadata;
-  
+
 class Connector {
  public:
   explicit Connector(const std::string& id) : id_(id) {}
@@ -436,7 +436,7 @@ class Connector {
   }
 
   /// Returns a ConnectorMetadata for accessing table
-  /// information. 
+  /// information.
   virtual ConnectorMetadata* metadata() const {
     VELOX_UNSUPPORTED();
   }

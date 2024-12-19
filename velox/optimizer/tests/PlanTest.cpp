@@ -22,13 +22,12 @@
 #include "velox/common/file/FileSystems.h"
 #include "velox/dwio/parquet/RegisterParquetReader.h"
 #include "velox/exec/tests/utils/TpchQueryBuilder.h"
-#include "velox/optimizer/tests/Tpch.h"
 #include "velox/expression/Expr.h"
 #include "velox/functions/prestosql/aggregates/RegisterAggregateFunctions.h"
 #include "velox/functions/prestosql/registration/RegistrationFunctions.h"
-#include "velox/parse/TypeResolver.h"
 #include "velox/optimizer/tests/ParquetTpchTest.h"
-
+#include "velox/optimizer/tests/Tpch.h"
+#include "velox/parse/TypeResolver.h"
 
 DEFINE_int32(trace, 0, "Enable trace 1=retained plans, 2=abandoned, 3=both");
 
@@ -71,7 +70,7 @@ class PlanTest : public ParquetTpchTest {
   }
 
   void makeCheats() {
-  history_->recordLeafSelectivity(
+    history_->recordLeafSelectivity(
         "table: lineitem, range filters: [(l_shipdate, BigintRange: [9205, 9223372036854775807] no nulls)]",
         0.5);
     history_->recordLeafSelectivity(

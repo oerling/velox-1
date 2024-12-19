@@ -19,17 +19,11 @@
 #include "velox/exec/tests/utils/LocalRunnerTestBase.h"
 #include "velox/exec/tests/utils/QueryAssertions.h"
 
-
-
-
 using namespace facebook::velox::exec;
 using namespace facebook::velox::exec::test;
 
 constexpr int kWaitTimeoutUs = 500'000;
 
-class HiveConnectorMetadataTest : public LocalRunnerTestBase {
- protected:
-}
+class HiveConnectorMetadataTest : public LocalRunnerTestBase{protected : }
 
-  TEST_F(HiveConnectorMetadataTest, basic) {}
-
+                                  TEST_F(HiveConnectorMetadataTest, basic) {}

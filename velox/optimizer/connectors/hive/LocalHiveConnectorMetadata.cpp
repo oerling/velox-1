@@ -465,8 +465,8 @@ void LocalTable::sampleNumDistincts(float samplePct, memory::MemoryPool* pool) {
   auto* layout = layouts_[0].get();
   std::vector<connector::ColumnHandlePtr> columns;
   for (auto i = 0; i < type_->size(); ++i) {
-    columns.push_back(
-		      layout->connector()->metadata()->createColumnHandle(*layout, type_->nameOf(i)));
+    columns.push_back(layout->connector()->metadata()->createColumnHandle(
+        *layout, type_->nameOf(i)));
   }
   auto* metadata = dynamic_cast<const LocalHiveConnectorMetadata*>(
       layout->connector()->metadata());
@@ -540,28 +540,25 @@ const Table* LocalHiveConnectorMetadata::findTable(const std::string& name) {
   return it->second.get();
 }
 
-
-
 namespace {
-  class LocalHiveConnectorMetadataFactory : public HiveConnectorMetadataFactory {
-  public:
-  std::shared_ptr<ConnectorMetadata> create(
-    HiveConnector* connector) override {
-  auto hiveConfig = std::make_shared<HiveConfig>(connector->connectorConfig());
-  auto path = hiveConfig->localDataPath();
-  if (path.empty()) {
-    return nullptr;
-  }
-  return std::make_shared<LocalHiveConnectorMetadata>(connector);
-}
-    void initialize(ConnectorMetadata* metadata) override {
-      dynamic_cast<LocalHiveConnectorMetadata*>(metadata)->initialize();
+class LocalHiveConnectorMetadataFactory : public HiveConnectorMetadataFactory {
+ public:
+  std::shared_ptr<ConnectorMetadata> create(HiveConnector* connector) override {
+    auto hiveConfig =
+        std::make_shared<HiveConfig>(connector->connectorConfig());
+    auto path = hiveConfig->localDataPath();
+    if (path.empty()) {
+      return nullptr;
     }
-    
-  };
+    return std::make_shared<LocalHiveConnectorMetadata>(connector);
+  }
+  void initialize(ConnectorMetadata* metadata) override {
+    dynamic_cast<LocalHiveConnectorMetadata*>(metadata)->initialize();
+  }
+};
 
-  bool dummy =
-    registerHiveConnectorMetadataFactory(std::make_unique<LocalHiveConnectorMetadataFactory>());
+bool dummy = registerHiveConnectorMetadataFactory(
+    std::make_unique<LocalHiveConnectorMetadataFactory>());
 } // namespace
-  
+
 } // namespace facebook::velox::connector::hive

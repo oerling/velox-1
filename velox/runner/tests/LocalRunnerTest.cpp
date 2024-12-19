@@ -128,9 +128,9 @@ class LocalRunnerTest : public LocalRunnerTestBase {
   void checkScanCount(const std::string& id, int32_t numWorkers) {
     auto scan = makeScanPlan(id, numWorkers);
     auto rootPool = makeRootPool(id);
-  auto splitSourceFactory = makeTestingSplitSourceFactory(scan);
-  auto localRunner = std::make_shared<LocalRunner>(
-						   std::move(scan), makeQueryCtx(id, rootPool.get()), splitSourceFactory);
+    auto splitSourceFactory = makeTestingSplitSourceFactory(scan);
+    auto localRunner = std::make_shared<LocalRunner>(
+        std::move(scan), makeQueryCtx(id, rootPool.get()), splitSourceFactory);
     auto results = readCursor(localRunner);
 
     int32_t count = 0;
@@ -155,7 +155,7 @@ TEST_F(LocalRunnerTest, count) {
   auto rootPool = makeRootPool(id);
   auto splitSourceFactory = makeTestingSplitSourceFactory(join);
   auto localRunner = std::make_shared<LocalRunner>(
-						   std::move(join), makeQueryCtx(id, rootPool.get()), splitSourceFactory);
+      std::move(join), makeQueryCtx(id, rootPool.get()), splitSourceFactory);
   auto results = readCursor(localRunner);
   auto stats = localRunner->stats();
   EXPECT_EQ(1, results.size());
@@ -173,7 +173,7 @@ TEST_F(LocalRunnerTest, error) {
   auto rootPool = makeRootPool(id);
   auto splitSourceFactory = makeTestingSplitSourceFactory(join);
   auto localRunner = std::make_shared<LocalRunner>(
-						   std::move(join), makeQueryCtx(id, rootPool.get()), splitSourceFactory);
+      std::move(join), makeQueryCtx(id, rootPool.get()), splitSourceFactory);
   EXPECT_THROW(readCursor(localRunner), VeloxUserError);
   EXPECT_EQ(Runner::State::kError, localRunner->state());
   localRunner->waitForCompletion(kWaitTimeoutUs);

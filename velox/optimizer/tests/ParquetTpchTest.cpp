@@ -107,8 +107,7 @@ void ParquetTpchTest::saveTpchTablesAsParquet() {
 
   for (const auto& table : tpch::tables) {
     auto tableName = toTableName(table);
-    auto tableDirectory =
-        fmt::format("{}/{}", createPath_, tableName);
+    auto tableDirectory = fmt::format("{}/{}", createPath_, tableName);
     auto tableSchema = tpch::getTableSchema(table);
     auto columnNames = tableSchema->names();
     auto plan = PlanBuilder()
@@ -161,4 +160,3 @@ std::shared_ptr<Task> ParquetTpchTest::assertQuery(
 }
 
 } // namespace facebook::velox::optimizer::test
-

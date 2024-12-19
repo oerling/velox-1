@@ -41,7 +41,6 @@ class SplitSource {
   virtual std::vector<SplitAndGroup> getSplits(uint64_t targetBytes) = 0;
 };
 
-
 /// A factory for getting a SplitSource for each TableScan. The splits produced
 /// may depend on partition keys, buckets etc mentioned by each tableScan.
 class SplitSourceFactory {

@@ -15,9 +15,9 @@
  */
 
 #include "velox/exec/Aggregate.h"
+#include "velox/expression/ConstantExpr.h"
 #include "velox/optimizer/Plan.h"
 #include "velox/optimizer/PlanUtils.h"
-#include "velox/expression/ConstantExpr.h"
 
 namespace facebook::velox::optimizer {
 

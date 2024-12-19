@@ -16,9 +16,9 @@
 
 #pragma once
 
-#include "velox/optimizer/connectors/ConnectorMetadata.h"
 #include "velox/connectors/hive/HiveConfig.h"
 #include "velox/dwio/common/Options.h"
+#include "velox/optimizer/connectors/ConnectorMetadata.h"
 
 namespace facebook::velox::connector::hive {
 
@@ -93,9 +93,9 @@ class HiveTableLayout : public TableLayout {
 };
 
 class HiveConnectorMetadata : public ConnectorMetadata {
-public:
+ public:
   explicit HiveConnectorMetadata(HiveConnector* hiveConnector)
-    : hiveConnector_(hiveConnector) {}
+      : hiveConnector_(hiveConnector) {}
 
   ColumnHandlePtr createColumnHandle(
       const TableLayout& layout,
@@ -112,9 +112,8 @@ public:
       std::vector<core::TypedExprPtr>& rejectedFilters,
       std::optional<LookupKeys> lookupKeys = std::nullopt) override;
 
-protected:
+ protected:
   HiveConnector* const hiveConnector_;
 };
-
 
 } // namespace facebook::velox::connector::hive

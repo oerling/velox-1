@@ -155,16 +155,18 @@ class HivePartitionFunctionSpec : public core::PartitionFunctionSpec {
 
 void registerHivePartitionFunctionSerDe();
 
-  class HiveConnectorMetadataFactory {
-  public:
-    virtual ~HiveConnectorMetadataFactory() = default;
-    virtual std::shared_ptr<ConnectorMetadata> create(HiveConnector* connector) = 0;
-    virtual void initialize(ConnectorMetadata* metadata) = 0;
-    
-  };
-  
-  std::vector<std::unique_ptr<HiveConnectorMetadataFactory>>& hiveConnectorMetadataFactories();
+class HiveConnectorMetadataFactory {
+ public:
+  virtual ~HiveConnectorMetadataFactory() = default;
+  virtual std::shared_ptr<ConnectorMetadata> create(
+      HiveConnector* connector) = 0;
+  virtual void initialize(ConnectorMetadata* metadata) = 0;
+};
 
-  bool registerHiveConnectorMetadataFactory(std::unique_ptr<HiveConnectorMetadataFactory>);
+std::vector<std::unique_ptr<HiveConnectorMetadataFactory>>&
+hiveConnectorMetadataFactories();
+
+bool registerHiveConnectorMetadataFactory(
+    std::unique_ptr<HiveConnectorMetadataFactory>);
 
 } // namespace facebook::velox::connector::hive

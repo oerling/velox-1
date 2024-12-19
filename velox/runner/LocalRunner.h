@@ -23,31 +23,41 @@
 
 namespace facebook::velox::runner {
 
-/// Testing proxy for a split source managed by a system with full metadata access.
-  class TestingSplitSource : public SplitSource {
-  public:
-    TestingSplitSource(std::vector<std::shared_ptr<connector::ConnectorSplit>> splits)
-      : splits_(std::move(splits)) {};
-    
-    virtual std::vector<SplitAndGroup> getSplits(uint64_t targetBytes) override;
-  private:
-    std::vector<std::shared_ptr<connector::ConnectorSplit>> splits_;
-    int32_t splitIdx_{0};
-  };
+/// Testing proxy for a split source managed by a system with full metadata
+/// access.
+class TestingSplitSource : public SplitSource {
+ public:
+  TestingSplitSource(
+      std::vector<std::shared_ptr<connector::ConnectorSplit>> splits)
+      : splits_(std::move(splits)){};
 
-  /// Testing proxy for a split source factory that uses connector metadata to enumerate splits. This takes a precomputed split list for each scan.
+  virtual std::vector<SplitAndGroup> getSplits(uint64_t targetBytes) override;
+
+ private:
+  std::vector<std::shared_ptr<connector::ConnectorSplit>> splits_;
+  int32_t splitIdx_{0};
+};
+
+/// Testing proxy for a split source factory that uses connector metadata to
+/// enumerate splits. This takes a precomputed split list for each scan.
 class TestingSplitSourceFactory : public SplitSourceFactory {
-public:
-  TestingSplitSourceFactory(std::unordered_map<core::PlanNodeId, std::vector<std::shared_ptr<connector::ConnectorSplit>>> splitMap)
-    : splitMap_(std::move(splitMap)) {}
+ public:
+  TestingSplitSourceFactory(
+      std::unordered_map<
+          core::PlanNodeId,
+          std::vector<std::shared_ptr<connector::ConnectorSplit>>> splitMap)
+      : splitMap_(std::move(splitMap)) {}
 
   std::shared_ptr<SplitSource> splitSourceForScan(
-						  const core::TableScanNode& scan) override;
-    
-  private:
-    std::unordered_map<core::PlanNodeId, std::vector<std::shared_ptr<connector::ConnectorSplit>>> splitMap_;
-  };
-  
+      const core::TableScanNode& scan) override;
+
+ private:
+  std::unordered_map<
+      core::PlanNodeId,
+      std::vector<std::shared_ptr<connector::ConnectorSplit>>>
+      splitMap_;
+};
+
 /// Runner for in-process execution of a distributed plan.
 class LocalRunner : public Runner,
                     public std::enable_shared_from_this<LocalRunner> {
@@ -59,7 +69,7 @@ class LocalRunner : public Runner,
       : plan_(std::move(plan)),
         fragments_(plan_->fragments()),
         options_(plan_->options()),
-	splitSourceFactory_(std::move(splitSourceFactory)){
+        splitSourceFactory_(std::move(splitSourceFactory)) {
     params_.queryCtx = std::move(queryCtx);
   }
 

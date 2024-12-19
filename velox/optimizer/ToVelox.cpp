@@ -16,10 +16,10 @@
 
 #include "velox/core/PlanNode.h"
 #include "velox/exec/HashPartitionFunction.h"
-#include "velox/optimizer/Plan.h"
-#include "velox/optimizer/PlanUtils.h"
 #include "velox/expression/ExprToSubfieldFilter.h"
 #include "velox/expression/ScopedVarSetter.h"
+#include "velox/optimizer/Plan.h"
+#include "velox/optimizer/PlanUtils.h"
 
 namespace facebook::velox::optimizer {
 
@@ -66,8 +66,8 @@ void filterUpdated(BaseTableCP table) {
   std::vector<connector::ColumnHandlePtr> columns;
   for (int32_t i = 0; i < dataColumns->size(); ++i) {
     // Add subfield pruning here.
-    columns.push_back(
-		      connector->metadata()->createColumnHandle(*layout, dataColumns->nameOf(i)));
+    columns.push_back(connector->metadata()->createColumnHandle(
+        *layout, dataColumns->nameOf(i)));
   }
   auto allFilters = std::move(pushdownConjuncts);
   if (remainingFilter) {
@@ -564,8 +564,9 @@ core::PlanNodePtr Optimization::makeFragment(
         // non-const shared_ptr.
         assignments[column->toString()] =
             std::const_pointer_cast<connector::ColumnHandle>(
-							     scan->index->layout->connector()->metadata()->createColumnHandle(
-                    *scan->index->layout, column->name()));
+                scan->index->layout->connector()
+                    ->metadata()
+                    ->createColumnHandle(*scan->index->layout, column->name()));
       }
       auto scanNode = std::make_shared<core::TableScanNode>(
           nextId(*op),

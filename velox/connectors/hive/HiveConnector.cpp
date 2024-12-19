@@ -191,13 +191,14 @@ void registerHivePartitionFunctionSerDe() {
       "HivePartitionFunctionSpec", HivePartitionFunctionSpec::deserialize);
 }
 
-  std::vector<std::unique_ptr<HiveConnectorMetadataFactory>>& hiveConnectorMetadataFactories() {
-    static std::vector<std::unique_ptr<HiveConnectorMetadataFactory>> factories;
+std::vector<std::unique_ptr<HiveConnectorMetadataFactory>>&
+hiveConnectorMetadataFactories() {
+  static std::vector<std::unique_ptr<HiveConnectorMetadataFactory>> factories;
   return factories;
 }
 
 bool registerHiveConnectorMetadataFactory(
-					  std::unique_ptr<HiveConnectorMetadataFactory> factory) {
+    std::unique_ptr<HiveConnectorMetadataFactory> factory) {
   hiveConnectorMetadataFactories().push_back(std::move(factory));
   return true;
 }
