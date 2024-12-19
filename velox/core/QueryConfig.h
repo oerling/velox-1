@@ -82,6 +82,11 @@ class QueryConfig {
   static constexpr const char* kExprMaxArraySizeInReduce =
       "expression.max_array_size_in_reduce";
 
+  /// Controls maximum number of compiled regular expression patterns per
+  /// function instance per thread of execution.
+  static constexpr const char* kExprMaxCompiledRegexes =
+      "expression.max_compiled_regexes";
+
   /// Used for backpressure to block local exchange producers when the local
   /// exchange buffer reaches or exceeds this size.
   static constexpr const char* kMaxLocalExchangeBufferSize =
@@ -378,6 +383,11 @@ class QueryConfig {
   /// derived using micro-benchmarking.
   static constexpr const char* kPrefixSortMinRows = "prefixsort_min_rows";
 
+  /// Maximum number of bytes to be stored in prefix-sort buffer for a string
+  /// key.
+  static constexpr const char* kPrefixSortMaxStringPrefixLength =
+      "prefixsort_max_string_prefix_length";
+
   /// Enable query tracing flag.
   static constexpr const char* kQueryTraceEnabled = "query_trace_enabled";
 
@@ -461,6 +471,24 @@ class QueryConfig {
   /// trigger skewed partition rebalancing by scale writer exchange.
   static constexpr const char* kScaleWriterMinProcessedBytesRebalanceThreshold =
       "scaled_writer_min_processed_bytes_rebalance_threshold";
+
+  /// If true, enables the scaled table scan processing. For each table scan
+  /// plan node, a scan controller is used to control the number of running scan
+  /// threads based on the query memory usage. It keeps increasing the number of
+  /// running threads until the query memory usage exceeds the threshold defined
+  /// by 'table_scan_scale_up_memory_usage_ratio'.
+  static constexpr const char* kTableScanScaledProcessingEnabled =
+      "table_scan_scaled_processing_enabled";
+
+  /// The query memory usage ratio used by scan controller to decide if it can
+  /// increase the number of running scan threads. When the query memory usage
+  /// is below this ratio, the scan controller keeps increasing the running scan
+  /// thread for scale up, and stop once exceeds this ratio. The value is in the
+  /// range of [0, 1].
+  ///
+  /// NOTE: this only applies if 'table_scan_scaled_processing_enabled' is true.
+  static constexpr const char* kTableScanScaleUpMemoryUsageRatio =
+      "table_scan_scale_up_memory_usage_ratio";
 
   bool selectiveNimbleReaderEnabled() const {
     return get<bool>(kSelectiveNimbleReaderEnabled, false);
@@ -610,6 +638,10 @@ class QueryConfig {
 
   uint64_t exprMaxArraySizeInReduce() const {
     return get<uint64_t>(kExprMaxArraySizeInReduce, 100'000);
+  }
+
+  uint64_t exprMaxCompiledRegexes() const {
+    return get<uint64_t>(kExprMaxCompiledRegexes, 100);
   }
 
   bool adjustTimestampToTimezone() const {
@@ -844,6 +876,10 @@ class QueryConfig {
     return get<uint32_t>(kPrefixSortMinRows, 128);
   }
 
+  uint32_t prefixSortMaxStringPrefixLength() const {
+    return get<uint32_t>(kPrefixSortMaxStringPrefixLength, 16);
+  }
+
   double scaleWriterRebalanceMaxMemoryUsageRatio() const {
     return get<double>(kScaleWriterRebalanceMaxMemoryUsageRatio, 0.7);
   }
@@ -860,6 +896,14 @@ class QueryConfig {
   uint64_t scaleWriterMinProcessedBytesRebalanceThreshold() const {
     return get<uint64_t>(
         kScaleWriterMinProcessedBytesRebalanceThreshold, 256 << 20);
+  }
+
+  bool tableScanScaledProcessingEnabled() const {
+    return get<bool>(kTableScanScaledProcessingEnabled, false);
+  }
+
+  double tableScanScaleUpMemoryUsageRatio() const {
+    return get<double>(kTableScanScaleUpMemoryUsageRatio, 0.7);
   }
 
   template <typename T>

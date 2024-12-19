@@ -144,6 +144,10 @@ Generic Configuration
      - integer
      - 128
      - Minimum number of rows to use prefix-sort. The default value has been derived using micro-benchmarking.
+   * - prefixsort_max_string_prefix_length
+     - integer
+     - 16
+     - Byte length of the string prefix stored in the prefix-sort buffer. This doesn't include the null byte.
 
 .. _expression-evaluation-conf:
 
@@ -179,6 +183,10 @@ Expression Evaluation Configuration
      - integer
      - 100000
      - ``Reduce`` function will throw an error if encountered an array of size greater than this.
+   * - expression.max_compiled_regexes
+     - integer
+     - 100
+     - Controls maximum number of compiled regular expression patterns per batch.
    * - debug_disable_expression_with_peeling
      - bool
      - false
@@ -382,6 +390,23 @@ Table Scan
      - integer
      - 2
      - Maximum number of splits to preload per driver. Set to 0 to disable preloading.
+   * - table_scan_scaled_processing_enabled
+     - bool
+     - false
+     - If true, enables the scaled table scan processing. For each table scan
+       plan node, a scan controller is used to control the number of running scan
+       threads based on the query memory usage. It keeps increasing the number of
+       running threads until the query memory usage exceeds the threshold defined
+       by 'table_scan_scale_up_memory_usage_ratio'.
+   * - table_scan_scale_up_memory_usage_ratio
+     - double
+     - 0.5
+     - The query memory usage ratio used by scan controller to decide if it can
+       increase the number of running scan threads. When the query memory usage
+       is below this ratio, the scan controller scale up the scan processing by
+       increasing the number of running scan threads, and stop once exceeds this
+       ratio. The value is in the range of [0, 1]. This only applies if
+       'table_scan_scaled_processing_enabled' is true.
 
 Table Writer
 ------------
@@ -406,26 +431,26 @@ Table Writer
      - double
      - 0.7
      - The max ratio of a query used memory to its max capacity, and the scale
-     - writer exchange stops scaling writer processing if the query's current
-     - memory usage exceeds this ratio. The value is in the range of (0, 1].
+       writer exchange stops scaling writer processing if the query's current
+       memory usage exceeds this ratio. The value is in the range of (0, 1].
    * - scaled_writer_max_partitions_per_writer
      - integer
      - 128
      - The max number of logical table partitions that can be assigned to a
-     - single table writer thread. The logical table partition is used by local
-     - exchange writer for writer scaling, and multiple physical table
-     - partitions can be mapped to the same logical table partition based on the
-     - hash value of calculated partitioned ids.
+       single table writer thread. The logical table partition is used by local
+       exchange writer for writer scaling, and multiple physical table
+       partitions can be mapped to the same logical table partition based on the
+       hash value of calculated partitioned ids.
+   * - scaled_writer_min_partition_processed_bytes_rebalance_threshold
      - integer
      - 128MB
-   * - scaled_writer_min_partition_processed_bytes_rebalance_threshold
      - Minimum amount of data processed by a logical table partition to trigger
-     - writer scaling if it is detected as overloaded by scale wrirer exchange.
+       writer scaling if it is detected as overloaded by scale wrirer exchange.
    * - scaled_writer_min_processed_bytes_rebalance_threshold
-     - Minimum amount of data processed by all the logical table partitions to
-     - trigger skewed partition rebalancing by scale writer exchange.
      - integer
      - 256MB
+     - Minimum amount of data processed by all the logical table partitions to
+       trigger skewed partition rebalancing by scale writer exchange.
 
 Hive Connector
 --------------
@@ -558,7 +583,7 @@ Each query can override the config by setting corresponding query session proper
      - tinyint
      - 9
      - Timestamp unit used when writing timestamps into Parquet through Arrow bridge.
-       Valid values are 0 (second), 3 (millisecond), 6 (microsecond), 9 (nanosecond).
+       Valid values are 3 (millisecond), 6 (microsecond), and 9 (nanosecond).
    * - hive.orc.writer.linear-stripe-size-heuristics
      - orc_writer_linear_stripe_size_heuristics
      - bool
@@ -709,7 +734,7 @@ These semantics are similar to the `Apache Hadoop-Aws module <https://hadoop.apa
    * - fs.azure.account.auth.type.<storage-account>.dfs.core.windows.net
      - string
      - SharedKey
-     - Specifies the authentication mechanism to use for Azure storage accounts. 
+     - Specifies the authentication mechanism to use for Azure storage accounts.
        **Allowed values:** "SharedKey", "OAuth", "SAS".
        "SharedKey": Uses the storage account name and key for authentication.
        "OAuth": Utilizes OAuth tokens for secure authentication.
@@ -739,7 +764,7 @@ These semantics are similar to the `Apache Hadoop-Aws module <https://hadoop.apa
    * - fs.azure.account.oauth2.client.endpoint.<storage-account>.dfs.core.windows.net
      - string
      -
-     - Specifies the OAuth 2.0 token endpoint URL for the Azure AD application.  
+     - Specifies the OAuth 2.0 token endpoint URL for the Azure AD application.
        This endpoint is used to acquire access tokens for authenticating with Azure storage.
        The URL follows the format: `https://login.microsoftonline.com/<tenant-id>/oauth2/token`.
 

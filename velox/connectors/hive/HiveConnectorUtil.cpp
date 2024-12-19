@@ -906,16 +906,15 @@ core::TypedExprPtr extractFiltersFromRemainingFilter(
 namespace {
 
 #ifdef VELOX_ENABLE_PARQUET
-std::optional<TimestampUnit> getTimestampUnit(
+std::optional<TimestampPrecision> getTimestampUnit(
     const config::ConfigBase& config,
     const char* configKey) {
   if (const auto unit = config.get<uint8_t>(configKey)) {
     VELOX_CHECK(
-        unit == 0 /*second*/ || unit == 3 /*milli*/ || unit == 6 /*micro*/ ||
-            unit == 9 /*nano*/,
+        unit == 3 /*milli*/ || unit == 6 /*micro*/ || unit == 9 /*nano*/,
         "Invalid timestamp unit: {}",
         unit.value());
-    return std::optional(static_cast<TimestampUnit>(unit.value()));
+    return std::optional(static_cast<TimestampPrecision>(unit.value()));
   }
   return std::nullopt;
 }
@@ -976,7 +975,7 @@ void updateDWRFWriterOptions(
       std::dynamic_pointer_cast<dwrf::WriterOptions>(writerOptions);
   VELOX_CHECK_NOT_NULL(
       dwrfWriterOptions, "DWRF writer expected a DWRF WriterOptions object.");
-  std::map<std::string, std::string> configs;
+  std::map<std::string, std::string> configs = writerOptions->serdeParameters;
 
   if (writerOptions->compressionKind.has_value()) {
     configs.emplace(

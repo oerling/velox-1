@@ -58,6 +58,7 @@ class OperatorTraceInputWriter {
   const serializer::presto::PrestoVectorSerde::PrestoOptions options_ = {
       true,
       common::CompressionKind::CompressionKind_ZSTD,
+      0.8,
       /*nullsFirst=*/true};
   const std::shared_ptr<filesystems::FileSystem> fs_;
   memory::MemoryPool* const pool_;
@@ -65,7 +66,6 @@ class OperatorTraceInputWriter {
   const UpdateAndCheckTraceLimitCB updateAndCheckTraceLimitCB_;
 
   std::unique_ptr<WriteFile> traceFile_;
-  TypePtr dataType_;
   std::unique_ptr<VectorStreamGroup> batch_;
   bool limitExceeded_{false};
   bool finished_{false};
