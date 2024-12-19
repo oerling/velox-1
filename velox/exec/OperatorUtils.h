@@ -103,14 +103,14 @@ struct WrapState {
   folly::F14FastMap<Buffer*, Buffer*> transposeResults;
 };
 
-  /// Wraps 'inputVector' with 'wrapIndices' and
-  /// 'wrapNulls'. 'wrapSize' is the size of of 'wrapIndices' and of
-  /// the resulting vector. Dictionary combining is deduplicated using
-  /// 'wrapState'. If the same indices are added on top of dictionary
-  /// encoded vectors sharing the same wrapping, the resulting vectors
-  /// will share the same composition of the original wrap and
-  /// 'wrapIndices'.
-  VectorPtr wrapOne(
+/// Wraps 'inputVector' with 'wrapIndices' and
+/// 'wrapNulls'. 'wrapSize' is the size of of 'wrapIndices' and of
+/// the resulting vector. Dictionary combining is deduplicated using
+/// 'wrapState'. If the same indices are added on top of dictionary
+/// encoded vectors sharing the same wrapping, the resulting vectors
+/// will share the same composition of the original wrap and
+/// 'wrapIndices'.
+VectorPtr wrapOne(
     vector_size_t wrapSize,
     BufferPtr wrapIndices,
     const VectorPtr& inputVector,

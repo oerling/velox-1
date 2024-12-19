@@ -1068,7 +1068,8 @@ void BaseVector::transposeIndicesWithNulls(
   static_assert(sizeof(vector_size_t) == sizeof(int32_t));
   for (auto i = 0; i < wrapSize; i += kBatch) {
     auto indexBatch = xsimd::load_unaligned(wrapIndices + i);
-    uint8_t wrapNullsByte = i + kBatch > wrapSize ? bits::lowMask(wrapSize - i) : 0xff;
+    uint8_t wrapNullsByte =
+        i + kBatch > wrapSize ? bits::lowMask(wrapSize - i) : 0xff;
 
     if (wrapNulls) {
       wrapNullsByte &= reinterpret_cast<const uint8_t*>(wrapNulls)[i / 8];
@@ -1084,7 +1085,8 @@ void BaseVector::transposeIndicesWithNulls(
       wrapNullsByte &= baseNullBits;
     }
     reinterpret_cast<uint8_t*>(resultNulls)[i / 8] = wrapNullsByte;
-    simd::gather<int32_t>(baseIndices, indexBatch).store_unaligned(resultIndices + i);
+    simd::gather<int32_t>(baseIndices, indexBatch)
+        .store_unaligned(resultIndices + i);
   }
 }
 

@@ -304,7 +304,8 @@ VectorPtr wrapOne(
         newIndices->asMutable<vector_size_t>(),
         newNulls->asMutable<uint64_t>());
 
-    return BaseVector::wrapInDictionary(newNulls, newIndices, wrapSize, baseValues);
+    return BaseVector::wrapInDictionary(
+        newNulls, newIndices, wrapSize, baseValues);
   }
 
   // if another column had the same indices as this one and this one does not
@@ -325,7 +326,8 @@ VectorPtr wrapOne(
   // If another column has the same wrapping and does not add nulls, we can use
   // the same transposed indices.
   wrapState.transposeResults[baseIndices.get()] = newIndices.get();
-  return BaseVector::wrapInDictionary(wrapNulls, newIndices, wrapSize, baseValues);
+  return BaseVector::wrapInDictionary(
+      wrapNulls, newIndices, wrapSize, baseValues);
 }
 
 VectorPtr wrapChild(
