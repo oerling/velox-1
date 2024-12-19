@@ -49,21 +49,6 @@ class HiveConnector : public Connector {
     return metadata_.get();
   }
 
-  ColumnHandlePtr createColumnHandle(
-      const TableLayout& layout,
-      const std::string& columnName,
-      std::vector<common::Subfield> subfields = {},
-      std::optional<TypePtr> castToType = std::nullopt,
-      SubfieldMapping subfieldMapping = {}) override;
-
-  ConnectorTableHandlePtr createTableHandle(
-      const TableLayout& layout,
-      std::vector<ColumnHandlePtr> columnHandles,
-      core::ExpressionEvaluator& evaluator,
-      std::vector<core::TypedExprPtr> filters,
-      std::vector<core::TypedExprPtr>& rejectedFilters,
-      std::optional<LookupKeys> lookupKeys = std::nullopt) override;
-
   std::unique_ptr<DataSource> createDataSource(
       const RowTypePtr& outputType,
       const std::shared_ptr<ConnectorTableHandle>& tableHandle,

@@ -14,12 +14,31 @@
  * limitations under the License.
  */
 
-
 #include "velox/runner/ConnectorSplitSource.h"
 
 namespace facebook::velox::runner {
 
+std::vector<SplitAndGroup> ConnectorSplitSource::getSplits(
+    uint64_t targetBytes) override {
+  auto splits = source->getSplits(targetBytes);
+  std::vector<SplitAndGroup> runnerSplits;
+  // convert the connector::SplitSource::SplitAndGroup to
+  // runner::SplitSource::SplitAndGroup.
+  for (auto& s : splits) {
+    runnerSplits.push_back({s.split, s.group});
+  }
+  return runnerSplits;
 }
 
+std::shared_ptr<SplitSource> ConnectorSplitSourceFactory::splitSourceForScan(
+    const core::TableScanNode& scan) {
+  auto handle = scan.tableHandle();
+  auto connector = connector::getConnector(handle->connectorId());
+  auto partitions =
+      connector->metadata()->splitManager()->listPartitions(handle);
+  auto source =
+      connector->metadata()->splitManager()->getSplitSource(handle, partitions);
+  return std::make_shared<ConnectorSplitSource>(std::move(source));
+}
 
-
+} // namespace facebook::velox::runner

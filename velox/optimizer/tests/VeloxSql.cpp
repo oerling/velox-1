@@ -43,6 +43,7 @@
 #include "velox/parse/QueryPlanner.h"
 #include "velox/parse/TypeResolver.h"
 #include "velox/runner/LocalRunner.h"
+#include "velox/runner/ConnectorSplitSource.h"
 #include "velox/runner/Schema.h"
 #include "velox/serializers/PrestoSerializer.h"
 #include "velox/vector/VectorSaver.h"
@@ -509,7 +510,7 @@ class VeloxRunner {
     facebook::velox::optimizer::queryCtx() = nullptr;
     RunStats runStats;
     try {
-      runner = std::make_shared<LocalRunner>(fragmentedPlan, queryCtx);
+      runner = std::make_shared<LocalRunner>(fragmentedPlan, queryCtx, std::make_shared<runner::ConnectorSplitSourceFactory>());
       std::vector<RowVectorPtr> results;
       runInner(*runner, results, runStats);
 

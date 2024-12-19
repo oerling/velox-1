@@ -14,41 +14,30 @@
  * limitations under the License.
  */
 
-#include "velox/runner/Runner.h"
 #include "velox/optimizer/connectors/ConnectorMetadata.h"
+#include "velox/runner/Runner.h"
 
 namespace facebook::velox::runner {
 
-  /// A runner::SplitSource that encapsulates a connector::SplitSource. runner::SplitSource does not depend on ConnectorMetadata.h, thus we have a proxy between the two.
-  class ConnectorSplitSource : public SplitSource {
-  public:
-    ConectorSplitSource(std::shared_ptr<connector::SplitSource> source)
+/// A runner::SplitSource that encapsulates a connector::SplitSource.
+/// runner::SplitSource does not depend on ConnectorMetadata.h, thus we have a
+/// proxy between the two.
+class ConnectorSplitSource : public SplitSource {
+ public:
+  ConectorSplitSource(std::shared_ptr<connector::SplitSource> source)
       : source_(std::move(source)) {}
 
-    std::vector<SplitAndGroup> getSplits(uint64_t targetBytes) override {
-      auto splits = source->getSplits(targetBytes);
-      std::vector<SplitAndGroup> runnerSplits;
-      // convert the connector::SplitSource::SplitAndGroup to runner::SplitSource::SplitAndGroup.
-      for (auto& s : splits) {
-	runnerSplits.push_back({s.split, s.group});
-      }
-      return runnerSplits;
-    }
-  };
-  
-  
-  class ConnectorSplitSourceFactory : public SplitSourceFactory {
-  public:
-    std::shared_ptr<SplitSource> splitSourceForScan() {
-      auto name = scan->tableHandle()->tableName();
-      auto* metadata = scan.tableHandle()->connector()->metadata();
-      auto* layout = metadata->findTable(name)->layouts()[0];
-      metadata 
-    }
-  };
-}
+  std::vector<SplitAndGroup> getSplits(uint64_t targetBytes) override;
 
+ private:
+  std::shared_ptr<connector::SplitSource> source_;
+};
 
+/// Generic SplitSourceFactory that delegates the work to ConnectorMetadata.
+class ConnectorSplitSourceFactory : public SplitSourceFactory {
+ public:
+  std::shared_ptr<SplitSource> ConnectorSplitSourceFactory::splitSourceForScan(
+      const core::TableScanNode& scan) override;
+};
 
-
-
+} // namespace facebook::velox::runner

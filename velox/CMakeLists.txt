@@ -80,7 +80,7 @@ if(${VELOX_ENABLE_SUBSTRAIT})
 endif()
 
 if(VELOX_ENABLE_PARQUET)
-  add_subdirectory(experimental/query)
+  add_subdirectory(optimizer)
 endif()
 
 if(${VELOX_BUILD_TESTING})
