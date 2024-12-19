@@ -556,10 +556,10 @@ class BaseVector {
   static void transposeIndicesWithNulls(
       const vector_size_t* baseIndices,
       const uint64_t* baseNulls,
-      vector_size_t size,
+      vector_size_t wrapSize,
       const vector_size_t* wrapIndices,
       const uint64_t* wrapNulls,
-      vector_size_t* result,
+      vector_size_t* resultIndices,
       uint64_t* resultNulls);
 
   /// Flattens 'dictionaryValues', which is a dictionary and replaces
@@ -572,9 +572,9 @@ class BaseVector {
   /// lazy values vector and finds out that the loaded is itself a
   /// dictionary.
   static void transposeDictionaryValues(
-      vector_size_t size,
-      BufferPtr& nulls,
-      BufferPtr& indices,
+      vector_size_t wrapSize,
+      BufferPtr& wrapNulls,
+      BufferPtr& wrapIndices,
       std::shared_ptr<BaseVector>& dictionaryValues);
 
   // Returns a vector of the type of 'source' where 'indices' contains

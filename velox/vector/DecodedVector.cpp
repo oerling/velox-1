@@ -180,7 +180,6 @@ void DecodedVector::combineWrappers(
         return;
       case VectorEncoding::Simple::DICTIONARY: {
         if (!wasLazy) {
-          // LOG(ERROR) << "Multilevel dict ";
           VELOX_FAIL("Limit to one level");
         }
         applyDictionaryWrapper(*values, rows);

@@ -93,22 +93,29 @@ RowVectorPtr wrap(
 /// be done once per distinct wrapper in the input. WrapState records
 /// the compositions that are already made.
 struct WrapState {
-  // Records extra nulls added in wrapping. If extra nulls are added, the same
-  // extra nulls must be applied to all columns.
+  // Records wrap nulls added in wrapping. If wrap nulls are added, the same
+  // wrap nulls must be applied to all columns.
   Buffer* nulls;
 
   // Set of distinct wrappers with its transpose result as second. These are
   // non-owning references and live during making a result vector that wraps
   // inputs.
-  std::vector<std::pair<Buffer*, Buffer*>> transposeResults;
+  folly::F14FastMap<Buffer*, Buffer*> transposeResults;
 };
 
-VectorPtr wrapOne(
-    vector_size_t size,
-    BufferPtr mapping,
-    const VectorPtr& vector,
-    BufferPtr extraNulls,
-    WrapState& state);
+  /// Wraps 'inputVector' with 'wrapIndices' and
+  /// 'wrapNulls'. 'wrapSize' is the size of of 'wrapIndices' and of
+  /// the resulting vector. Dictionary combining is deduplicated using
+  /// 'wrapState'. If the same indices are added on top of dictionary
+  /// encoded vectors sharing the same wrapping, the resulting vectors
+  /// will share the same composition of the original wrap and
+  /// 'wrapIndices'.
+  VectorPtr wrapOne(
+    vector_size_t wrapSize,
+    BufferPtr wrapIndices,
+    const VectorPtr& inputVector,
+    BufferPtr wrapNulls,
+    WrapState& wrapState);
 
 // Ensures that all LazyVectors reachable from 'input' are loaded for all rows.
 void loadColumns(const RowVectorPtr& input, core::ExecCtx& execCtx);

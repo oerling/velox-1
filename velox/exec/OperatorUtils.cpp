@@ -259,72 +259,73 @@ vector_size_t processFilterResults(
 }
 
 VectorPtr wrapOne(
-    vector_size_t size,
-    BufferPtr mapping,
-    const VectorPtr& vector,
-    BufferPtr extraNulls,
-    WrapState& state) {
-  if (!mapping) {
-    VELOX_CHECK_NULL(extraNulls);
-    return vector;
-  }
-  if (vector->encoding() != VectorEncoding::Simple::DICTIONARY) {
-    return BaseVector::wrapInDictionary(extraNulls, mapping, size, vector);
-  }
-  if (state.transposeResults.empty()) {
-    state.nulls = extraNulls.get();
-  } else {
-    VELOX_CHECK(
-        state.nulls == extraNulls.get(),
-        "Must have identical extra nulls for all wrapped columns");
-  }
-  auto indices = vector->wrapInfo();
-  auto base = vector->valueVector();
-  // The base will be wrapped again without loading any lazy. The
-  // rewrapping is permitted in this case.
-  base->clearContainingLazyAndWrapped();
-  auto rawNulls = vector->rawNulls();
-  if (!rawNulls) {
-    // if another column had the same indices as this one and this one does not
-    // add nulls, we use the same transposed wrapping.
-    for (auto& result : state.transposeResults) {
-      if (indices.get() == result.first) {
-        return BaseVector::wrapInDictionary(
-            extraNulls, BufferPtr(result.second), size, base);
-      }
-    }
+    vector_size_t wrapSize,
+    BufferPtr wrapIndices,
+    const VectorPtr& inputVector,
+    BufferPtr wrapNulls,
+    WrapState& wrapState) {
+  if (!wrapIndices) {
+    VELOX_CHECK_NULL(wrapNulls);
+    return inputVector;
   }
 
-  if (rawNulls) {
+  if (inputVector->encoding() != VectorEncoding::Simple::DICTIONARY) {
+    return BaseVector::wrapInDictionary(
+        wrapNulls, wrapIndices, wrapSize, inputVector);
+  }
+
+  if (wrapState.transposeResults.empty()) {
+    wrapState.nulls = wrapNulls.get();
+  } else {
+    VELOX_CHECK(
+        wrapState.nulls == wrapNulls.get(),
+        "Must have identical wrapNulls for all wrapped columns");
+  }
+  auto baseIndices = inputVector->wrapInfo();
+  auto baseValues = inputVector->valueVector();
+  // The base will be wrapped again without loading any lazy. The
+  // rewrapping is permitted in this case.
+  baseValues->clearContainingLazyAndWrapped();
+  auto* rawBaseNulls = inputVector->rawNulls();
+  if (rawBaseNulls) {
     // Dictionary adds nulls.
     BufferPtr newIndices =
-        AlignedBuffer::allocate<vector_size_t>(size, vector->pool());
-    BufferPtr newNulls = AlignedBuffer::allocate<bool>(size, vector->pool());
-    const uint64_t* rawExtraNulls =
-        extraNulls ? extraNulls->as<uint64_t>() : nullptr;
+        AlignedBuffer::allocate<vector_size_t>(wrapSize, inputVector->pool());
+    BufferPtr newNulls =
+        AlignedBuffer::allocate<bool>(wrapSize, inputVector->pool());
+    const uint64_t* rawWrapNulls =
+        wrapNulls ? wrapNulls->as<uint64_t>() : nullptr;
     BaseVector::transposeIndicesWithNulls(
-        indices->as<vector_size_t>(),
-        rawNulls,
-        size,
-        mapping->as<vector_size_t>(),
-        rawExtraNulls,
+        baseIndices->as<vector_size_t>(),
+        rawBaseNulls,
+        wrapSize,
+        wrapIndices->as<vector_size_t>(),
+        rawWrapNulls,
         newIndices->asMutable<vector_size_t>(),
         newNulls->asMutable<uint64_t>());
 
-    return BaseVector::wrapInDictionary(newNulls, newIndices, size, base);
+    return BaseVector::wrapInDictionary(newNulls, newIndices, wrapSize, baseValues);
   }
+
+  // if another column had the same indices as this one and this one does not
+  // add nulls, we use the same transposed wrapping.
+  auto it = wrapState.transposeResults.find(baseIndices.get());
+  if (it != wrapState.transposeResults.end()) {
+    return BaseVector::wrapInDictionary(
+        wrapNulls, BufferPtr(it->second), wrapSize, baseValues);
+  }
+
   auto newIndices =
-      AlignedBuffer::allocate<vector_size_t>(size, vector->pool());
+      AlignedBuffer::allocate<vector_size_t>(wrapSize, inputVector->pool());
   BaseVector::transposeIndices(
-      indices->as<vector_size_t>(),
-      size,
-      mapping->as<vector_size_t>(),
+      baseIndices->as<vector_size_t>(),
+      wrapSize,
+      wrapIndices->as<vector_size_t>(),
       newIndices->asMutable<vector_size_t>());
   // If another column has the same wrapping and does not add nulls, we can use
   // the same transposed indices.
-  state.transposeResults.push_back(
-      std::make_pair<Buffer*, Buffer*>(indices.get(), newIndices.get()));
-  return BaseVector::wrapInDictionary(extraNulls, newIndices, size, base);
+  wrapState.transposeResults[baseIndices.get()] = newIndices.get();
+  return BaseVector::wrapInDictionary(wrapNulls, newIndices, wrapSize, baseValues);
 }
 
 VectorPtr wrapChild(
