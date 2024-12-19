@@ -131,7 +131,7 @@ void LocalHiveConnectorMetadata::makeQueryCtx() {
 
 void LocalHiveConnectorMetadata::makeConnectorQueryCtx() {
   common::SpillConfig spillConfig;
-  common::PrefixSortConfig prefixSortConfig(100, 130);
+  common::PrefixSortConfig prefixSortConfig;
   schemaPool_ = queryCtx_->pool()->addLeafChild("schemaReader");
   connectorQueryCtx_ = std::make_shared<connector::ConnectorQueryCtx>(
       schemaPool_.get(),
