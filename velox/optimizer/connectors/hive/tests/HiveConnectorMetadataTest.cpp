@@ -15,18 +15,18 @@
  * limitations under the License.
  */
 
-#include "velox/optimizer/connectors/hive/LocalHiveConnectorMetadata.h"
 #include "velox/exec/tests/utils/DistributedPlanBuilder.h"
 #include "velox/exec/tests/utils/LocalRunnerTestBase.h"
 #include "velox/exec/tests/utils/QueryAssertions.h"
+#include "velox/optimizer/connectors/hive/LocalHiveConnectorMetadata.h"
 
 using namespace facebook::velox;
 using namespace facebook::velox::exec;
 using namespace facebook::velox::exec::test;
 using namespace facebook::velox::connector;
 
-class HiveConnectorMetadataTest : public LocalRunnerTestBase{
-protected :
+class HiveConnectorMetadataTest : public LocalRunnerTestBase {
+ protected:
   static constexpr int32_t kNumFiles = 5;
   static constexpr int32_t kNumVectors = 5;
   static constexpr int32_t kRowsPerVector = 10000;
@@ -42,16 +42,14 @@ protected :
       makeAscending(rows, counter1);
     };
 
-
     rowType_ = ROW({"c0"}, {BIGINT()});
-    testTables_ = {
-        TableSpec{
-            .name = "T",
-            .columns = rowType_,
-            .rowsPerVector = kRowsPerVector,
-            .numVectorsPerFile = kNumVectors,
-            .numFiles = kNumFiles,
-            .customizeData = customize1}};
+    testTables_ = {TableSpec{
+        .name = "T",
+        .columns = rowType_,
+        .rowsPerVector = kRowsPerVector,
+        .numVectorsPerFile = kNumVectors,
+        .numFiles = kNumFiles,
+        .customizeData = customize1}};
 
     // Creates the data and schema from 'testTables_'. These are created on the
     // first test fixture initialization.
@@ -68,7 +66,7 @@ protected :
 
   inline static RowTypePtr rowType_;
 };
-  
+
 TEST_F(HiveConnectorMetadataTest, basic) {
   auto connector = getConnector(kHiveConnectorId);
   auto metadata = connector->metadata();
@@ -83,9 +81,11 @@ TEST_F(HiveConnectorMetadataTest, basic) {
   std::vector<ColumnHandlePtr> columns = {columnHandle};
   std::vector<core::TypedExprPtr> filters;
   std::vector<core::TypedExprPtr> rejectedFilters;
-  auto ctx = dynamic_cast<hive::LocalHiveConnectorMetadata*>(metadata)->connectorQueryCtx();
+  auto ctx = dynamic_cast<hive::LocalHiveConnectorMetadata*>(metadata)
+                 ->connectorQueryCtx();
 
-  auto tableHandle = metadata->createTableHandle(*layout, columns, *ctx->expressionEvaluator(), filters, rejectedFilters);
+  auto tableHandle = metadata->createTableHandle(
+      *layout, columns, *ctx->expressionEvaluator(), filters, rejectedFilters);
   EXPECT_TRUE(rejectedFilters.empty());
   std::vector<ColumnStatistics> stats;
   std::vector<common::Subfield> fields;
