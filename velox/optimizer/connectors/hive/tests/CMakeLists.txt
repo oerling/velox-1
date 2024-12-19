@@ -13,7 +13,7 @@
 # limitations under the License.
 add_executable(
   velox_hive_connector_metadata_test
-  HiveMetadataTest.cpp
+  HiveConnectorMetadataTest.cpp
 )
 
 add_test(velox_hive_connector_metadata_test velox_hive_connector_metadata_test)

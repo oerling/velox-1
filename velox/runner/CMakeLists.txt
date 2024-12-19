@@ -41,6 +41,7 @@ velox_link_libraries(
 velox_add_library(velox_connector_split_source ConnectorSplitSource.cpp)
 
 velox_link_libraries(
+  velox_connector_split_source
   velox_connector_metadata
   velox_local_runner
   velox_schema
