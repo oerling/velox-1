@@ -16,7 +16,7 @@
 
 #pragma once
 
-#include "velox/connectors/ConnectorMetadata.h"
+#include "velox/optimizer/connectors/ConnectorMetadata.h"
 #include "velox/connectors/hive/HiveConfig.h"
 #include "velox/dwio/common/Options.h"
 
@@ -92,9 +92,25 @@ class HiveTableLayout : public TableLayout {
   std::optional<int32_t> numBuckets_;
 };
 
-class HiveConnectorMetadata : public ConnectorMetadata {};
+class HiveConnectorMetadata : public ConnectorMetadata {
+public:
+  ColumnHandlePtr createColumnHandle(
+      const TableLayout& layout,
+      const std::string& columnName,
+      std::vector<common::Subfield> subfields = {},
+      std::optional<TypePtr> castToType = std::nullopt,
+      SubfieldMapping subfieldMapping = {}) override;
 
-class HiveConnector;
+  ConnectorTableHandlePtr createTableHandle(
+      const TableLayout& layout,
+      std::vector<ColumnHandlePtr> columnHandles,
+      core::ExpressionEvaluator& evaluator,
+      std::vector<core::TypedExprPtr> filters,
+      std::vector<core::TypedExprPtr>& rejectedFilters,
+      std::optional<LookupKeys> lookupKeys = std::nullopt) override;
+
+};
+
 
 /// Registered HiveConnectorMetadataFactory functions are applied to the
 /// connector. The first one to return non-nullptr supplies the metadata. The
