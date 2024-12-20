@@ -226,7 +226,7 @@ class VeloxRunner {
     std::unordered_map<std::string, std::string> connectorConfig;
     connectorConfig[connector::hive::HiveConfig::kLocalDataPath] =
         FLAGS_data_path;
-    connectorConfig[connector::hive::HiveConfig::kLocalDefaultFileFormat] =
+    connectorConfig[connector::hive::HiveConfig::kLocalFileFormat] =
         FLAGS_data_format;
     auto config =
         std::make_shared<config::ConfigBase>(std::move(connectorConfig));

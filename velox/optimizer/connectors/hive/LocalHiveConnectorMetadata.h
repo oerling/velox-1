@@ -191,6 +191,7 @@ class LocalHiveConnectorMetadata : public HiveConnectorMetadata {
   const Table* findTable(const std::string& name) override;
 
   ConnectorSplitManager* splitManager() override {
+    ensureInitialized();
     return &splitManager_;
   }
 
@@ -212,16 +213,20 @@ class LocalHiveConnectorMetadata : public HiveConnectorMetadata {
   /// tables for name resolution.
   const std::unordered_map<std::string, std::unique_ptr<LocalTable>>& tables()
       const {
+    ensureInitialized();
     return tables_;
   }
 
  private:
+  void ensureInitialized() const;
   void makeQueryCtx();
   void makeConnectorQueryCtx();
   void readTables(const std::string& path);
 
   void loadTable(const std::string& tableName, const fs::path& tablePath);
 
+  mutable std::mutex mutex_;
+  mutable bool initialized_{false};
   std::shared_ptr<HiveConfig> hiveConfig_;
   std::shared_ptr<memory::MemoryPool> rootPool_{
       memory::memoryManager()->addRootPool()};

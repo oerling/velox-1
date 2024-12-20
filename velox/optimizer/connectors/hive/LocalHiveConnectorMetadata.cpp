@@ -102,8 +102,8 @@ LocalHiveConnectorMetadata::LocalHiveConnectorMetadata(
       splitManager_(this) {}
 
 void LocalHiveConnectorMetadata::initialize() {
-  auto formatName = hiveConfig_->localDefaultFileFormat();
-  auto path = hiveConfig_->localDataPath();
+  auto formatName = hiveConfig_->hiveLocalFileFormat();
+  auto path = hiveConfig_->hiveLocalDataPath();
   format_ = formatName == "dwrf" ? dwio::common::FileFormat::DWRF
       : formatName == "parquet"  ? dwio::common::FileFormat::PARQUET
                                  : dwio::common::FileFormat::UNKNOWN;
@@ -112,6 +112,15 @@ void LocalHiveConnectorMetadata::initialize() {
   readTables(path);
 }
 
+void LocalHiveConnectorMetadata::ensureInitialized() const {
+  std::lock_guard<std::mutex> l(mutex_);
+  if (initialized_) {
+    return;
+  }
+  const_cast<LocalHiveConnectorMetadata*>(this)->initialize();
+  initialized_ = true;
+}
+  
 void LocalHiveConnectorMetadata::makeQueryCtx() {
   std::unordered_map<std::string, std::string> config;
   std::unordered_map<std::string, std::shared_ptr<config::ConfigBase>>
@@ -533,6 +542,7 @@ const std::unordered_map<std::string, const Column*>& LocalTable::columnMap()
 }
 
 const Table* LocalHiveConnectorMetadata::findTable(const std::string& name) {
+  ensureInitialized();
   auto it = tables_.find(name);
   if (it == tables_.end()) {
     return nullptr;
@@ -546,14 +556,11 @@ class LocalHiveConnectorMetadataFactory : public HiveConnectorMetadataFactory {
   std::shared_ptr<ConnectorMetadata> create(HiveConnector* connector) override {
     auto hiveConfig =
         std::make_shared<HiveConfig>(connector->connectorConfig());
-    auto path = hiveConfig->localDataPath();
+    auto path = hiveConfig->hiveLocalDataPath();
     if (path.empty()) {
       return nullptr;
     }
     return std::make_shared<LocalHiveConnectorMetadata>(connector);
-  }
-  void initialize(ConnectorMetadata* metadata) override {
-    dynamic_cast<LocalHiveConnectorMetadata*>(metadata)->initialize();
   }
 };
 

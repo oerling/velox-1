@@ -75,9 +75,6 @@ struct ConnectorSplit : public ISerializable {
 class ColumnHandle : public ISerializable {
  public:
   virtual ~ColumnHandle() = default;
-  virtual const std::string& name() const {
-    VELOX_NYI();
-  }
 
   virtual const std::string& name() const {
     VELOX_UNSUPPORTED();

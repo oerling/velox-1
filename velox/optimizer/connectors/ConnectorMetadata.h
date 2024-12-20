@@ -351,7 +351,7 @@ class SplitSource {
   /// execution, the group is always 0.
   struct SplitAndGroup {
     std::shared_ptr<ConnectorSplit> split;
-    int32_t group;
+    uint32_t group;
   };
 
   virtual ~SplitSource() = default;
