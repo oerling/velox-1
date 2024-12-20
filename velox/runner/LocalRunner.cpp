@@ -47,7 +47,7 @@ std::vector<exec::Split> listAllSplits(std::shared_ptr<SplitSource> source) {
     VELOX_CHECK(!splits.empty());
     for (auto& split : splits) {
       if (split.split == nullptr) {
-	return result;
+        return result;
         break;
       }
       result.push_back(exec::Split(std::move(split.split)));
@@ -279,7 +279,7 @@ std::vector<exec::TaskStats> LocalRunner::stats() const {
 }
 
 std::vector<SplitSource::SplitAndGroup> TestingSplitSource::getSplits(
-								      uint64_t /*targetBytes*/) {
+    uint64_t /*targetBytes*/) {
   if (splitIdx_ >= splits_.size()) {
     return {{nullptr, 0}};
   }

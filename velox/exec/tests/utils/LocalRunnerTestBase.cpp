@@ -102,7 +102,7 @@ LocalRunnerTestBase::makeTestingSplitSourceFactory(
   std::unordered_map<
       core::PlanNodeId,
       std::vector<std::shared_ptr<connector::ConnectorSplit>>>
-    nodeSplitMap;
+      nodeSplitMap;
   for (auto& fragment : plan->fragments()) {
     for (auto& scan : fragment.scans) {
       auto& name = scan->tableHandle()->tableName();
@@ -118,7 +118,8 @@ LocalRunnerTestBase::makeTestingSplitSourceFactory(
       nodeSplitMap[scan->id()] = std::move(splits);
     }
   };
-  return std::make_shared<runner::TestingSplitSourceFactory>(std::move(nodeSplitMap));
+  return std::make_shared<runner::TestingSplitSourceFactory>(
+      std::move(nodeSplitMap));
 }
 
 std::vector<RowVectorPtr> readCursor(

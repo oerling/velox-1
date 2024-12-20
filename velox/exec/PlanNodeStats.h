@@ -160,8 +160,8 @@ std::unordered_map<core::PlanNodeId, PlanNodeStats> toPlanStats(
 
 folly::dynamic toPlanStatsJson(const facebook::velox::exec::TaskStats& stats);
 
- using PlanNodeAnnotation = std::function<std::string(const PlanNodeId& id)>;
- 
+using PlanNodeAnnotation = std::function<std::string(const PlanNodeId& id)>;
+
 /// Returns human-friendly representation of the plan augmented with runtime
 /// statistics. The result has the same plan representation as in
 /// PlanNode::toString(true, true), but each plan node includes an additional
@@ -178,6 +178,5 @@ std::string printPlanWithStats(
     const core::PlanNode& plan,
     const TaskStats& taskStats,
     bool includeCustomStats = false,
-    PlanNodeAnnotation annotation =
-        nullptr);
+    PlanNodeAnnotation annotation = nullptr);
 } // namespace facebook::velox::exec

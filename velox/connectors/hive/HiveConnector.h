@@ -156,12 +156,16 @@ class HivePartitionFunctionSpec : public core::PartitionFunctionSpec {
 
 void registerHivePartitionFunctionSerDe();
 
-  /// Hook for connecting metadata functions to a HiveConnector. Each registered factory is called after initializing a HiveConnector until one of these returns a ConnectorMetadata instance.
-  class HiveConnectorMetadataFactory {
+/// Hook for connecting metadata functions to a HiveConnector. Each registered
+/// factory is called after initializing a HiveConnector until one of these
+/// returns a ConnectorMetadata instance.
+class HiveConnectorMetadataFactory {
  public:
   virtual ~HiveConnectorMetadataFactory() = default;
 
-    /// Returns a ConnectorMetadata to complete'hiveConnector' if 'this' recognizes a data source, e.g. local file system or remote metadata service associated to configs in 'hiveConnector'.
+  /// Returns a ConnectorMetadata to complete'hiveConnector' if 'this'
+  /// recognizes a data source, e.g. local file system or remote metadata
+  /// service associated to configs in 'hiveConnector'.
   virtual std::shared_ptr<ConnectorMetadata> create(
       HiveConnector* connector) = 0;
 };
