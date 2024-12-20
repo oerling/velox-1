@@ -33,6 +33,14 @@ using namespace facebook::velox::dwrf;
 
 namespace facebook::velox::connector::hive {
 
+namespace {
+std::vector<std::unique_ptr<HiveConnectorMetadataFactory>>&
+hiveConnectorMetadataFactories() {
+  static std::vector<std::unique_ptr<HiveConnectorMetadataFactory>> factories;
+  return factories;
+}
+} // namespace
+
 HiveConnector::HiveConnector(
     const std::string& id,
     std::shared_ptr<const config::ConfigBase> config,
@@ -57,9 +65,6 @@ HiveConnector::HiveConnector(
   for (auto& factory : hiveConnectorMetadataFactories()) {
     metadata_ = factory->create(this);
     if (metadata_ != nullptr) {
-      // Two-phase construction. The Connector and ConnectorMetadata need to be
-      // coupled to finalize metadata setup.
-      factory->initialize(metadata_.get());
       break;
     }
   }
@@ -189,12 +194,6 @@ void registerHivePartitionFunctionSerDe() {
   auto& registry = DeserializationWithContextRegistryForSharedPtr();
   registry.Register(
       "HivePartitionFunctionSpec", HivePartitionFunctionSpec::deserialize);
-}
-
-std::vector<std::unique_ptr<HiveConnectorMetadataFactory>>&
-hiveConnectorMetadataFactories() {
-  static std::vector<std::unique_ptr<HiveConnectorMetadataFactory>> factories;
-  return factories;
 }
 
 bool registerHiveConnectorMetadataFactory(

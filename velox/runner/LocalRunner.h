@@ -25,9 +25,9 @@ namespace facebook::velox::runner {
 
 /// Testing proxy for a split source managed by a system with full metadata
 /// access.
-class TestingSplitSource : public SplitSource {
+class SimpleSplitSource : public SplitSource {
  public:
-  TestingSplitSource(
+  SimpleSplitSource(
       std::vector<std::shared_ptr<connector::ConnectorSplit>> splits)
       : splits_(std::move(splits)){};
 
@@ -40,13 +40,13 @@ class TestingSplitSource : public SplitSource {
 
 /// Testing proxy for a split source factory that uses connector metadata to
 /// enumerate splits. This takes a precomputed split list for each scan.
-class TestingSplitSourceFactory : public SplitSourceFactory {
+class SimpleSplitSourceFactory : public SplitSourceFactory {
  public:
-  TestingSplitSourceFactory(
+  SimpleSplitSourceFactory(
       std::unordered_map<
           core::PlanNodeId,
-          std::vector<std::shared_ptr<connector::ConnectorSplit>>> splitMap)
-      : splitMap_(std::move(splitMap)) {}
+          std::vector<std::shared_ptr<connector::ConnectorSplit>>> nodeSplitMap)
+      : nodeSplitMap_(std::move(nodeSplitMap)) {}
 
   std::shared_ptr<SplitSource> splitSourceForScan(
       const core::TableScanNode& scan) override;
@@ -55,7 +55,7 @@ class TestingSplitSourceFactory : public SplitSourceFactory {
   std::unordered_map<
       core::PlanNodeId,
       std::vector<std::shared_ptr<connector::ConnectorSplit>>>
-      splitMap_;
+      nodeSplitMap_;
 };
 
 /// Runner for in-process execution of a distributed plan.

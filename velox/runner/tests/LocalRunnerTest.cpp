@@ -128,7 +128,7 @@ class LocalRunnerTest : public LocalRunnerTestBase {
   void checkScanCount(const std::string& id, int32_t numWorkers) {
     auto scan = makeScanPlan(id, numWorkers);
     auto rootPool = makeRootPool(id);
-    auto splitSourceFactory = makeTestingSplitSourceFactory(scan);
+    auto splitSourceFactory = makeSimpleSplitSourceFactory(scan);
     auto localRunner = std::make_shared<LocalRunner>(
         std::move(scan), makeQueryCtx(id, rootPool.get()), splitSourceFactory);
     auto results = readCursor(localRunner);
@@ -153,7 +153,7 @@ TEST_F(LocalRunnerTest, count) {
   auto join = makeJoinPlan();
   const std::string id = "q1";
   auto rootPool = makeRootPool(id);
-  auto splitSourceFactory = makeTestingSplitSourceFactory(join);
+  auto splitSourceFactory = makeSimpleSplitSourceFactory(join);
   auto localRunner = std::make_shared<LocalRunner>(
       std::move(join), makeQueryCtx(id, rootPool.get()), splitSourceFactory);
   auto results = readCursor(localRunner);
@@ -171,7 +171,7 @@ TEST_F(LocalRunnerTest, error) {
   auto join = makeJoinPlan("if (c0 = 111, c0 / 0, c0 + 1) as c0");
   const std::string id = "q1";
   auto rootPool = makeRootPool(id);
-  auto splitSourceFactory = makeTestingSplitSourceFactory(join);
+  auto splitSourceFactory = makeSimpleSplitSourceFactory(join);
   auto localRunner = std::make_shared<LocalRunner>(
       std::move(join), makeQueryCtx(id, rootPool.get()), splitSourceFactory);
   EXPECT_THROW(readCursor(localRunner), VeloxUserError);

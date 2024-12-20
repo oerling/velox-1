@@ -296,7 +296,7 @@ std::string printPlanWithStats(
     const core::PlanNode& plan,
     const TaskStats& taskStats,
     bool includeCustomStats,
-    std::function<std::string(const core::PlanNodeId& planNodeId)> annotation) {
+    PlanNodeAnnotation annotation) {
   auto planStats = toPlanStats(taskStats);
   auto leafPlanNodes = plan.leafPlanNodeIds();
 

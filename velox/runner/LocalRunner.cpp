@@ -42,21 +42,18 @@ RowVectorPtr LocalRunner::next() {
 namespace {
 std::vector<exec::Split> listAllSplits(std::shared_ptr<SplitSource> source) {
   std::vector<exec::Split> result;
-  bool done = false;
   for (;;) {
     auto splits = source->getSplits(std::numeric_limits<uint64_t>::max());
+    VELOX_CHECK(!splits.empty());
     for (auto& split : splits) {
       if (split.split == nullptr) {
-        done = true;
+        return result;
         break;
       }
       result.push_back(exec::Split(std::move(split.split)));
     }
-    if (done) {
-      break;
-    }
   }
-  return result;
+  VELOX_UNREACHABLE();
 }
 } // namespace
 
@@ -206,7 +203,7 @@ LocalRunner::makeStages() {
       auto source = splitSourceForScan(*scan);
       std::vector<SplitSource::SplitAndGroup> splits;
       int32_t splitIdx = 0;
-      auto nextSplit = [&]() {
+      auto getNextSplit = [&]() {
         if (splitIdx < splits.size()) {
           return exec::Split(std::move(splits[splitIdx++].split));
         }
@@ -218,7 +215,7 @@ LocalRunner::makeStages() {
       bool allDone = false;
       do {
         for (auto i = 0; i < stages_[fragmentIndex].size(); ++i) {
-          auto split = nextSplit();
+          auto split = getNextSplit();
           if (!split.hasConnectorSplit()) {
             allDone = true;
             break;
@@ -281,23 +278,21 @@ std::vector<exec::TaskStats> LocalRunner::stats() const {
   return result;
 }
 
-std::vector<SplitSource::SplitAndGroup> TestingSplitSource::getSplits(
-    uint64_t targetBytes) {
-  std::vector<SplitSource::SplitAndGroup> result;
+std::vector<SplitSource::SplitAndGroup> SimpleSplitSource::getSplits(
+    uint64_t /*targetBytes*/) {
   if (splitIdx_ >= splits_.size()) {
     return {{nullptr, 0}};
   }
-  result.push_back(SplitAndGroup{std::move(splits_[splitIdx_++]), 0});
-  return result;
+  return {SplitAndGroup{std::move(splits_[splitIdx_++]), 0}};
 }
 
-std::shared_ptr<SplitSource> TestingSplitSourceFactory::splitSourceForScan(
+std::shared_ptr<SplitSource> SimpleSplitSourceFactory::splitSourceForScan(
     const core::TableScanNode& scan) {
-  auto it = splitMap_.find(scan.id());
-  if (it == splitMap_.end()) {
+  auto it = nodeSplitMap_.find(scan.id());
+  if (it == nodeSplitMap_.end()) {
     VELOX_FAIL("Splits aare not provided for scan {}", scan.id());
   }
-  return std::make_shared<TestingSplitSource>(it->second);
+  return std::make_shared<SimpleSplitSource>(it->second);
 }
 
 } // namespace facebook::velox::runner

@@ -52,15 +52,17 @@ void LocalRunnerTestBase::ensureTestData() {
   if (!files_) {
     makeTables(testTables_, files_);
   }
-  updateConnector();
+  // Destroy and rebuild the testing connector. The connector will
+  // show the metadata if the connector is wired for metadata.
+  setupConnector();
 }
 
-void LocalRunnerTestBase::updateConnector() {
+void LocalRunnerTestBase::setupConnector() {
   connector::unregisterConnector(kHiveConnectorId);
 
   std::unordered_map<std::string, std::string> configs;
   configs[connector::hive::HiveConfig::kLocalDataPath] = files_->getPath();
-  configs[connector::hive::HiveConfig::kLocalDefaultFileFormat] = "dwrf";
+  configs[connector::hive::HiveConfig::kLocalFileFormat] = "dwrf";
   auto hiveConnector =
       connector::getConnectorFactory(
           connector::hive::HiveConnectorFactory::kHiveConnectorName)
@@ -88,23 +90,23 @@ void LocalRunnerTestBase::makeTables(
         }
       }
       auto filePath = fmt::format("{}/f{}", tablePath, i);
-      filePaths_[spec.name].push_back(filePath);
+      tableFilePaths_[spec.name].push_back(filePath);
       writeToFile(filePath, vectors);
     }
   }
 }
 
-std::shared_ptr<runner::TestingSplitSourceFactory>
-LocalRunnerTestBase::makeTestingSplitSourceFactory(
+std::shared_ptr<runner::SimpleSplitSourceFactory>
+LocalRunnerTestBase::makeSimpleSplitSourceFactory(
     const runner::MultiFragmentPlanPtr& plan) {
   std::unordered_map<
       core::PlanNodeId,
       std::vector<std::shared_ptr<connector::ConnectorSplit>>>
-      map;
+      nodeSplitMap;
   for (auto& fragment : plan->fragments()) {
     for (auto& scan : fragment.scans) {
       auto& name = scan->tableHandle()->tableName();
-      auto files = filePaths_[name];
+      auto files = tableFilePaths_[name];
       VELOX_CHECK(!files.empty(), "No splits known for {}", name);
       std::vector<std::shared_ptr<connector::ConnectorSplit>> splits;
       for (auto& file : files) {
@@ -113,10 +115,11 @@ LocalRunnerTestBase::makeTestingSplitSourceFactory(
                              .fileFormat(dwio::common::FileFormat::DWRF)
                              .build());
       }
-      map[scan->id()] = std::move(splits);
+      nodeSplitMap[scan->id()] = std::move(splits);
     }
   };
-  return std::make_shared<runner::TestingSplitSourceFactory>(std::move(map));
+  return std::make_shared<runner::SimpleSplitSourceFactory>(
+      std::move(nodeSplitMap));
 }
 
 std::vector<RowVectorPtr> readCursor(

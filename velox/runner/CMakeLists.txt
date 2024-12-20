@@ -28,7 +28,6 @@ velox_add_library(velox_local_runner LocalRunner.cpp Runner.cpp)
 
 velox_link_libraries(
   velox_local_runner
-  velox_schema
   velox_multifragment_plan
   velox_common_base
   velox_memory
