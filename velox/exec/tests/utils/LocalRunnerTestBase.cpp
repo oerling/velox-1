@@ -30,13 +30,12 @@ void LocalRunnerTestBase::SetUp() {
 std::shared_ptr<core::QueryCtx> LocalRunnerTestBase::makeQueryCtx(
     const std::string& queryId,
     memory::MemoryPool* rootPool) {
-  auto config = config_;
+  auto& config = config_;
   auto hiveConfig = hiveConfig_;
   std::unordered_map<std::string, std::shared_ptr<config::ConfigBase>>
       connectorConfigs;
-  auto copy = hiveConfig_;
   connectorConfigs[kHiveConnectorId] =
-      std::make_shared<config::ConfigBase>(std::move(copy));
+      std::make_shared<config::ConfigBase>(std::move(hiveConfig));
 
   return core::QueryCtx::create(
       schemaExecutor_.get(),
