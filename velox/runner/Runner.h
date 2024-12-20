@@ -27,7 +27,8 @@ namespace facebook::velox::runner {
 /// scan.
 class SplitSource {
  public:
-  static constexpr uint32_t kUngroupedGroupId = std::numeric_limits<uint32_t>::max();
+  static constexpr uint32_t kUngroupedGroupId =
+      std::numeric_limits<uint32_t>::max();
 
   /// Result of getSplits. Each split belongs to a group. A nullptr split for
   /// group means that there are on more splits for the group. In ungrouped
