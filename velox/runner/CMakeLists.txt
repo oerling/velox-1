@@ -15,7 +15,6 @@ if(${VELOX_BUILD_TESTING})
   add_subdirectory(tests)
 endif()
 
-
 velox_add_library(velox_multifragment_plan MultiFragmentPlan.cpp)
 velox_link_libraries(velox_multifragment_plan velox_common_base velox_memory
                      velox_core)
