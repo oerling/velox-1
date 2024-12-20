@@ -170,7 +170,7 @@ class HiveConnectorMetadataFactory {
       HiveConnector* connector) = 0;
 };
 
-/// Returns the registered HiveConnectorMetadaFactories.
+/// Returns the registered HiveConnectorMetadataFactories.
 std::vector<std::unique_ptr<HiveConnectorMetadataFactory>>&
 hiveConnectorMetadataFactories();
 

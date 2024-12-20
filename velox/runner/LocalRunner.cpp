@@ -283,13 +283,13 @@ std::vector<SplitSource::SplitAndGroup> TestingSplitSource::getSplits(
   if (splitIdx_ >= splits_.size()) {
     return {{nullptr, 0}};
   }
-  return {SplitAndGroup{std::move(splits_[splitIdx_++]), 0})};
+  return {SplitAndGroup{std::move(splits_[splitIdx_++]), 0}};
 }
 
 std::shared_ptr<SplitSource> TestingSplitSourceFactory::splitSourceForScan(
     const core::TableScanNode& scan) {
   auto it = nodeSplitMap_.find(scan.id());
-  if (it == splitMap_.end()) {
+  if (it == nodeSplitMap_.end()) {
     VELOX_FAIL("Splits aare not provided for scan {}", scan.id());
   }
   return std::make_shared<TestingSplitSource>(it->second);
