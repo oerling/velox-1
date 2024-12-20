@@ -278,7 +278,7 @@ std::vector<exec::TaskStats> LocalRunner::stats() const {
   return result;
 }
 
-std::vector<SplitSource::SplitAndGroup> TestingSplitSource::getSplits(
+std::vector<SplitSource::SplitAndGroup> SimpleSplitSource::getSplits(
     uint64_t /*targetBytes*/) {
   if (splitIdx_ >= splits_.size()) {
     return {{nullptr, 0}};
@@ -286,13 +286,13 @@ std::vector<SplitSource::SplitAndGroup> TestingSplitSource::getSplits(
   return {SplitAndGroup{std::move(splits_[splitIdx_++]), 0}};
 }
 
-std::shared_ptr<SplitSource> TestingSplitSourceFactory::splitSourceForScan(
+std::shared_ptr<SplitSource> SimpleSplitSourceFactory::splitSourceForScan(
     const core::TableScanNode& scan) {
   auto it = nodeSplitMap_.find(scan.id());
   if (it == nodeSplitMap_.end()) {
     VELOX_FAIL("Splits aare not provided for scan {}", scan.id());
   }
-  return std::make_shared<TestingSplitSource>(it->second);
+  return std::make_shared<SimpleSplitSource>(it->second);
 }
 
 } // namespace facebook::velox::runner

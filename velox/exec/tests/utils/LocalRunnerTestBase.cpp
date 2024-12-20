@@ -54,10 +54,10 @@ void LocalRunnerTestBase::ensureTestData() {
   }
   // Destroy and rebuild the testing connector. The connector will
   // show the metadata if the connector is wired for metadata.
-  updateConnector();
+  setupConnector();
 }
 
-void LocalRunnerTestBase::updateConnector() {
+void LocalRunnerTestBase::setupConnector() {
   connector::unregisterConnector(kHiveConnectorId);
 
   std::unordered_map<std::string, std::string> configs;
@@ -96,8 +96,8 @@ void LocalRunnerTestBase::makeTables(
   }
 }
 
-std::shared_ptr<runner::TestingSplitSourceFactory>
-LocalRunnerTestBase::makeTestingSplitSourceFactory(
+std::shared_ptr<runner::SimpleSplitSourceFactory>
+LocalRunnerTestBase::makeSimpleSplitSourceFactory(
     const runner::MultiFragmentPlanPtr& plan) {
   std::unordered_map<
       core::PlanNodeId,
@@ -118,7 +118,7 @@ LocalRunnerTestBase::makeTestingSplitSourceFactory(
       nodeSplitMap[scan->id()] = std::move(splits);
     }
   };
-  return std::make_shared<runner::TestingSplitSourceFactory>(
+  return std::make_shared<runner::SimpleSplitSourceFactory>(
       std::move(nodeSplitMap));
 }
 

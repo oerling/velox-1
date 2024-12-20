@@ -59,12 +59,12 @@ class LocalRunnerTestBase : public HiveConnectorTestBase {
   /// that points to the temp directory created by 'this'. If the
   /// connector factory is wired to capture metadata then the metadata
   /// will be available through the connector.
-  void updateConnector();
+  void setupConnector();
 
   /// Returns a split source factory that contains splits for the table scans in
   /// 'plan'. 'plan' should refer to testing tables created by 'this'.
-  std::shared_ptr<runner::TestingSplitSourceFactory>
-  makeTestingSplitSourceFactory(const runner::MultiFragmentPlanPtr& plan);
+  std::shared_ptr<runner::SimpleSplitSourceFactory>
+  makeSimpleSplitSourceFactory(const runner::MultiFragmentPlanPtr& plan);
 
   void makeTables(
       std::vector<TableSpec> specs,

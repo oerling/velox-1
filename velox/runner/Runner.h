@@ -34,7 +34,7 @@ class SplitSource {
   /// execution, the group is kUngroupedGroupId.
   struct SplitAndGroup {
     std::shared_ptr<connector::ConnectorSplit> split;
-    int32_t group;
+    uint32_t group{kUngroupedGroupId};
   };
 
   virtual ~SplitSource() = default;
