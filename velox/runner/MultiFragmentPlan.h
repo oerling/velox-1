@@ -38,6 +38,7 @@ struct InputStage {
 /// of workers and mode of exchange are up to the runtime.
 struct ExecutableFragment {
   ExecutableFragment() = default;
+
   explicit ExecutableFragment(const std::string& taskPrefix)
       : taskPrefix(taskPrefix) {}
   std::string taskPrefix;

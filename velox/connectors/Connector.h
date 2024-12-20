@@ -75,8 +75,9 @@ struct ConnectorSplit : public ISerializable {
 class ColumnHandle : public ISerializable {
  public:
   virtual ~ColumnHandle() = default;
+
   virtual const std::string& name() const {
-    VELOX_NYI();
+    VELOX_UNSUPPORTED();
   }
 
   folly::dynamic serialize() const override;

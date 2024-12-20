@@ -45,8 +45,8 @@ class TestingSplitSourceFactory : public SplitSourceFactory {
   TestingSplitSourceFactory(
       std::unordered_map<
           core::PlanNodeId,
-          std::vector<std::shared_ptr<connector::ConnectorSplit>>> splitMap)
-      : splitMap_(std::move(splitMap)) {}
+          std::vector<std::shared_ptr<connector::ConnectorSplit>>> nodeSplitMap)
+      : nodeSplitMap_(std::move(nodeSplitMap)) {}
 
   std::shared_ptr<SplitSource> splitSourceForScan(
       const core::TableScanNode& scan) override;
@@ -55,7 +55,7 @@ class TestingSplitSourceFactory : public SplitSourceFactory {
   std::unordered_map<
       core::PlanNodeId,
       std::vector<std::shared_ptr<connector::ConnectorSplit>>>
-      splitMap_;
+      nodeSplitMap_;
 };
 
 /// Runner for in-process execution of a distributed plan.

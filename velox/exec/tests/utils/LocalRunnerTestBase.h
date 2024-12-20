@@ -38,7 +38,7 @@ struct TableSpec {
 /// Test helper class that manages a TestCase with a set of generated
 /// tables and a HiveConnector that exposes the files and their
 /// metadata. The lifetime the test data is the test case consisting
-/// of multiple TEST_F's.
+/// of multiple google unit test cases.
 class LocalRunnerTestBase : public HiveConnectorTestBase {
  protected:
   static void SetUpTestCase() {
@@ -55,6 +55,10 @@ class LocalRunnerTestBase : public HiveConnectorTestBase {
 
   void ensureTestData();
 
+  /// Re-creates the connector with kHiveConnectorId with a config
+  /// that points to the temp directory created by 'this'. If the
+  /// connector factory is wired to capture metadata then the metadata
+  /// will be available through the connector.
   void updateConnector();
 
   /// Returns a split source factory that contains splits for the table scans in
@@ -83,7 +87,7 @@ class LocalRunnerTestBase : public HiveConnectorTestBase {
   inline static std::shared_ptr<TempDirectoryPath> files_;
   /// Map from table name to list of file system paths.
   inline static std::unordered_map<std::string, std::vector<std::string>>
-      filePaths_;
+      tableFilePaths_;
   inline static std::unique_ptr<folly::CPUThreadPoolExecutor> schemaExecutor_;
 };
 

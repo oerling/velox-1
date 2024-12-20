@@ -52,6 +52,8 @@ void LocalRunnerTestBase::ensureTestData() {
   if (!files_) {
     makeTables(testTables_, files_);
   }
+  // Destroy and rebuild the testing connector. The connector will
+  // show the metadata if the connector is wired for metadata.
   updateConnector();
 }
 
@@ -88,7 +90,7 @@ void LocalRunnerTestBase::makeTables(
         }
       }
       auto filePath = fmt::format("{}/f{}", tablePath, i);
-      filePaths_[spec.name].push_back(filePath);
+      tableFilePaths_[spec.name].push_back(filePath);
       writeToFile(filePath, vectors);
     }
   }
@@ -100,11 +102,11 @@ LocalRunnerTestBase::makeTestingSplitSourceFactory(
   std::unordered_map<
       core::PlanNodeId,
       std::vector<std::shared_ptr<connector::ConnectorSplit>>>
-      map;
+    nodeSplitMap;
   for (auto& fragment : plan->fragments()) {
     for (auto& scan : fragment.scans) {
       auto& name = scan->tableHandle()->tableName();
-      auto files = filePaths_[name];
+      auto files = tableFilePaths_[name];
       VELOX_CHECK(!files.empty(), "No splits known for {}", name);
       std::vector<std::shared_ptr<connector::ConnectorSplit>> splits;
       for (auto& file : files) {
@@ -113,10 +115,10 @@ LocalRunnerTestBase::makeTestingSplitSourceFactory(
                              .fileFormat(dwio::common::FileFormat::DWRF)
                              .build());
       }
-      map[scan->id()] = std::move(splits);
+      nodeSplitMap[scan->id()] = std::move(splits);
     }
   };
-  return std::make_shared<runner::TestingSplitSourceFactory>(std::move(map));
+  return std::make_shared<runner::TestingSplitSourceFactory>(std::move(nodeSplitMap));
 }
 
 std::vector<RowVectorPtr> readCursor(

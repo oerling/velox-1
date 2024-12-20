@@ -57,9 +57,6 @@ HiveConnector::HiveConnector(
   for (auto& factory : hiveConnectorMetadataFactories()) {
     metadata_ = factory->create(this);
     if (metadata_ != nullptr) {
-      // Two-phase construction. The Connector and ConnectorMetadata need to be
-      // coupled to finalize metadata setup.
-      factory->initialize(metadata_.get());
       break;
     }
   }

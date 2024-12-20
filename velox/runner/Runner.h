@@ -28,7 +28,7 @@ namespace facebook::velox::runner {
 class SplitSource {
  public:
   /// Result of getSplits. Each split belongs to a group. A nullptr split for
-  /// group n means that there are on more splits for the group. In ungrouped
+  /// group means that there are on more splits for the group. In ungrouped
   /// execution, the group is always 0.
   struct SplitAndGroup {
     std::shared_ptr<connector::ConnectorSplit> split;
