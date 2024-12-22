@@ -93,5 +93,9 @@ TEST_F(SqlTest, tableScan) {
   assertSql("SELECT a, avg(b) FROM t WHERE c > 5 GROUP BY 1");
   assertSql("SELECT * FROM t, u WHERE t.a = u.a");
   assertSql("SELECT t.a, t.b, t.c, u.b FROM t, u WHERE t.a = u.a");
+  assertSql("SELECT t.a, t.b, t.c, u.b FROM t left join u on t.a = u.a");
+  assertSql(
+      "SELECT t.a, t.b, t.c FROM t WHERE EXISTS (SELECT 1 FROM u WHERE t.a = u.a)");
 }
+
 } // namespace facebook::velox::exec::test
