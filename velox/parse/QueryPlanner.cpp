@@ -29,6 +29,8 @@
 #include <duckdb/planner/expression/bound_function_expression.hpp> // @manual
 #include <duckdb/planner/expression/bound_reference_expression.hpp> // @manual
 
+#include <iostream>
+
 namespace facebook::velox::core {
 
 namespace {
@@ -704,14 +706,14 @@ PlanNodePtr toVeloxPlan(
     auto& filter = dynamic_cast<::duckdb::LogicalFilter&>(plan);
     if (filter.children[0]->type ==
             ::duckdb::LogicalOperatorType::LOGICAL_CROSS_PRODUCT &&
-        filter.children[0]->children[0]->type ==
+        filter.children[0]->children[1]->type ==
             ::duckdb::LogicalOperatorType::LOGICAL_DELIM_GET) {
       return processDelimGetJoin(filter, pool, queryContext);
     }
   }
   if (plan.type == ::duckdb::LogicalOperatorType::LOGICAL_COMPARISON_JOIN &&
       queryContext.isInDelimJoin &&
-      plan.children[0]->type ==
+      plan.children[1]->type ==
           ::duckdb::LogicalOperatorType::LOGICAL_DELIM_GET) {
     return processDelimGetJoin(
         dynamic_cast<::duckdb::LogicalComparisonJoin&>(plan),
@@ -720,6 +722,9 @@ PlanNodePtr toVeloxPlan(
   }
   for (auto& child : plan.children) {
     sources.push_back(toVeloxPlan(*child, pool, queryContext));
+    if (sources.back() == nullptr) {
+      VELOX_FAIL("null plan for: {}", child->ToString());
+    }
   }
 
   switch (plan.type) {
@@ -800,11 +805,11 @@ PlanNodePtr processDelimGetJoin(
     QueryContext& queryContext) {
   auto& cross =
       dynamic_cast<::duckdb::LogicalCrossProduct&>(*filter.children[0]);
-  int32_t numFromDelimGet = cross.children[0]->types.size();
-  // Column index on the right side for each delim get column.
+  int32_t numFromDelimGet = cross.children[1]->types.size();
+  // Column index on the left side for each delim get column.
   std::vector<int32_t> delimAlias;
   auto right =
-      toVeloxPlan(*filter.children[0]->children[1], pool, queryContext);
+      toVeloxPlan(*filter.children[0]->children[0], pool, queryContext);
   auto rightType = right->outputType();
   std::vector<::duckdb::Expression*> remaining;
   for (auto& conjunct : filter.expressions) {
@@ -852,10 +857,10 @@ PlanNodePtr processDelimGetJoin(
     const ::duckdb::LogicalComparisonJoin& join,
     memory::MemoryPool* pool,
     QueryContext& queryContext) {
-  int32_t numFromDelimGet = join.children[0]->types.size();
+  int32_t numFromDelimGet = join.children[1]->types.size();
   // Column index on the right side for each delim get column.
   std::vector<int32_t> delimAlias(numFromDelimGet);
-  auto right = toVeloxPlan(*join.children[1], pool, queryContext);
+  auto right = toVeloxPlan(*join.children[0], pool, queryContext);
   auto rightType = right->outputType();
   for (auto& condition : join.conditions) {
     auto left =
