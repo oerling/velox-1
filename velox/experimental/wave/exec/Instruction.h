@@ -456,7 +456,8 @@ struct AbstractAggregation : public AbstractOperator {
         aggregates(std::move(aggregates)) {}
 
   int32_t rowSize() {
-    return aggregates.back().accumulatorOffset + sizeof(int64_t);
+    return roundedRowSize;
+    //return aggregates.back().accumulatorOffset + sizeof(int64_t);
   }
 
   bool isSink() const override {
@@ -492,6 +493,8 @@ struct AbstractAggregation : public AbstractOperator {
 
   /// Prepare up to this many result reading streams.
   int16_t maxReadStreams{1};
+
+  int32_t roundedRowSize{0};
 };
 
 struct AbstractReadAggregation : public AbstractOperator {

@@ -46,6 +46,15 @@ const std::string cudaTypeName(const Type& type) {
     default: VELOX_UNSUPPORTED("Type not supported for Cuda atomic {}", type.toString());
     }
   }
+
+  int32_t cudaTypeAlign(const Type& type) {
+    return type.cppSizeInBytes();
+  }
+
+  int32_t cudaTypeSize(const Type& type) {
+    return type.cppSizeInBytes();
+  }
+
   
 bool KernelStep::references(AbstractOperand* op) {
   bool found = false;
@@ -406,17 +415,40 @@ void Filter::generateMain(CompileState& state) {
 }
 
 void AggregateProbe::generateMain(CompileState& state) {
-  makeAggregateOps(state, *this);
+  makeAggregateOps(state, *this, false);
   makeAggregateProbe(state, *this);
 }
 
   std::unique_ptr<AbstractInstruction> AggregateProbe::addInstruction(CompileState& state) {
-    auto agg = std::make_unique<AbstractAggregation>(0, {}, {}, state, ROW({}, {}));
-  return agg;
+    RowTypePtr type;
+    static std::vector<AbstractAggInstruction> empty;
+    auto agg = std::make_unique<AbstractAggregation>(state.nextSerial(), keys, empty, this->state, type);
+    int32_t offset = bits::roundUp(keys.size() + updates.size(), 32) / 8;
+    for (auto& key : keys) {
+      int32_t align = cudaTypeAlign(*key->type);
+      int32_t width = cudaTypeSize(*key->type);
+      offset = bits::roundUp(offset, align) + width;
+    }
+    for (auto& update : updates) {
+      auto [size, align] = update->generator->accumulatorSizeAndAlign(*update);
+      offset = bits::roundUp(offset, align) + size;
+    }
+    agg->roundedRowSize = bits::roundUp(offset, 8);
+    abstractAggregation = agg.get();
+    return agg;
 }
 
 void AggregateUpdate::generateMain(CompileState& state) {}
 
+void ReadAggregation::generateMain(CompileState& state) {
+  makeAggregateOps(state, *probe, true);
+  makeReadAggregation(state, *this);
+}
+  
+  std::unique_ptr<AbstractInstruction> ReadAggregation::addInstruction(CompileState& state) {
+    return std::make_unique<AbstractReadAggregation>(state.nextSerial(), probe->abstractAggregation);
+  }
+  
 void writeDebugFile(const KernelSpec& spec) {
   try {
     std::ofstream out(spec.filePath, std::ios_base::out | std::ios_base::trunc);
@@ -622,14 +654,14 @@ void CompileState::makeLevel(std::vector<KernelBox>& level) {
   for (branchIdx_ = 0; branchIdx_ < level.size(); ++branchIdx_) {
     currentBox_ = &level[branchIdx_];
     for (stepIdx_ = 0; stepIdx_ < currentBox_->steps.size(); ++stepIdx_) {
-      auto instruction = currentBox_->steps[stepIdx_]->addInstruction(*this, instructions);
+      auto instruction = currentBox_->steps[stepIdx_]->addInstruction(*this);
       if (instruction) {
 	instruction->reserveState(instructionStatus_);
-	auto* status= instruction->instructionStatus();
+	auto* status= instruction->mutableInstructionStatus();
 	currentBox_->steps[stepIdx_]->status = *status;
 	auto opInst = dynamic_cast<AbstractOperator*>(instruction.get());
 	if (opInst) {
-	  AbstractState* state = opInst->state();
+	  AbstractState* state = opInst->state;
 	  state->instruction = instruction.get();
 	}
 	}
@@ -645,7 +677,7 @@ void CompileState::makeLevel(std::vector<KernelBox>& level) {
 			  auto* abstractState = operatorStates_[id].get();
 			  auto programState = std::make_unique<ProgramState>();
 			  programState->stateId = abstractState->id;
-			  AbstractInstruction* abstractInst = abstractState->instruction;;
+			  auto* abstractInst = reinterpret_cast<AbstractAggregation*>(abstractState->instruction);
 			  programState->isGlobal = true;
 			  programState->create =
 			    [inst = abstractInst](
@@ -668,6 +700,9 @@ void CompileState::makeLevel(std::vector<KernelBox>& level) {
       operands_,
       std::move(states),
       std::move(kernel));
+  for (auto& i : instructions) {
+    program->add(std::move(i));
+  }
   programs_.push_back(std::move(program));
 }
 

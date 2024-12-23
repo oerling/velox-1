@@ -244,7 +244,7 @@ class AggregateGenerator {
       const AggregateUpdate& update) const {}
 
   /// Adds inline definitions that may be needed by 'probe' or 'update'. May be
-  /// called several times and should add the uncludes only once.
+  /// called several times and should add the includes only once.
   virtual void generateInline(
       CompileState& state,
       const AggregateProbe& probe,
@@ -256,11 +256,12 @@ class AggregateGenerator {
       const AggregateProbe& probe,
       const AggregateUpdate& update) const = 0;
 
+  virtual std::pair<int32_t, int32_t> accumulatorSizeAndAlign(const AggregateUpdate& update) const = 0;
+  
   /// Generates an init of an accumulator.
   virtual std::string generateInit(
       CompileState& state,
       const AggregateUpdate& update) const = 0;
-
   
   /// Generates an update.
   virtual std::string generateUpdate(
@@ -363,6 +364,9 @@ struct AggregateProbe : public KernelStep {
   /// also be in a separate, wider kernel that runs different accumulators in a
   /// different TB.
   std::vector<AggregateUpdate*> inlinedUpdates;
+
+  // The instruction, used for generating the read of the aggregate state.
+  AbstractAggregation* abstractAggregation;
 };
 
 struct ReadAggregation : public KernelStep {
@@ -376,12 +380,17 @@ struct ReadAggregation : public KernelStep {
     visitor(state);
   }
 
-    std::unique_ptr<AbstractInstruction> addInstruction(CompileState& state) override;
-    
+  void generateMain(CompileState& state) override;
+
+  std::unique_ptr<AbstractInstruction> addInstruction(CompileState& state) override;
+
   core::AggregationNode::Step step;
   AbstractState* state;
   std::vector<AbstractOperand*> keys;
   std::vector<AggregateUpdate*> funcs;
+
+  // Reference to the aggregate info for generating the AbstractReadAggregation.
+  AggregateProbe* probe;
 };
 
 struct JoinBuild : public KernelStep {
@@ -739,6 +748,10 @@ class CompileState : public std::enable_shared_from_this<CompileState> {
 
   std::string operandValue(AbstractOperand* op);
 
+  int32_t nextSerial() {
+    return nthContinuable_++;
+  }
+  
  private:
   bool
   addOperator(exec::Operator* op, int32_t& nodeIndex, RowTypePtr& outputType);
@@ -1014,8 +1027,12 @@ void registerWaveFunctions();
 const std::string cudaTypeName(const Type& type);
 
 const std::string cudaAtomicTypeName(const Type& type);
-  
-inline WaveRegistry& waveRegistry() {
+
+  int32_t cudaTypeAlign(const Type& type);
+
+  int32_t cudaTypeSize(const Type& type);
+
+  inline WaveRegistry& waveRegistry() {
   return CompileState::registry();
 }
 

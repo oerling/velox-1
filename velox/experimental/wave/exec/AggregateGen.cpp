@@ -72,4 +72,48 @@ void makeAggregateProbe(CompileState& state, const AggregateProbe& probe) {
   
     }
 
+
+  std::string readAggRow(CompileState& state, const ReadAggregation& read) {
+    std::stringstream out;
+    for (auto i = 0; i < read.funcs.size(); ++i) {
+      auto& func = *read.funcs[i];
+      out << func.generator->generateExtract(state, *read.probe, func);
+    }
+    return out.str();
+  }
+void makeReadAggregation(CompileState& state, const ReadAggregation& read) {
+  auto& out = state.generated();
+
+  out << "  AggregateOps ops(hash, shared);\n";
+  out << "  if (threadIdx.x != 0) { lanestatus = ErrorCode::kInactive; } else {\n"
+      << fmt::format(    
+		     "  auto state =\n"
+		     "    reinterpret_cast<DeviceAggregation*>(shared->states[{}]);\n", state.stateOrdinal(*read.state));
+  if (read.probe->keys.empty()) {
+    out << "  HashRow* row = reinterpret_cast<HashRow*>(state->singleRow);\n";
+    out << readAggRow(state, read);
+    out << "    shared->status->numRows = 1;\n";
+    out << "  }\n";
+    return;
+  }
+  out << "  auto rowIdx = blockIdx.x * kBlockSize + threadIdx.x + 1;\n"
+    "  auto numRows = state->resultRowPointers[shared->streamIdx][0];\n"
+    "  if (rowIdx <= numRows) {\n"
+    "    auto* row = reinterpret_cast<HashRow*>(\n"
+    "      state->resultRowPointers[shared->streamIdx][rowIdx]);\n";
+    // Copy keys and accumulators to output.
+    for (auto i = 0; i < read.probe->keys.size(); ++i) {
+      out << extractColumn("row", fmt::format("key{}", i), state.ordinal(*read.keys[i]), *read.keys[i]);
+    }
+  out << readAggRow(state, read);
+  out << "  if (threadIdx.x == 0) {\n"
+    << "    shared->numRows = rowIdx + kBlockSize <= numRows \n"
+            << "   ? kBlockSize \n"
+            << "    : numRows - blockIdx.x * kBlockSize;\n"
+<< "    }\n";
+
+  
+    }
+
+  
 } // namespace facebook::velox::wave

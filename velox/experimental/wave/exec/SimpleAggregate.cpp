@@ -32,6 +32,11 @@ class SimpleAggregate : public AggregateGenerator {
     state.functionReferenced(binaryFunc_, types, types[0]);
   }
 
+  std::pair<int32_t, int32_t> accumulatorSizeAndAlign(const AggregateUpdate& update) const override {
+    return std::make_pair<int32_t, int32_t>(cudaTypeSize(*update.result->type), cudaTypeAlign(*update.result->type));
+  }
+
+  
   std::string generateAccumulator(
       CompileState& state,
       const AggregateProbe& probe,
@@ -74,7 +79,7 @@ class SimpleAggregate : public AggregateGenerator {
     auto ord = state.ordinal(*update.result);
     auto nthNull = update.accumulatorIdx + probe.keys.size();
     return fmt::format("   setNull(operands, {}, blockBase, (row->nulls{} & (1U << {})) == 0);\n"
-		       "    flatValue<T>(operands, {}, blockBase) = {};\n" , ord, nthNull / 32, nthNull & 31,
+		       "    flatValue<T>(operands, {}, blockBase) = row->acc{};\n" , ord, nthNull / 32, nthNull & 31,
 		       ord, update.accumulatorIdx);
   }
 

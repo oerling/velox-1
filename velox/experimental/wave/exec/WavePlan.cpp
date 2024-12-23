@@ -401,6 +401,7 @@ bool CompileState::tryPlanOperator(
     outputType = node->outputType();
     addSegment(BoundaryType::kSource, node, outputType);
     auto read = makeStep<ReadAggregation>();
+    read->probe = step;
     read->state = state;
     for (auto i = 0; i < node->groupingKeys().size(); ++i) {
       read->keys.push_back(

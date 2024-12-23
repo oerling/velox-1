@@ -159,4 +159,12 @@ void makeRowHash(
   out << "  return hash;\n}\n";
 }
 
+  std::string extractColumn(const std::string& row, const std::string& field, int32_t ordinal, const AbstractOperand& result) {
+    switch (result.type->kind()) {
+    case TypeKind::BIGINT:
+      return fmt::format("    flatResult<{}>(operands, {}, blockBase) = {}->{};\n", cudaTypeName(*result.type), ordinal, row, field);
+    default: VELOX_NYI();
+    }
+  }
+  
 } // namespace facebook::velox::wave

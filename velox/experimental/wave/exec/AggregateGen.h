@@ -21,8 +21,10 @@
 
 namespace facebook::velox::wave {
 
-void makeAggregateOps(CompileState& state, const AggregateProbe& probe);
+  void makeAggregateOps(CompileState& state, const AggregateProbe& probe, bool forRead);
 
 void makeAggregateProbe(CompileState& state, const AggregateProbe& probe);
 
+void makeReadAggregation(CompileState& state, const ReadAggregation& read);
+ 
 } // namespace facebook::velox::wave
