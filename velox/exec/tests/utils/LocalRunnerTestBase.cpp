@@ -104,7 +104,7 @@ LocalRunnerTestBase::makeSimpleSplitSourceFactory(
       nodeSplitMap;
   for (auto& fragment : plan->fragments()) {
     for (auto& scan : fragment.scans) {
-      auto& name = scan->tableHandle()->tableName();
+      auto& name = scan->tableHandle()->name();
       auto files = tableFilePaths_[name];
       VELOX_CHECK(!files.empty(), "No splits known for {}", name);
       std::vector<std::shared_ptr<connector::ConnectorSplit>> splits;

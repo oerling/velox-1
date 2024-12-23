@@ -131,8 +131,12 @@ class HiveTableHandle : public ConnectorTableHandle {
       const RowTypePtr& dataColumns = nullptr,
       const std::unordered_map<std::string, std::string>& tableParameters = {});
 
-  const std::string& tableName() const override {
+  const std::string& tableName() const {
     return tableName_;
+  }
+
+  const std::string& name() const override {
+    return tableName();
   }
 
   bool isFilterPushdownEnabled() const {

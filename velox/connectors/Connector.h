@@ -103,7 +103,10 @@ class ConnectorTableHandle : public ISerializable {
     return connectorId_;
   }
 
-  virtual const std::string& tableName() const {
+  /// Returns the connector-dependent table name. Used with
+  /// ConnectorMetadata. Implementations need to supply a definition
+  /// to work with metadata.
+  virtual const std::string& name() const {
     VELOX_UNSUPPORTED();
   }
 
