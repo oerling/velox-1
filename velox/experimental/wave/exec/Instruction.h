@@ -457,7 +457,7 @@ struct AbstractAggregation : public AbstractOperator {
 
   int32_t rowSize() {
     return roundedRowSize;
-    //return aggregates.back().accumulatorOffset + sizeof(int64_t);
+    // return aggregates.back().accumulatorOffset + sizeof(int64_t);
   }
 
   bool isSink() const override {

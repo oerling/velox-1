@@ -32,11 +32,13 @@ class SimpleAggregate : public AggregateGenerator {
     state.functionReferenced(binaryFunc_, types, types[0]);
   }
 
-  std::pair<int32_t, int32_t> accumulatorSizeAndAlign(const AggregateUpdate& update) const override {
-    return std::make_pair<int32_t, int32_t>(cudaTypeSize(*update.result->type), cudaTypeAlign(*update.result->type));
+  std::pair<int32_t, int32_t> accumulatorSizeAndAlign(
+      const AggregateUpdate& update) const override {
+    return std::make_pair<int32_t, int32_t>(
+        cudaTypeSize(*update.result->type),
+        cudaTypeAlign(*update.result->type));
   }
 
-  
   std::string generateAccumulator(
       CompileState& state,
       const AggregateProbe& probe,
@@ -46,12 +48,11 @@ class SimpleAggregate : public AggregateGenerator {
     return out.str();
   }
 
-  std::string generateInit(
-      CompileState& state,
-      const AggregateUpdate& update) const override {
+  std::string generateInit(CompileState& state, const AggregateUpdate& update)
+      const override {
     return fmt::format("  acc{} = 0;\n", update.accumulatorIdx);
   }
-  
+
   std::string generateUpdate(
       CompileState& state,
       const AggregateProbe& probe,
@@ -62,7 +63,11 @@ class SimpleAggregate : public AggregateGenerator {
       out << fmt::format("   if (!{}) {{\n", state.isNull(update.args[0]));
     }
     if (binaryFunc_ == "plus") {
-      out << fmt::format("      atomicAdd(reinterpret_cast<{}*>(&row->acc{}), {});\n", cudaAtomicTypeName(*update.args[0]->type), update.accumulatorIdx, state.operandValue(update.args[0]));
+      out << fmt::format(
+          "      atomicAdd(reinterpret_cast<{}*>(&row->acc{}), {});\n",
+          cudaAtomicTypeName(*update.args[0]->type),
+          update.accumulatorIdx,
+          state.operandValue(update.args[0]));
     } else {
       VELOX_NYI("Only plus is supported as aggregate reduction");
     }
@@ -78,9 +83,14 @@ class SimpleAggregate : public AggregateGenerator {
       const AggregateUpdate& update) const override {
     auto ord = state.ordinal(*update.result);
     auto nthNull = update.accumulatorIdx + probe.keys.size();
-    return fmt::format("   setNull(operands, {}, blockBase, (row->nulls{} & (1U << {})) == 0);\n"
-		       "    flatValue<T>(operands, {}, blockBase) = row->acc{};\n" , ord, nthNull / 32, nthNull & 31,
-		       ord, update.accumulatorIdx);
+    return fmt::format(
+        "   setNull(operands, {}, blockBase, (row->nulls{} & (1U << {})) == 0);\n"
+        "    flatValue<T>(operands, {}, blockBase) = row->acc{};\n",
+        ord,
+        nthNull / 32,
+        nthNull & 31,
+        ord,
+        update.accumulatorIdx);
   }
 
  protected:

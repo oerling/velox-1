@@ -73,14 +73,15 @@ void Compute::visitResults(std::function<void(AbstractOperand*)> visitor) {
   visitor(operand);
 }
 
-
-void AggregateProbe::visitReferences(std::function<void(AbstractOperand*)> visitor) {
+void AggregateProbe::visitReferences(
+    std::function<void(AbstractOperand*)> visitor) {
   for (auto& key : keys) {
     visitor(key);
   }
 }
 
-void AggregateUpdate::visitReferences(std::function<void(AbstractOperand*)> visitor) {
+void AggregateUpdate::visitReferences(
+    std::function<void(AbstractOperand*)> visitor) {
   for (auto& arg : args) {
     visitor(arg);
   }
@@ -89,15 +90,16 @@ void AggregateUpdate::visitReferences(std::function<void(AbstractOperand*)> visi
   }
 }
 
-  void ReadAggregation::visitResults(std::function<void(AbstractOperand*)> visitor) {
-    for (auto& key : keys) {
-      visitor(key);
-    }
-    for (auto& func : funcs) {
-      visitor(func->result);
-    }
+void ReadAggregation::visitResults(
+    std::function<void(AbstractOperand*)> visitor) {
+  for (auto& key : keys) {
+    visitor(key);
   }
-  
+  for (auto& func : funcs) {
+    visitor(func->result);
+  }
+}
+
 AbstractOperand* markUse(AbstractOperand* op) {
   ++op->numUses;
   return op;
@@ -729,8 +731,8 @@ void PipelineCandidate::markParams(
       }
     });
     box.steps[stepIdx]->visitStates([&](AbstractState* state) {
-				      levelParams[kernelSeq].states.add(state->id);
-				    });
+      levelParams[kernelSeq].states.add(state->id);
+    });
   }
 }
 

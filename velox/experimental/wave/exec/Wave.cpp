@@ -1078,7 +1078,7 @@ Program::Program(
       extraWrap_(extraWrap),
       numBranches_(numBranches),
       sharedMemorySize_(sharedSize),
-      operatorStates_(std::move(states)){
+      operatorStates_(std::move(states)) {
   input.forEach([&](int32_t id) { input_[allOperands[id].get()] = id; });
   local.forEach([&](int32_t id) { local_[allOperands[id].get()] = id; });
   output.forEach([&](int32_t id) { output_[allOperands[id].get()] = id; });

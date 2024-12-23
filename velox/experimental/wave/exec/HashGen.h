@@ -56,6 +56,10 @@ void makeRowHash(
     const std::vector<AbstractOperand*>& keys,
     bool nullableKeys);
 
- std::string extractColumn(const std::string& row, const std::string& field, int32_t ordinal, const AbstractOperand& result);
- 
+std::string extractColumn(
+    const std::string& row,
+    const std::string& field,
+    int32_t ordinal,
+    const AbstractOperand& result);
+
 } // namespace facebook::velox::wave

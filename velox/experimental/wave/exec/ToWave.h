@@ -114,13 +114,13 @@ struct KernelStep {
 
   virtual void visitStates(std::function<void(AbstractState*)> visitor){};
 
-  
   bool references(AbstractOperand* op);
 
   /// Adds the AbstractInstruction to the current Program to interpret return
   /// state and hold OperatorStates. Only steps with retry or operator state add
   /// an instruction.
-  virtual std::unique_ptr<AbstractInstruction> addInstruction(CompileState& state) {
+  virtual std::unique_ptr<AbstractInstruction> addInstruction(
+      CompileState& state) {
     return nullptr;
   }
 
@@ -256,13 +256,14 @@ class AggregateGenerator {
       const AggregateProbe& probe,
       const AggregateUpdate& update) const = 0;
 
-  virtual std::pair<int32_t, int32_t> accumulatorSizeAndAlign(const AggregateUpdate& update) const = 0;
-  
+  virtual std::pair<int32_t, int32_t> accumulatorSizeAndAlign(
+      const AggregateUpdate& update) const = 0;
+
   /// Generates an init of an accumulator.
   virtual std::string generateInit(
       CompileState& state,
       const AggregateUpdate& update) const = 0;
-  
+
   /// Generates an update.
   virtual std::string generateUpdate(
       CompileState& state,
@@ -343,13 +344,14 @@ struct AggregateProbe : public KernelStep {
   void generateMain(CompileState& state) override;
 
   void visitReferences(std::function<void(AbstractOperand*)> visitor) override;
-  
+
   void visitStates(std::function<void(AbstractState*)> visitor) override {
     visitor(state);
   }
 
-  std::unique_ptr<AbstractInstruction> addInstruction(CompileState& state) override;
-    
+  std::unique_ptr<AbstractInstruction> addInstruction(
+      CompileState& state) override;
+
   AbstractState* state;
   std::vector<AbstractOperand*> keys;
 
@@ -375,14 +377,15 @@ struct ReadAggregation : public KernelStep {
   }
 
   void visitResults(std::function<void(AbstractOperand*)> visitor) override;
-  
+
   void visitStates(std::function<void(AbstractState*)> visitor) override {
     visitor(state);
   }
 
   void generateMain(CompileState& state) override;
 
-  std::unique_ptr<AbstractInstruction> addInstruction(CompileState& state) override;
+  std::unique_ptr<AbstractInstruction> addInstruction(
+      CompileState& state) override;
 
   core::AggregationNode::Step step;
   AbstractState* state;
@@ -669,7 +672,6 @@ class CompileState : public std::enable_shared_from_this<CompileState> {
 
   int32_t stateOrdinal(const AbstractState& state);
 
-  
   OperandFlags& flags(const AbstractOperand& op) const {
     return currentCandidate_->flags(&op);
   }
@@ -751,7 +753,7 @@ class CompileState : public std::enable_shared_from_this<CompileState> {
   int32_t nextSerial() {
     return nthContinuable_++;
   }
-  
+
  private:
   bool
   addOperator(exec::Operator* op, int32_t& nodeIndex, RowTypePtr& outputType);
@@ -1028,11 +1030,11 @@ const std::string cudaTypeName(const Type& type);
 
 const std::string cudaAtomicTypeName(const Type& type);
 
-  int32_t cudaTypeAlign(const Type& type);
+int32_t cudaTypeAlign(const Type& type);
 
-  int32_t cudaTypeSize(const Type& type);
+int32_t cudaTypeSize(const Type& type);
 
-  inline WaveRegistry& waveRegistry() {
+inline WaveRegistry& waveRegistry() {
   return CompileState::registry();
 }
 

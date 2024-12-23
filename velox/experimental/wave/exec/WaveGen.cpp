@@ -39,23 +39,26 @@ const std::string cudaTypeName(const Type& type) {
   }
 }
 
-  const std::string cudaAtomicTypeName(const Type& type) {
-    switch (type.kind()) {
-    case TypeKind::BIGINT: return "long long";
-    case TypeKind::INTEGER: return "int";
-    default: VELOX_UNSUPPORTED("Type not supported for Cuda atomic {}", type.toString());
-    }
+const std::string cudaAtomicTypeName(const Type& type) {
+  switch (type.kind()) {
+    case TypeKind::BIGINT:
+      return "long long";
+    case TypeKind::INTEGER:
+      return "int";
+    default:
+      VELOX_UNSUPPORTED(
+          "Type not supported for Cuda atomic {}", type.toString());
   }
+}
 
-  int32_t cudaTypeAlign(const Type& type) {
-    return type.cppSizeInBytes();
-  }
+int32_t cudaTypeAlign(const Type& type) {
+  return type.cppSizeInBytes();
+}
 
-  int32_t cudaTypeSize(const Type& type) {
-    return type.cppSizeInBytes();
-  }
+int32_t cudaTypeSize(const Type& type) {
+  return type.cppSizeInBytes();
+}
 
-  
 bool KernelStep::references(AbstractOperand* op) {
   bool found = false;
   visitReferences([&](AbstractOperand* referenced) {
@@ -88,7 +91,7 @@ int32_t CompileState::stateOrdinal(const AbstractState& state) {
   auto& params = selectedPipelines_[pipelineIdx_].levelParams[kernelSeq_];
   return params.states.ordinal(state.id);
 }
-  
+
 int32_t CompileState::declareVariable(const AbstractOperand& op) {
   auto ord = ordinal(op);
   if (declared_.contains(op.id)) {
@@ -419,23 +422,25 @@ void AggregateProbe::generateMain(CompileState& state) {
   makeAggregateProbe(state, *this);
 }
 
-  std::unique_ptr<AbstractInstruction> AggregateProbe::addInstruction(CompileState& state) {
-    RowTypePtr type;
-    static std::vector<AbstractAggInstruction> empty;
-    auto agg = std::make_unique<AbstractAggregation>(state.nextSerial(), keys, empty, this->state, type);
-    int32_t offset = bits::roundUp(keys.size() + updates.size(), 32) / 8;
-    for (auto& key : keys) {
-      int32_t align = cudaTypeAlign(*key->type);
-      int32_t width = cudaTypeSize(*key->type);
-      offset = bits::roundUp(offset, align) + width;
-    }
-    for (auto& update : updates) {
-      auto [size, align] = update->generator->accumulatorSizeAndAlign(*update);
-      offset = bits::roundUp(offset, align) + size;
-    }
-    agg->roundedRowSize = bits::roundUp(offset, 8);
-    abstractAggregation = agg.get();
-    return agg;
+std::unique_ptr<AbstractInstruction> AggregateProbe::addInstruction(
+    CompileState& state) {
+  RowTypePtr type;
+  static std::vector<AbstractAggInstruction> empty;
+  auto agg = std::make_unique<AbstractAggregation>(
+      state.nextSerial(), keys, empty, this->state, type);
+  int32_t offset = bits::roundUp(keys.size() + updates.size(), 32) / 8;
+  for (auto& key : keys) {
+    int32_t align = cudaTypeAlign(*key->type);
+    int32_t width = cudaTypeSize(*key->type);
+    offset = bits::roundUp(offset, align) + width;
+  }
+  for (auto& update : updates) {
+    auto [size, align] = update->generator->accumulatorSizeAndAlign(*update);
+    offset = bits::roundUp(offset, align) + size;
+  }
+  agg->roundedRowSize = bits::roundUp(offset, 8);
+  abstractAggregation = agg.get();
+  return agg;
 }
 
 void AggregateUpdate::generateMain(CompileState& state) {}
@@ -444,11 +449,13 @@ void ReadAggregation::generateMain(CompileState& state) {
   makeAggregateOps(state, *probe, true);
   makeReadAggregation(state, *this);
 }
-  
-  std::unique_ptr<AbstractInstruction> ReadAggregation::addInstruction(CompileState& state) {
-    return std::make_unique<AbstractReadAggregation>(state.nextSerial(), probe->abstractAggregation);
-  }
-  
+
+std::unique_ptr<AbstractInstruction> ReadAggregation::addInstruction(
+    CompileState& state) {
+  return std::make_unique<AbstractReadAggregation>(
+      state.nextSerial(), probe->abstractAggregation);
+}
+
 void writeDebugFile(const KernelSpec& spec) {
   try {
     std::ofstream out(spec.filePath, std::ios_base::out | std::ios_base::trunc);
@@ -656,15 +663,15 @@ void CompileState::makeLevel(std::vector<KernelBox>& level) {
     for (stepIdx_ = 0; stepIdx_ < currentBox_->steps.size(); ++stepIdx_) {
       auto instruction = currentBox_->steps[stepIdx_]->addInstruction(*this);
       if (instruction) {
-	instruction->reserveState(instructionStatus_);
-	auto* status= instruction->mutableInstructionStatus();
-	currentBox_->steps[stepIdx_]->status = *status;
-	auto opInst = dynamic_cast<AbstractOperator*>(instruction.get());
-	if (opInst) {
-	  AbstractState* state = opInst->state;
-	  state->instruction = instruction.get();
-	}
-	}
+        instruction->reserveState(instructionStatus_);
+        auto* status = instruction->mutableInstructionStatus();
+        currentBox_->steps[stepIdx_]->status = *status;
+        auto opInst = dynamic_cast<AbstractOperator*>(instruction.get());
+        if (opInst) {
+          AbstractState* state = opInst->state;
+          state->instruction = instruction.get();
+        }
+      }
     }
   }
 
@@ -674,22 +681,23 @@ void CompileState::makeLevel(std::vector<KernelBox>& level) {
   fillExtraWrap(extraWrap);
   std::vector<std::unique_ptr<ProgramState>> states;
   params.states.forEach([&](int32_t id) {
-			  auto* abstractState = operatorStates_[id].get();
-			  auto programState = std::make_unique<ProgramState>();
-			  programState->stateId = abstractState->id;
-			  auto* abstractInst = reinterpret_cast<AbstractAggregation*>(abstractState->instruction);
-			  programState->isGlobal = true;
-			  programState->create =
-			    [inst = abstractInst](
-						  WaveStream& stream) -> std::shared_ptr<OperatorState> {
-													 auto newState = std::make_shared<AggregateOperatorState>();
-													 newState->instruction = inst;
-													 stream.makeAggregate(*inst, *newState);
-													 return newState;
-			  };
+    auto* abstractState = operatorStates_[id].get();
+    auto programState = std::make_unique<ProgramState>();
+    programState->stateId = abstractState->id;
+    auto* abstractInst =
+        reinterpret_cast<AbstractAggregation*>(abstractState->instruction);
+    programState->isGlobal = true;
+    programState->create =
+        [inst = abstractInst](
+            WaveStream& stream) -> std::shared_ptr<OperatorState> {
+      auto newState = std::make_shared<AggregateOperatorState>();
+      newState->instruction = inst;
+      stream.makeAggregate(*inst, *newState);
+      return newState;
+    };
 
-			  states.push_back(std::move(programState));
-			});
+    states.push_back(std::move(programState));
+  });
   auto program = std::make_shared<Program>(
       params.input,
       params.local,

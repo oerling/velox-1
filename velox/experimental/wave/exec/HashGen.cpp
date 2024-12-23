@@ -99,21 +99,28 @@ void makeInitKey(
     bool nullableKeys) {
   auto& out = state.generated();
   out << "  [&](HashRow* row) {\n";
-  int32_t numNullFlags = dependent.size() + aggregates.size() + (nullableKeys ? keys.size() : 0);
+  int32_t numNullFlags =
+      dependent.size() + aggregates.size() + (nullableKeys ? keys.size() : 0);
   for (auto i = 0; numNullFlags; i += 32) {
     out << fmt::format("  row->nulls{} = ~0U;\n", i / 32);
   }
   for (auto i = 0; i < dependent.size(); ++i) {
     auto* op = dependent[i];
     auto nthNull = i + keys.size();
-    out << fmt::format("   if ({}) { nulls{} &= ~(1U << {};\n    row->dep{} = {};\n",
-		       state.isNull(op), nthNull / 32, nthNull & 31, i, state.operandValue(op));
+    out << fmt::format(
+        "   if ({}) { nulls{} &= ~(1U << {};\n    row->dep{} = {};\n",
+        state.isNull(op),
+        nthNull / 32,
+        nthNull & 31,
+        i,
+        state.operandValue(op));
   }
   for (auto i = 0; i < aggregates.size(); ++i) {
     auto* update = aggregates[i];
     out << update->generator->generateInit(state, *update);
   }
-  // The first key is written last with a release semantic. At probe time the first key is read first with an acquire semantic.
+  // The first key is written last with a release semantic. At probe time the
+  // first key is read first with an acquire semantic.
   for (int32_t i = keys.size() - 10; i >= 0; --i) {
     auto* op = keys[i];
     if (nullableKeys) {
@@ -124,12 +131,15 @@ void makeInitKey(
           i & 31);
     }
     if (i == 0) {
-      out << fmt::format("   asDeviceAtomic<{}>(&row->key{})->store({}, cuda::memory_order_release);\n",
-			 cudaTypeName(*op->type), i, state.operandValue(op));
+      out << fmt::format(
+          "   asDeviceAtomic<{}>(&row->key{})->store({}, cuda::memory_order_release);\n",
+          cudaTypeName(*op->type),
+          i,
+          state.operandValue(op));
     } else {
       out << fmt::format(
-			 "      row->key{} = {};\n", i, state.operandValue(keys[i]));
-		       }
+          "      row->key{} = {};\n", i, state.operandValue(keys[i]));
+    }
     out << "}\n";
     if (nullableKeys) {
       out << "}\n";
@@ -159,12 +169,22 @@ void makeRowHash(
   out << "  return hash;\n}\n";
 }
 
-  std::string extractColumn(const std::string& row, const std::string& field, int32_t ordinal, const AbstractOperand& result) {
-    switch (result.type->kind()) {
+std::string extractColumn(
+    const std::string& row,
+    const std::string& field,
+    int32_t ordinal,
+    const AbstractOperand& result) {
+  switch (result.type->kind()) {
     case TypeKind::BIGINT:
-      return fmt::format("    flatResult<{}>(operands, {}, blockBase) = {}->{};\n", cudaTypeName(*result.type), ordinal, row, field);
-    default: VELOX_NYI();
-    }
+      return fmt::format(
+          "    flatResult<{}>(operands, {}, blockBase) = {}->{};\n",
+          cudaTypeName(*result.type),
+          ordinal,
+          row,
+          field);
+    default:
+      VELOX_NYI();
   }
-  
+}
+
 } // namespace facebook::velox::wave
