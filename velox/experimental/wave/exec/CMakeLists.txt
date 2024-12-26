@@ -18,8 +18,7 @@ target_link_libraries(
   velox_wave_stream Folly::folly fmt::fmt xsimd)
 
 add_library(
-  velox_wave_exec
-  OBJECT
+  velox_wave_exec OBJECT
   AggregateGen.cpp
   HashGen.cpp
   Aggregation.cpp

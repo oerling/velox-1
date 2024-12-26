@@ -133,7 +133,6 @@ struct KernelStep {
     return *reinterpret_cast<const T*>(this);
   }
 
-  
   /// Placeholder for instruction return status.
   InstructionStatus status;
 };
@@ -269,8 +268,8 @@ class AggregateGenerator {
       CompileState& state,
       const AggregateUpdate& update) const = 0;
 
-
-  /// True if there is an atomic operation for updating the accumulator, e.g. sum, min, max, count.
+  /// True if there is an atomic operation for updating the accumulator, e.g.
+  /// sum, min, max, count.
   virtual bool hasAtomic() const = 0;
 
   /// Emits code to load arguments of an aggregate into registers.
@@ -279,12 +278,15 @@ class AggregateGenerator {
       const AggregateProbe& probe,
       const AggregateUpdate& update) const = 0;
 
-  /// Emits the code to update the accumulator. 'peer' in the scope is the lane from which to load the operands with shfl_sync. 'row' is the row to update. loadArgs() must have been called to ensure the args are in registers.
-    virtual void makeDeduppedUpdate(
+  /// Emits the code to update the accumulator. 'peer' in the scope is the lane
+  /// from which to load the operands with shfl_sync. 'row' is the row to
+  /// update. loadArgs() must have been called to ensure the args are in
+  /// registers.
+  virtual void makeDeduppedUpdate(
       CompileState& state,
       const AggregateProbe& probe,
       const AggregateUpdate& update) const = 0;
-    
+
   /// Generates an update.
   virtual std::string generateUpdate(
       CompileState& state,
@@ -363,22 +365,23 @@ struct AggregateProbe : public KernelStep {
   }
 
   bool isSink() const override {
-    // If all accumulator updates are inline, this is a sink and produces no output.
+    // If all accumulator updates are inline, this is a sink and produces no
+    // output.
     return !updates.empty() && allUpdatesInlined;
   }
-  
+
   void generateMain(CompileState& state) override;
 
   void visitReferences(std::function<void(AbstractOperand*)> visitor) override;
 
   void visitResults(std::function<void(AbstractOperand*)> visitor) override {
-    // If not all updates are inlined, this produces 'rows' as an output for the accumulator updates in the next kernel.
+    // If not all updates are inlined, this produces 'rows' as an output for the
+    // accumulator updates in the next kernel.
     if (!allUpdatesInlined) {
       visitor(rows);
     }
   }
 
-  
   void visitStates(std::function<void(AbstractState*)> visitor) override {
     visitor(state);
   }
@@ -396,14 +399,15 @@ struct AggregateProbe : public KernelStep {
   /// row.
   std::vector<const AggregateUpdate*> updates;
 
-  /// Accumulator updates and related small expressions that are inlined inside the probe code. Updates can
-  /// also be in a separate, wider kernel that runs different accumulators in a
-  /// different TB.
+  /// Accumulator updates and related small expressions that are inlined inside
+  /// the probe code. Updates can also be in a separate, wider kernel that runs
+  /// different accumulators in a different TB.
   std::vector<const KernelStep*> inlinedUpdates;
 
-  /// True  if all updates are inlined inside the probe code, so no other kernel touches the accumulators.
+  /// True  if all updates are inlined inside the probe code, so no other kernel
+  /// touches the accumulators.
   bool allUpdatesInlined{false};
-  
+
   // The instruction, used for generating the read of the aggregate state.
   AbstractAggregation* abstractAggregation;
 };
@@ -796,7 +800,7 @@ class CompileState : public std::enable_shared_from_this<CompileState> {
   AbstractOperand* operandById(int32_t id) {
     return operands_[id].get();
   }
-  
+
  private:
   bool
   addOperator(exec::Operator* op, int32_t& nodeIndex, RowTypePtr& outputType);
@@ -903,7 +907,7 @@ class CompileState : public std::enable_shared_from_this<CompileState> {
   placeExpr(PipelineCandidate& candidate, AbstractOperand* op, bool mayDelay);
 
   void placeAggregation(PipelineCandidate& candidate, Segment& segment);
-  
+
   NullCheck* addNullCheck(AbstractOperand* op);
 
   void markOutputStored(PipelineCandidate& candidate, Segment& segment);
@@ -1055,9 +1059,10 @@ class CompileState : public std::enable_shared_from_this<CompileState> {
   // installed.
   std::vector<Scope> topScopes_;
 
-  // True after the plan is entirely in terms of AbstractOperand. If true, mapping from field names to AbstractOperand is no longer allowed.
+  // True after the plan is entirely in terms of AbstractOperand. If true,
+  // mapping from field names to AbstractOperand is no longer allowed.
   bool namesResolved_{false};
-  
+
   // Counter for making names for wraps.
   int32_t wrapId_{0};
 

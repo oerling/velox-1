@@ -41,7 +41,6 @@ class SimpleAggregate : public AggregateGenerator {
     state.addInclude("velox/experimental/wave/exec/Accumulators.cuh");
   }
 
-  
   std::pair<int32_t, int32_t> accumulatorSizeAndAlign(
       const AggregateUpdate& update) const override {
     return std::make_pair<int32_t, int32_t>(
@@ -66,25 +65,32 @@ class SimpleAggregate : public AggregateGenerator {
   bool hasAtomic() const override {
     return true;
   }
-  
+
   void loadArgs(
-			       CompileState& state,
-			       const AggregateProbe& probe,
-			       const AggregateUpdate& update) const {
+      CompileState& state,
+      const AggregateProbe& probe,
+      const AggregateUpdate& update) const {
     state.ensureOperand(update.args[0]);
   }
 
   virtual void makeDeduppedUpdate(
-				  CompileState& state,
-				  const AggregateProbe& probe,
-				  const AggregateUpdate& update) const {
+      CompileState& state,
+      const AggregateProbe& probe,
+      const AggregateUpdate& update) const {
     if (probe.keys.empty()) {
       VELOX_NYI();
     } else {
       auto nullIdx = update.accumulatorIdx + probe.keys.size();
-      auto reduceName = fmt::format("plus<{}>", cudaTypeName(*update.args[0]->type));
-      state.generated() << fmt::format("  simpleAccumulate(peers, leader, lane, &row->acc{}, &row->nulls{}, {}, {}, {}, {});\n",
-				       update.accumulatorIdx, nullIdx / 32, 1U << nullIdx, state.operandValue(update.args[0]), state.isNull(update.args[0]), reduceName);
+      auto reduceName =
+          fmt::format("plus<{}>", cudaTypeName(*update.args[0]->type));
+      state.generated() << fmt::format(
+          "  simpleAccumulate(peers, leader, lane, &row->acc{}, &row->nulls{}, {}, {}, {}, {});\n",
+          update.accumulatorIdx,
+          nullIdx / 32,
+          1U << nullIdx,
+          state.operandValue(update.args[0]),
+          state.isNull(update.args[0]),
+          reduceName);
     }
   }
 
@@ -112,7 +118,7 @@ class SimpleAggregate : public AggregateGenerator {
     }
     return out.str();
   }
-  
+
   std::string generateExtract(
       CompileState& state,
       const AggregateProbe& probe,
@@ -135,7 +141,7 @@ class SimpleAggregate : public AggregateGenerator {
 
 namespace {
 bool temp = CompileState::aggregateRegistry().registerGenerator(
-								aggregate::kSum,
+    aggregate::kSum,
     std::make_unique<SimpleAggregate>("plus"));
 }
 

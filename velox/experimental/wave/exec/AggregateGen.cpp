@@ -59,39 +59,39 @@ void makeAggregateOps(
 
 /// Emits a lambda that performs the inlined aggregate update.
 
+void makeUpdateLambda(
+    CompileState& state,
+    const AggregateProbe& probe,
+    std::vector<const KernelStep*> updates) {
+  auto& out = state.generated();
 
-  void makeUpdateLambda(CompileState& state, const AggregateProbe& probe, std::vector<const KernelStep*> updates) {
-    auto& out = state.generated();
-    
-    out << "  [&](GpuHashTableBase* table, HashRow* row, uint32_t peers, int32_t leader, int32_t laneId) {\n";
-    std::vector<const AggregateUpdate*> deferred;
+  out << "  [&](GpuHashTableBase* table, HashRow* row, uint32_t peers, int32_t leader, int32_t laneId) {\n";
+  std::vector<const AggregateUpdate*> deferred;
 
-    auto emitUpdates = [&]() {
-			if (deferred.size() > 4) {
-			  for (auto& update : deferred) {
-			    update->generator->makeDeduppedUpdate(state, probe, *update);
-			  }
-			}
-			deferred.clear();
-		      };
-    for (auto lastIdx = 0; lastIdx < updates.size(); ++lastIdx) {
-      auto* step = updates[lastIdx];
-      if (step->kind() != StepKind::kAggregateUpdate) {
-	const_cast<KernelStep*>(step)->generateMain(state);
-	continue;
+  auto emitUpdates = [&]() {
+    if (deferred.size() > 4) {
+      for (auto& update : deferred) {
+        update->generator->makeDeduppedUpdate(state, probe, *update);
       }
-      auto& update = step->as<AggregateUpdate>();
-      update.generator->loadArgs(state, probe, update);
-      deferred.push_back(&update);
-      emitUpdates();
     }
+    deferred.clear();
+  };
+  for (auto lastIdx = 0; lastIdx < updates.size(); ++lastIdx) {
+    auto* step = updates[lastIdx];
+    if (step->kind() != StepKind::kAggregateUpdate) {
+      const_cast<KernelStep*>(step)->generateMain(state);
+      continue;
+    }
+    auto& update = step->as<AggregateUpdate>();
+    update.generator->loadArgs(state, probe, update);
+    deferred.push_back(&update);
     emitUpdates();
-  
-    out << "  }";
   }
+  emitUpdates();
 
+  out << "  }";
+}
 
-  
 void makeAggregateProbe(CompileState& state, const AggregateProbe& probe) {
   auto& out = state.generated();
   makeHash(state, probe.keys, true, "");
@@ -104,25 +104,20 @@ void makeAggregateProbe(CompileState& state, const AggregateProbe& probe) {
   makeCompareLambda(state, probe.keys, true);
   out << ",\n";
   makeInitKey(state, probe.keys, {}, probe.updates, true);
-  out <<
-    ",\n";
+  out << ",\n";
   makeUpdateLambda(state, probe, probe.inlinedUpdates);
   out << ");\n";
-  out <<
-"      __syncthreads();\n"
-    "  laneStatus = shared->status->errors[threadIdx.x];\n"
-    "  if (threadIdx.x == 0 && shared->hasContinue) {\n"
-"    auto ret = gridStatus<AggregateReturn>(shared, agg->status);\n"
-"    ret->numDistinct = table->numDistinct;\n"
-"  }\n"
-"  __syncthreads();\n"
-"  if (threadIdx.x == 0 && shared->isContinue) {\n"
-"    shared->isContinue = false;\n"
-"  }\n"
-    "  __syncthreads();\n";
-
-
-  
+  out << "      __syncthreads();\n"
+         "  laneStatus = shared->status->errors[threadIdx.x];\n"
+         "  if (threadIdx.x == 0 && shared->hasContinue) {\n"
+         "    auto ret = gridStatus<AggregateReturn>(shared, agg->status);\n"
+         "    ret->numDistinct = table->numDistinct;\n"
+         "  }\n"
+         "  __syncthreads();\n"
+         "  if (threadIdx.x == 0 && shared->isContinue) {\n"
+         "    shared->isContinue = false;\n"
+         "  }\n"
+         "  __syncthreads();\n";
 }
 
 std::string readAggRow(CompileState& state, const ReadAggregation& read) {

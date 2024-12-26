@@ -142,7 +142,7 @@ void NullCheck::generateMain(CompileState& state) {
           ordinal & 31,
           mayWrap ? "true" : "false",
           ordinal,
-	  ordinal);
+          ordinal);
       op->inRegister = true;
     } else {
       lastUse.push_back(op);
@@ -346,15 +346,15 @@ void CompileState::functionReferenced(const AbstractOperand* op) {
   functionReferenced(op->expr->name(), types, op->type);
 }
 
-  void CompileState::addInclude(const std::string& path) {
-    auto line = fmt::format("#include \"{}\"", path);
-    if (includes_.count(line) != 0) {
-      return;
-    }
-    includes_.insert(line);
-    includeText_ << line << std::endl;
+void CompileState::addInclude(const std::string& path) {
+  auto line = fmt::format("#include \"{}\"", path);
+  if (includes_.count(line) != 0) {
+    return;
   }
-  
+  includes_.insert(line);
+  includeText_ << line << std::endl;
+}
+
 void CompileState::functionReferenced(
     const std::string& name,
     const std::vector<TypePtr>& types,
@@ -677,10 +677,10 @@ void CompileState::makeLevel(std::vector<KernelBox>& level) {
       if (instruction) {
         instruction->reserveState(instructionStatus_);
         auto* status = instruction->mutableInstructionStatus();
-	if (status) {
-	  currentBox_->steps[stepIdx_]->status = *status;
-	}
-	  auto opInst = dynamic_cast<AbstractOperator*>(instruction.get());
+        if (status) {
+          currentBox_->steps[stepIdx_]->status = *status;
+        }
+        auto opInst = dynamic_cast<AbstractOperator*>(instruction.get());
         if (opInst) {
           AbstractState* state = opInst->state;
           state->instruction = instruction.get();
@@ -742,10 +742,10 @@ void PipelineCandidate::setOutputIds(
   for (auto i = begin; i < end; ++i) {
     auto& params = levelParams[i];
     params.output.forEach([&](auto id) {
-			    op->addOutputId(id);
-			    auto* operand = state->operandById(id);
-			    operand->isStored = true;
-			  });
+      op->addOutputId(id);
+      auto* operand = state->operandById(id);
+      operand->isStored = true;
+    });
   }
 }
 

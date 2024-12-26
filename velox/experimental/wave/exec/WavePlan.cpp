@@ -361,16 +361,13 @@ bool CompileState::tryPlanOperator(
   if (name == "Values" || name == "TableScan") {
     auto node = driverFactory_.planNodes[nodeIndex];
     outputType = driverFactory_.planNodes[nodeIndex]->outputType();
-    addSegment(
-        BoundaryType::kSource,
-        node.get(),
-        outputType);
+    addSegment(BoundaryType::kSource, node.get(), outputType);
     if (name == "TableScan") {
       auto step = makeStep<TableScanStep>();
       step->node = dynamic_cast<const core::TableScanNode*>(node.get());
       step->results = rowTypeToOperands(node->outputType());
       segments_.back().steps.push_back(step);
-    }else {
+    } else {
       auto step = makeStep<ValuesStep>();
       step->node = dynamic_cast<const core::ValuesNode*>(node.get());
       step->results = rowTypeToOperands(node->outputType());
@@ -523,32 +520,34 @@ void recordReference(PipelineCandidate& candidate, AbstractOperand* op) {
       candidate.steps.size() - 1, candidate.boxIdx, box->steps.size());
 }
 
-void distinctLeavesInner(AbstractOperand* op, folly::F14FastSet<AbstractOperand*>& ops) {
-    if (op->constant) {
-      return;
-    }
-    if (ops.count(op)) {
-      return;
-    }
-    if (op->inputs.empty()) {
-      ops.insert(op);
-      return;
-    }
-    for (auto& input : op->inputs) {
-      distinctLeavesInner(input, ops);
-    }
+void distinctLeavesInner(
+    AbstractOperand* op,
+    folly::F14FastSet<AbstractOperand*>& ops) {
+  if (op->constant) {
+    return;
   }
-  
-  std::vector<AbstractOperand*> distinctLeaves(AbstractOperand* op) {
-    std::vector<AbstractOperand*> result;
-    folly::F14FastSet<AbstractOperand*> ops;
-    distinctLeavesInner(op, ops);
-    for (auto& op : ops) {
-      result.push_back(op);
-    }
-    return result;
+  if (ops.count(op)) {
+    return;
   }
-  
+  if (op->inputs.empty()) {
+    ops.insert(op);
+    return;
+  }
+  for (auto& input : op->inputs) {
+    distinctLeavesInner(input, ops);
+  }
+}
+
+std::vector<AbstractOperand*> distinctLeaves(AbstractOperand* op) {
+  std::vector<AbstractOperand*> result;
+  folly::F14FastSet<AbstractOperand*> ops;
+  distinctLeavesInner(op, ops);
+  for (auto& op : ops) {
+    result.push_back(op);
+  }
+  return result;
+}
+
 NullCheck* CompileState::addNullCheck(AbstractOperand* op) {
   auto* check = makeStep<NullCheck>();
   check->operands = distinctLeaves(op);
@@ -645,40 +644,46 @@ void CompileState::recordCandidate(
   candidates_.push_back(std::move(candidate));
 }
 
-  void CompileState::placeAggregation(PipelineCandidate& candidate, Segment& segment) {
-    // Sets the inlined updates to be all updates. An alternative is to spread the updates into the next kernel with different accumulators done on different TBs.
+void CompileState::placeAggregation(
+    PipelineCandidate& candidate,
+    Segment& segment) {
+  // Sets the inlined updates to be all updates. An alternative is to spread the
+  // updates into the next kernel with different accumulators done on different
+  // TBs.
   for (auto& step : segment.steps) {
     if (step->kind() == StepKind::kAggregateProbe) {
       auto& probe = step->as<AggregateProbe>();
       probe.allUpdatesInlined = true;
       for (auto& key : probe.keys) {
-	placeExpr(candidate, key, false);
+        placeExpr(candidate, key, false);
       }
       candidate.currentBox->steps.push_back(&probe);
       auto firstUpdateIdx = candidate.currentBox->steps.size();
       for (auto& update : probe.updates) {
-	if (update->condition) {
-	  placeExpr(candidate, update->condition, false);
-	  for (auto& arg : update->args) {
-	    placeExpr(candidate, arg, false);
-	  }
-	  candidate.currentBox->steps.push_back(const_cast<AggregateUpdate*>(update));
-	}
-	// Move the kernel steps for updates into 'inlinedUpdates' of the probe.
-	probe.inlinedUpdates.insert(probe.inlinedUpdates.end(), candidate.currentBox->steps.begin() + firstUpdateIdx, candidate.currentBox->steps.end());
-	candidate.currentBox->steps.resize(firstUpdateIdx);
+        if (update->condition) {
+          placeExpr(candidate, update->condition, false);
+          for (auto& arg : update->args) {
+            placeExpr(candidate, arg, false);
+          }
+          candidate.currentBox->steps.push_back(
+              const_cast<AggregateUpdate*>(update));
+        }
+        // Move the kernel steps for updates into 'inlinedUpdates' of the probe.
+        probe.inlinedUpdates.insert(
+            probe.inlinedUpdates.end(),
+            candidate.currentBox->steps.begin() + firstUpdateIdx,
+            candidate.currentBox->steps.end());
+        candidate.currentBox->steps.resize(firstUpdateIdx);
       }
       break;
     }
   }
-      candidate.currentBox->steps.insert(
-          candidate.currentBox->steps.end(),
-          segment.steps.begin(),
-          segment.steps.end());
+  candidate.currentBox->steps.insert(
+      candidate.currentBox->steps.end(),
+      segment.steps.begin(),
+      segment.steps.end());
+}
 
-  }
-
-  
 void CompileState::planSegment(
     PipelineCandidate& candidate,
     float inputBatch,
@@ -702,7 +707,7 @@ void CompileState::planSegment(
       } else if (
           auto* read = dynamic_cast<const core::AggregationNode*>(node)) {
         auto* step = segment.steps[0];
-	candidate.currentBox->steps.push_back(step);
+        candidate.currentBox->steps.push_back(step);
       }
       VELOX_CHECK_LE(1, candidate.currentBox->steps.size());
       auto pos = CodePosition(0, 0, candidate.currentBox->steps.size() - 1);
@@ -739,7 +744,8 @@ void CompileState::planSegment(
       if (candidate.steps.back().size() > 1) {
         newKernel(candidate);
       }
-      // Append the aggregate probe and updates. May inline all or have a wider kernel for updates if many updates and few top level rows.
+      // Append the aggregate probe and updates. May inline all or have a wider
+      // kernel for updates if many updates and few top level rows.
       placeAggregation(candidate, segment);
       break;
     }
@@ -950,9 +956,9 @@ ProgramKey CompileState::makeKey(int32_t& sharedSize) {
             markInput(k);
           }
           out << ") =";
-	  if (!agg.isSink()) {
-	    markOutput(agg.rows);
-	  }
+          if (!agg.isSink()) {
+            markOutput(agg.rows);
+          }
           out << "\n";
           break;
         }

@@ -761,8 +761,8 @@ bool waveDriverAdapter(
 }
 
 bool AggregateRegistry::registerGenerator(
-					  std::string aggregateName,
-					  std::unique_ptr<AggregateGenerator> generator) {
+    std::string aggregateName,
+    std::unique_ptr<AggregateGenerator> generator) {
   generators_[aggregateName] = std::move(generator);
   return true;
 }
