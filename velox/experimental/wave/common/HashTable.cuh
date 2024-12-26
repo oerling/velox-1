@@ -354,15 +354,7 @@ void __device__
       if (lane == leader) {
         writable = ops.getExclusive(this, bucket, hit, hitIdx);
       }
-      auto toUpdate = peers;
-      while (toUpdate) {
-        auto peer = __ffs(toUpdate) - 1;
-        auto idxToUpdate = __shfl_sync(peers, i, peer);
-        if (lane == leader) {
-          update(this, bucket, writable, peers, idxToUpdate);
-        }
-        toUpdate &= toUpdate - 1;
-      }
+      update(this, hit, peers, leader,  lane); 
       if (lane == leader) {
         ops.writeDone(writable);
       }

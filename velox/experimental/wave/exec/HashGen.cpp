@@ -94,8 +94,8 @@ void makeCompareLambda(
 void makeInitKey(
     CompileState& state,
     const std::vector<AbstractOperand*>& keys,
-    const std::vector<AbstractOperand*>& dependent,
-    const std::vector<AggregateUpdate*>& aggregates,
+    const std::vector<const AbstractOperand*>& dependent,
+    const std::vector<const AggregateUpdate*>& aggregates,
     bool nullableKeys) {
   auto& out = state.generated();
   out << "  [&](HashRow* row) {\n";

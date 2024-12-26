@@ -54,6 +54,7 @@ common::Subfield* CompileState::toSubfield(const Expr& expr) {
 }
 
 common::Subfield* CompileState::toSubfield(const std::string& name) {
+  VELOX_CHECK(!namesResolved_);
   auto it = subfields_.find(name);
   if (it == subfields_.end()) {
     auto field = std::make_unique<common::Subfield>(name);
@@ -757,6 +758,13 @@ bool waveDriverAdapter(
     exec::Driver& driver) {
   auto state = std::make_shared<CompileState>(factory, driver);
   return state->compile();
+}
+
+bool AggregateRegistry::registerGenerator(
+					  std::string aggregateName,
+					  std::unique_ptr<AggregateGenerator> generator) {
+  generators_[aggregateName] = std::move(generator);
+  return true;
 }
 
 const AggregateGenerator* AggregateRegistry::getGenerator(

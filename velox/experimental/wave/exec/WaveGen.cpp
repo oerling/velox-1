@@ -141,7 +141,8 @@ void NullCheck::generateMain(CompileState& state) {
           ordinal / 32,
           ordinal & 31,
           mayWrap ? "true" : "false",
-          ordinal);
+          ordinal,
+	  ordinal);
       op->inRegister = true;
     } else {
       lastUse.push_back(op);
@@ -288,7 +289,7 @@ void CompileState::ensureOperand(AbstractOperand* op) {
   }
 }
 
-std::string CompileState::isNull(AbstractOperand* op) {
+std::string CompileState::isNull(const AbstractOperand* op) {
   auto ord = ordinal(*op);
   if (op->inRegister) {
     return fmt::format("(0 == (nulls{} & (1U << {})))", ord / 32, ord & 31);
@@ -296,7 +297,7 @@ std::string CompileState::isNull(AbstractOperand* op) {
   VELOX_FAIL("Expecting op in register");
 }
 
-std::string CompileState::operandValue(AbstractOperand* op) {
+std::string CompileState::operandValue(const AbstractOperand* op) {
   VELOX_CHECK(op->inRegister);
   return fmt::format("r{}", ordinal(*op));
 }
@@ -345,6 +346,15 @@ void CompileState::functionReferenced(const AbstractOperand* op) {
   functionReferenced(op->expr->name(), types, op->type);
 }
 
+  void CompileState::addInclude(const std::string& path) {
+    auto line = fmt::format("#include \"{}\"", path);
+    if (includes_.count(line) != 0) {
+      return;
+    }
+    includes_.insert(line);
+    includeText_ << line << std::endl;
+  }
+  
 void CompileState::functionReferenced(
     const std::string& name,
     const std::vector<TypePtr>& types,
@@ -446,6 +456,7 @@ std::unique_ptr<AbstractInstruction> AggregateProbe::addInstruction(
 void AggregateUpdate::generateMain(CompileState& state) {}
 
 void ReadAggregation::generateMain(CompileState& state) {
+  visitResults([&](auto op) { op->isStored = true; });
   makeAggregateOps(state, *probe, true);
   makeReadAggregation(state, *this);
 }
@@ -645,6 +656,7 @@ void CompileState::fillExtraWrap(OperandSet& extraWrap) {
 void CompileState::makeLevel(std::vector<KernelBox>& level) {
   VELOX_CHECK_EQ(1, level.size(), "Only one program per level supported");
   int32_t sharedSize = 0;
+  programs_.clear();
   auto key = makeKey(sharedSize);
   auto sharedState = shared_from_this();
   // The generator function captures a shared 'this'. The
@@ -665,8 +677,10 @@ void CompileState::makeLevel(std::vector<KernelBox>& level) {
       if (instruction) {
         instruction->reserveState(instructionStatus_);
         auto* status = instruction->mutableInstructionStatus();
-        currentBox_->steps[stepIdx_]->status = *status;
-        auto opInst = dynamic_cast<AbstractOperator*>(instruction.get());
+	if (status) {
+	  currentBox_->steps[stepIdx_]->status = *status;
+	}
+	  auto opInst = dynamic_cast<AbstractOperator*>(instruction.get());
         if (opInst) {
           AbstractState* state = opInst->state;
           state->instruction = instruction.get();
@@ -727,15 +741,11 @@ void PipelineCandidate::setOutputIds(
     int32_t end) {
   for (auto i = begin; i < end; ++i) {
     auto& params = levelParams[i];
-    params.output.forEach([&](auto id) { op->addOutputId(id); });
-  }
-  auto type = op->outputType();
-  for (auto i = 0; i < type->size(); ++i) {
-    auto* subfield = state->toSubfield(type->nameOf(i));
-    auto operand = state->fieldToOperand(*subfield, state->topScope());
-    if (op->outputIds().contains(operand->id)) {
-      op->addSubfieldAndType(subfield, type->childAt(i));
-    }
+    params.output.forEach([&](auto id) {
+			    op->addOutputId(id);
+			    auto* operand = state->operandById(id);
+			    operand->isStored = true;
+			  });
   }
 }
 

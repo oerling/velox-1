@@ -125,6 +125,7 @@ std::string Scope::toString() const {
 }
 
 AbstractOperand* CompileState::fieldToOperand(Subfield& field, Scope* scope) {
+  VELOX_CHECK(!namesResolved_);
   auto* op = scope->findValue(Value(&field));
   if (op) {
     return markUse(op);
@@ -358,11 +359,23 @@ bool CompileState::tryPlanOperator(
     RowTypePtr& outputType) {
   auto& name = op->operatorType();
   if (name == "Values" || name == "TableScan") {
+    auto node = driverFactory_.planNodes[nodeIndex];
     outputType = driverFactory_.planNodes[nodeIndex]->outputType();
     addSegment(
         BoundaryType::kSource,
-        driverFactory_.planNodes[nodeIndex].get(),
+        node.get(),
         outputType);
+    if (name == "TableScan") {
+      auto step = makeStep<TableScanStep>();
+      step->node = dynamic_cast<const core::TableScanNode*>(node.get());
+      step->results = rowTypeToOperands(node->outputType());
+      segments_.back().steps.push_back(step);
+    }else {
+      auto step = makeStep<ValuesStep>();
+      step->node = dynamic_cast<const core::ValuesNode*>(node.get());
+      step->results = rowTypeToOperands(node->outputType());
+      segments_.back().steps.push_back(step);
+    }
   } else if (name == "FilterProject") {
     tryFilterProject(op, outputType, nodeIndex);
   } else if (name == "Aggregation") {
@@ -379,7 +392,7 @@ bool CompileState::tryPlanOperator(
     for (auto& key : node->groupingKeys()) {
       step->keys.push_back(fieldToOperand(*key, &topScope_));
     }
-    std::vector<AggregateUpdate*> allUpdates;
+    std::vector<const AggregateUpdate*> allUpdates;
     auto& output = node->outputType();
     for (auto i = 0; i < node->aggregates().size(); ++i) {
       auto& agg = node->aggregates()[i];
@@ -399,6 +412,7 @@ bool CompileState::tryPlanOperator(
       func->args = std::move(args);
       allUpdates.push_back(func);
     }
+    step->updates = allUpdates;
     segments_.back().steps.push_back(step);
     outputType = node->outputType();
     addSegment(BoundaryType::kSource, node, outputType);
@@ -411,7 +425,7 @@ bool CompileState::tryPlanOperator(
     }
     read->funcs = std::move(allUpdates);
     for (auto i = 0; i < read->funcs.size(); ++i) {
-      read->funcs[i]->result = fieldToOperand(
+      const_cast<AggregateUpdate*>(read->funcs[i])->result = fieldToOperand(
           *toSubfield(output->nameOf(i + read->keys.size())), &topScope_);
     }
     segments_.back().steps.push_back(read);
@@ -476,7 +490,7 @@ void recordReference(PipelineCandidate& candidate, AbstractOperand* op) {
   auto* box = candidate.boxOf(flags.definedIn);
   if (flags.firstUse.empty()) {
     flags.firstUse = CodePosition(
-        candidate.steps.size(),
+        candidate.steps.size() - 1,
         candidate.boxIdx,
         candidate.currentBox->steps.size());
   }
@@ -509,11 +523,35 @@ void recordReference(PipelineCandidate& candidate, AbstractOperand* op) {
       candidate.steps.size() - 1, candidate.boxIdx, box->steps.size());
 }
 
+void distinctLeavesInner(AbstractOperand* op, folly::F14FastSet<AbstractOperand*>& ops) {
+    if (op->constant) {
+      return;
+    }
+    if (ops.count(op)) {
+      return;
+    }
+    if (op->inputs.empty()) {
+      ops.insert(op);
+      return;
+    }
+    for (auto& input : op->inputs) {
+      distinctLeavesInner(input, ops);
+    }
+  }
+  
+  std::vector<AbstractOperand*> distinctLeaves(AbstractOperand* op) {
+    std::vector<AbstractOperand*> result;
+    folly::F14FastSet<AbstractOperand*> ops;
+    distinctLeavesInner(op, ops);
+    for (auto& op : ops) {
+      result.push_back(op);
+    }
+    return result;
+  }
+  
 NullCheck* CompileState::addNullCheck(AbstractOperand* op) {
   auto* check = makeStep<NullCheck>();
-  for (auto& field : op->expr->distinctFields()) {
-    check->operands.push_back(fieldToOperand(*toSubfield(*field), &topScope_));
-  }
+  check->operands = distinctLeaves(op);
   check->label = ++labelCounter_;
   check->result = op;
   return check;
@@ -560,9 +598,9 @@ void CompileState::placeExpr(
 void CompileState::markOutputStored(
     PipelineCandidate& candidate,
     Segment& segment) {
-  auto& type = segment.outputType;
-  for (auto i = 0; i < type->size(); ++i) {
-    auto* op = fieldToOperand(*toSubfield(type->nameOf(i)), &topScope_);
+  auto& defined = segment.topLevelDefined;
+  for (auto i = 0; i < defined.size(); ++i) {
+    auto* op = defined[i];
     candidate.flags(op).needStore = true;
   }
 }
@@ -598,9 +636,8 @@ void CompileState::recordCandidate(
   // Mark store needed for output operands if the segment does not end with a
   // sink.
   if (!isSink(candidate)) {
-    for (auto i = 0; i < segment.outputType->size(); ++i) {
-      auto* op = fieldToOperand(
-          *toSubfield(segment.outputType->nameOf(i)), &topScope_);
+    for (auto i = 0; i < segment.topLevelDefined.size(); ++i) {
+      auto* op = segment.topLevelDefined[i];
       auto& flags = candidate.flags(op);
       flags.needStore = true;
     }
@@ -608,6 +645,40 @@ void CompileState::recordCandidate(
   candidates_.push_back(std::move(candidate));
 }
 
+  void CompileState::placeAggregation(PipelineCandidate& candidate, Segment& segment) {
+    // Sets the inlined updates to be all updates. An alternative is to spread the updates into the next kernel with different accumulators done on different TBs.
+  for (auto& step : segment.steps) {
+    if (step->kind() == StepKind::kAggregateProbe) {
+      auto& probe = step->as<AggregateProbe>();
+      probe.allUpdatesInlined = true;
+      for (auto& key : probe.keys) {
+	placeExpr(candidate, key, false);
+      }
+      candidate.currentBox->steps.push_back(&probe);
+      auto firstUpdateIdx = candidate.currentBox->steps.size();
+      for (auto& update : probe.updates) {
+	if (update->condition) {
+	  placeExpr(candidate, update->condition, false);
+	  for (auto& arg : update->args) {
+	    placeExpr(candidate, arg, false);
+	  }
+	  candidate.currentBox->steps.push_back(const_cast<AggregateUpdate*>(update));
+	}
+	// Move the kernel steps for updates into 'inlinedUpdates' of the probe.
+	probe.inlinedUpdates.insert(probe.inlinedUpdates.end(), candidate.currentBox->steps.begin() + firstUpdateIdx, candidate.currentBox->steps.end());
+	candidate.currentBox->steps.resize(firstUpdateIdx);
+      }
+      break;
+    }
+  }
+      candidate.currentBox->steps.insert(
+          candidate.currentBox->steps.end(),
+          segment.steps.begin(),
+          segment.steps.end());
+
+  }
+
+  
 void CompileState::planSegment(
     PipelineCandidate& candidate,
     float inputBatch,
@@ -623,23 +694,15 @@ void CompileState::planSegment(
       bool needNewKernel = false;
       auto* node = segment.planNode;
       if (auto* scan = dynamic_cast<const core::TableScanNode*>(node)) {
-        auto step = makeStep<TableScanStep>();
-        step->node = scan;
-        step->results = rowTypeToOperands(scan->outputType());
-        candidate.currentBox->steps.push_back(step);
+        candidate.currentBox->steps.push_back(segment.steps[0]);
         needNewKernel = true;
       } else if (auto* values = dynamic_cast<const core::ValuesNode*>(node)) {
-        auto step = makeStep<ValuesStep>();
-        step->node = values;
-        candidate.currentBox->steps.push_back(step);
-        step->results = rowTypeToOperands(values->outputType());
+        candidate.currentBox->steps.push_back(segment.steps[0]);
         needNewKernel = true;
       } else if (
           auto* read = dynamic_cast<const core::AggregationNode*>(node)) {
         auto* step = segment.steps[0];
-        if (segmentIdx < segments_.size() - 1) {
-          candidate.currentBox->steps.push_back(step);
-        }
+	candidate.currentBox->steps.push_back(step);
       }
       VELOX_CHECK_LE(1, candidate.currentBox->steps.size());
       auto pos = CodePosition(0, 0, candidate.currentBox->steps.size() - 1);
@@ -676,12 +739,8 @@ void CompileState::planSegment(
       if (candidate.steps.back().size() > 1) {
         newKernel(candidate);
       }
-      // Append the aggregate probe and updates. TODO: See if doing the updates
-      // at greater width is better.
-      candidate.currentBox->steps.insert(
-          candidate.currentBox->steps.end(),
-          segment.steps.begin(),
-          segment.steps.end());
+      // Append the aggregate probe and updates. May inline all or have a wider kernel for updates if many updates and few top level rows.
+      placeAggregation(candidate, segment);
       break;
     }
     default:
@@ -747,10 +806,10 @@ void PipelineCandidate::makeOperandSets(int32_t pipelineSeq) {
 
 void CompileState::markHostOutput() {
   auto& candidate = selectedPipelines_.back();
-  auto& type = segments_.back().outputType;
+  auto& defined = segments_.back().topLevelDefined;
   CodePosition afterEnd(candidate.steps.size());
-  for (auto i = 0; i < type->size(); ++i) {
-    auto* op = fieldToOperand(*toSubfield(type->nameOf(i)), &topScope_);
+  for (auto i = 0; i < defined.size(); ++i) {
+    auto* op = defined[i];
     auto& flags = candidate.flags(op);
     flags.lastUse = afterEnd;
     flags.needStore = true;
@@ -891,7 +950,9 @@ ProgramKey CompileState::makeKey(int32_t& sharedSize) {
             markInput(k);
           }
           out << ") =";
-          markOutput(agg.rows);
+	  if (!agg.isSink()) {
+	    markOutput(agg.rows);
+	  }
           out << "\n";
           break;
         }
@@ -932,6 +993,7 @@ ProgramKey CompileState::makeKey(int32_t& sharedSize) {
 
 RowTypePtr CompileState::makeOperators(int32_t& operatorIndex) {
   makeSegments(operatorIndex);
+  namesResolved_ = true;
   planPipelines();
   generatePrograms();
   return segments_.back().outputType;

@@ -19,6 +19,7 @@ target_link_libraries(
 
 add_library(
   velox_wave_exec
+  OBJECT
   AggregateGen.cpp
   HashGen.cpp
   Aggregation.cpp

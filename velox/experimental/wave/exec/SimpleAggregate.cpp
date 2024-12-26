@@ -13,7 +13,9 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 #include "velox/experimental/wave/exec/ToWave.h"
+#include "velox/functions/prestosql/aggregates/AggregateNames.h"
 
 namespace facebook::velox::wave {
 
@@ -32,6 +34,14 @@ class SimpleAggregate : public AggregateGenerator {
     state.functionReferenced(binaryFunc_, types, types[0]);
   }
 
+  void generateInclude(
+      CompileState& state,
+      const AggregateProbe& /*probe*/,
+      const AggregateUpdate& /*update*/) const override {
+    state.addInclude("velox/experimental/wave/exec/Accumulators.cuh");
+  }
+
+  
   std::pair<int32_t, int32_t> accumulatorSizeAndAlign(
       const AggregateUpdate& update) const override {
     return std::make_pair<int32_t, int32_t>(
@@ -53,10 +63,36 @@ class SimpleAggregate : public AggregateGenerator {
     return fmt::format("  acc{} = 0;\n", update.accumulatorIdx);
   }
 
+  bool hasAtomic() const override {
+    return true;
+  }
+  
+  void loadArgs(
+			       CompileState& state,
+			       const AggregateProbe& probe,
+			       const AggregateUpdate& update) const {
+    state.ensureOperand(update.args[0]);
+  }
+
+  virtual void makeDeduppedUpdate(
+				  CompileState& state,
+				  const AggregateProbe& probe,
+				  const AggregateUpdate& update) const {
+    if (probe.keys.empty()) {
+      VELOX_NYI();
+    } else {
+      auto nullIdx = update.accumulatorIdx + probe.keys.size();
+      auto reduceName = fmt::format("plus<{}>", cudaTypeName(*update.args[0]->type));
+      state.generated() << fmt::format("  simpleAccumulate(peers, leader, lane, &row->acc{}, &row->nulls{}, {}, {}, {}, {});\n",
+				       update.accumulatorIdx, nullIdx / 32, 1U << nullIdx, state.operandValue(update.args[0]), state.isNull(update.args[0]), reduceName);
+    }
+  }
+
   std::string generateUpdate(
       CompileState& state,
       const AggregateProbe& probe,
       const AggregateUpdate& update) const override {
+    VELOX_UNSUPPORTED();
     std::stringstream out;
     auto nullable = !update.args[0]->notNull;
     if (nullable) {
@@ -76,7 +112,7 @@ class SimpleAggregate : public AggregateGenerator {
     }
     return out.str();
   }
-
+  
   std::string generateExtract(
       CompileState& state,
       const AggregateProbe& probe,
@@ -99,7 +135,7 @@ class SimpleAggregate : public AggregateGenerator {
 
 namespace {
 bool temp = CompileState::aggregateRegistry().registerGenerator(
-    "SUM",
+								aggregate::kSum,
     std::make_unique<SimpleAggregate>("plus"));
 }
 
