@@ -946,7 +946,7 @@ class CompileState : public std::enable_shared_from_this<CompileState> {
   // Transforms the leading operators into WaveOperators with codegen.
   // 'operatorIndex' is set to 1 after the index of the last transformed
   // operator inde the original Driver.
-  RowTypePtr makeOperators(int32_t& operatorIndex);
+  RowTypePtr makeOperators(int32_t& operatorIndex, std::vector<OperandId>& resultOrder);
 
   // Generates a check for lane active.
   void generateSkip();

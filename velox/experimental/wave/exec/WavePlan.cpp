@@ -997,12 +997,18 @@ ProgramKey CompileState::makeKey(int32_t& sharedSize) {
       .output = std::move(output)};
 }
 
-RowTypePtr CompileState::makeOperators(int32_t& operatorIndex) {
+  RowTypePtr CompileState::makeOperators(int32_t& operatorIndex, std::vector<OperandId>& resultOrder) {
   makeSegments(operatorIndex);
+  auto outputType = segments_.back().outputType;
+  for (auto i = 0; i < outputType->size(); ++i) {
+    auto op = fieldToOperand(*toSubfield(outputType->nameOf(i)), &topScope_);
+    resultOrder.push_back(op->id);
+  }
+
   namesResolved_ = true;
   planPipelines();
   generatePrograms();
-  return segments_.back().outputType;
+  return outputType;
 }
 
 std::string CompileState::segmentString() const {

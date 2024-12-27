@@ -808,6 +808,7 @@ void CompileState::generatePrograms() {
     currentCandidate_->setOutputIds(
         this, operators_.back().get(), start, currentCandidate_->steps.size());
   }
+  
 }
 
 } // namespace facebook::velox::wave

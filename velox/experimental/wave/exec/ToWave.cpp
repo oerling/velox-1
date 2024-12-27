@@ -647,8 +647,9 @@ bool CompileState::compile() {
   // them during the transformation.
   driver_.initializeOperators();
   RowTypePtr inputType;
+  std::vector<OperandId> resultOrder;
   if (kCodeGen) {
-    outputType = makeOperators(operatorIndex);
+    outputType = makeOperators(operatorIndex, resultOrder);
   } else {
     for (; operatorIndex < operators.size(); ++operatorIndex) {
       int32_t previousNumOperators = operators_.size();
@@ -704,12 +705,8 @@ bool CompileState::compile() {
   if (operators_.empty()) {
     return false;
   }
-  std::vector<OperandId> resultOrder;
   for (auto i = 0; i < outputType->size(); ++i) {
-    if (kCodeGen) {
-      auto op = fieldToOperand(*toSubfield(outputType->nameOf(i)), &topScope_);
-      resultOrder.push_back(op->id);
-    } else {
+    if (!kCodeGen) {
       auto operand = findCurrentValue(Value(toSubfield(outputType->nameOf(i))));
       auto source = programOf(operand, false);
       // Operands produced by programs, when projected out of Wave, must
