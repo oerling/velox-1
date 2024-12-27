@@ -531,7 +531,7 @@ ProgramKey CompileState::makeLevelText(
         if (!anyRetry) {
           anyRetry = true;
           generated_ << "if (shared->isContinue) {\n"
-                     << "switch(entryPoint) {n";
+                     << "switch(entryPoint) {\n";
         }
         generated_ << fmt::format(
             "case {}: goto continue{};\n", stepIdx_, stepIdx_);

@@ -59,7 +59,6 @@ void makeAggregateOps(
 }
 
 /// Emits a lambda that performs the inlined aggregate update.
-
 void makeUpdateLambda(
     CompileState& state,
     const AggregateProbe& probe,
