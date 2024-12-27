@@ -54,7 +54,7 @@ void makeHash(
     } else {
       if (!keys[i]->notNull) {
         out << fmt::format(
-            "  if ({}) {{hash *= hashMix(hash, 13); }} else {{ hash = hashMix(hash, hashValue({})); }}",
+            "  if ({}) {{hash *= hashMix(hash, 13); }} else {{ hash = hashMix(hash, hashValue({})); }}\n",
             state.isNull(op),
             state.operandValue(op));
       } else {
@@ -75,7 +75,7 @@ void makeCompareLambda(
     const std::vector<AbstractOperand*>& keys,
     bool nullableKeys) {
   auto& out = state.generated();
-  out << "  [&](HashTableRow* row) -> bool {\n";
+  out << "  [&](HashRow* row) -> bool {\n";
   for (auto i = 0; i < keys.size(); ++i) {
     auto* op = keys[i];
     if (nullableKeys && !op->notNull) {
@@ -91,6 +91,10 @@ void makeCompareLambda(
   out << "  return true;\n}\n";
 }
 
+  void initKeysAndDeps(int32_t begin, int32_t end, std::vector<AbstractOperand*>& keys, std::vector<AbstractOperand*> deps) {
+
+  }
+  
 void makeInitKey(
     CompileState& state,
     const std::vector<AbstractOperand*>& keys,
@@ -101,9 +105,22 @@ void makeInitKey(
   out << "  [&](HashRow* row) {\n";
   int32_t numNullFlags =
       dependent.size() + aggregates.size() + (nullableKeys ? keys.size() : 0);
-  for (auto i = 0; numNullFlags; i += 32) {
-    out << fmt::format("  row->nulls{} = ~0U;\n", i / 32);
+  for (auto i = 0; i < numNullFlags; i += 32) {
+    out << fmt::format("  row->nulls{} = 0U;\n", i / 32);
   }
+  for (auto i = 0; i < keys.size(); ++i) {
+    auto* op = keys[i];
+    if (nullableKeys) {
+      auto nthNull = i;
+      out << fmt::format(
+			 "   if ({}) { nulls{} &= ~(1U << {};\n    row->key{} = {};\n",
+		       state.isNull(op),
+		       nthNull / 32,
+		       nthNull & 31,
+		       i,
+		       state.operandValue(op));
+  }
+
   for (auto i = 0; i < dependent.size(); ++i) {
     auto* op = dependent[i];
     auto nthNull = i + keys.size();
@@ -153,11 +170,12 @@ void makeRowHash(
     const std::vector<AbstractOperand*>& keys,
     bool nullableKeys) {
   auto& out = state.inlines();
-  out << "  uint64_t hash = 1;\n";
+  out << "  uint64_t __device__ hashRow(HashRow* row) {\n"
+      << "  uint64_t hash = 1;\n";
   for (auto i = 0; i < keys.size(); ++i) {
     if (nullableKeys) {
       out << fmt::format(
-          "    if (0 == (nulls{} & (1U << {}))) {{ hash = hashMix(hash, 13)); }} else {{",
+          "    if (0 == (row->nulls{} & (1U << {}))) {{ hash = hashMix(hash, 13)); }} else {{",
           i / 32,
           i & 32);
     }

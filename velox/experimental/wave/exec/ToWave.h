@@ -157,6 +157,7 @@ struct TableScanStep : public KernelStep {
 
   const core::TableScanNode* node;
   std::vector<AbstractOperand*> results;
+  DefinesMap defines;
 };
 
 struct NullCheck : public KernelStep {
@@ -863,9 +864,10 @@ class CompileState : public std::enable_shared_from_this<CompileState> {
     return ptr;
   }
 
-  /// Makes an array of AbstractOperands to correspond to the fields of
-  /// 'rowType' in the top level scope.
-  std::vector<AbstractOperand*> rowTypeToOperands(const RowTypePtr& rowType);
+  /// Makes an array of AbstractOperands to correspond to the fields
+  /// of 'rowType' in the top level scope. If 'defines' is given,
+  /// fills it with the subfield to operand mapping.
+  std::vector<AbstractOperand*> rowTypeToOperands(const RowTypePtr& rowType, DefinesMap* defines = nullptr);
 
   AbstractOperand* fieldToOperand(
       const core::FieldAccessTypedExpr& field,

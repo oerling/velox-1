@@ -20,14 +20,15 @@ namespace facebook::velox::wave {
 
 std::string makeAggregateRow(CompileState& state, const AggregateProbe& probe) {
   std::stringstream out;
-  out << "struct AggregateRow {\n"
+  out << "struct HashRow {\n"
          "  int32_t flags;\n"
       << std::endl;
 
   makeKeyMembers(probe.keys, out);
   int32_t numNullable = probe.keys.size() + probe.updates.size();
-  auto numFlagWords = bits::roundUp(numNullable, 32) / 32;
-  out << fmt::format("  nullFlags[{}];\n", numFlagWords);
+  for (auto n = 0; n < numNullable; ++n) {
+    out << fmt::format("  uint32_t nulls{} = ~0;\n", n / 32);
+  }
   for (auto i = 0; i < probe.updates.size(); ++i) {
     out << probe.updates[i]->generator->generateAccumulator(
                state, probe, *probe.updates[i])

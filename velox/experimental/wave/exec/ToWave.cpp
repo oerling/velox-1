@@ -614,7 +614,7 @@ bool CompileState::addOperator(
     outputType = driverFactory_.planNodes[nodeIndex]->outputType();
 
     operators_.push_back(
-        std::make_unique<TableScan>(*this, operators_.size(), *scan));
+			 std::make_unique<TableScan>(*this, operators_.size(), *scan, DefinesMap()));
     outputType = scan->outputType();
   } else {
     return false;

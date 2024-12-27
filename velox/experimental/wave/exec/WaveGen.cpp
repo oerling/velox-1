@@ -772,8 +772,9 @@ void CompileState::generatePrograms() {
     auto& firstStep = currentCandidate_->steps[0][0].steps.front();
     int32_t start = 0;
     if (firstStep->kind() == StepKind::kTableScan) {
+      auto& scanStep = firstStep->as<TableScanStep>();
       operators_.push_back(std::make_unique<TableScan>(
-          *this, operators_.size(), *firstStep->as<TableScanStep>().node));
+						       *this, operators_.size(), *scanStep.node, std::move(scanStep.defines)));
       start = 1;
     }
     if (firstStep->kind() == StepKind::kValues) {

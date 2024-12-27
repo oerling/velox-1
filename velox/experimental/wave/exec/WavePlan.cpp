@@ -161,10 +161,14 @@ AbstractOperand* CompileState::fieldToOperand(
 }
 
 std::vector<AbstractOperand*> CompileState::rowTypeToOperands(
-    const RowTypePtr& rowType) {
+							      const RowTypePtr& rowType, DefinesMap* defines) {
   std::vector<AbstractOperand*> ops;
   for (auto i = 0; i < rowType->size(); ++i) {
-    ops.push_back(fieldToOperand(*toSubfield(rowType->nameOf(i)), &topScope_));
+    auto* field = toSubfield(rowType->nameOf(i));
+    ops.push_back(fieldToOperand(*field, &topScope_));
+    if (defines != nullptr) {
+      (*defines)[Value(field)] = ops.back();
+    }
   }
   return ops;
 }
@@ -365,7 +369,7 @@ bool CompileState::tryPlanOperator(
     if (name == "TableScan") {
       auto step = makeStep<TableScanStep>();
       step->node = dynamic_cast<const core::TableScanNode*>(node.get());
-      step->results = rowTypeToOperands(node->outputType());
+      step->results = rowTypeToOperands(node->outputType(), &step->defines);
       segments_.back().steps.push_back(step);
     } else {
       auto step = makeStep<ValuesStep>();
@@ -403,6 +407,7 @@ bool CompileState::tryPlanOperator(
       auto* func = makeStep<AggregateUpdate>();
       func->step = aggregationStep;
       func->name = agg.call->name();
+      func.accumulatorIdx = i;
       func->rows = step->rows;
       func->signature = agg.rawInputTypes;
       func->generator = aggregateRegistry_.getGenerator(*func);
@@ -662,26 +667,22 @@ void CompileState::placeAggregation(
       for (auto& update : probe.updates) {
         if (update->condition) {
           placeExpr(candidate, update->condition, false);
-          for (auto& arg : update->args) {
-            placeExpr(candidate, arg, false);
-          }
-          candidate.currentBox->steps.push_back(
-              const_cast<AggregateUpdate*>(update));
-        }
-        // Move the kernel steps for updates into 'inlinedUpdates' of the probe.
-        probe.inlinedUpdates.insert(
-            probe.inlinedUpdates.end(),
-            candidate.currentBox->steps.begin() + firstUpdateIdx,
-            candidate.currentBox->steps.end());
-        candidate.currentBox->steps.resize(firstUpdateIdx);
+	}
+	for (auto& arg : update->args) {
+	  placeExpr(candidate, arg, false);
+	}
+	candidate.currentBox->steps.push_back(
+					      const_cast<AggregateUpdate*>(update));
       }
+      // Move the kernel steps for updates into 'inlinedUpdates' of the probe.
+      probe.inlinedUpdates.insert(
+				  probe.inlinedUpdates.end(),
+				  candidate.currentBox->steps.begin() + firstUpdateIdx,
+				  candidate.currentBox->steps.end());
+      candidate.currentBox->steps.resize(firstUpdateIdx);
       break;
     }
   }
-  candidate.currentBox->steps.insert(
-      candidate.currentBox->steps.end(),
-      segment.steps.begin(),
-      segment.steps.end());
 }
 
 void CompileState::planSegment(
