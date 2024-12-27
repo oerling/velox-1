@@ -91,9 +91,26 @@ void makeCompareLambda(
   out << "  return true;\n}\n";
 }
 
-  void initKeysAndDeps(int32_t begin, int32_t end, std::vector<AbstractOperand*>& keys, std::vector<AbstractOperand*> deps) {
+  std::string nthFlag(int32_t nth, OpVector& keys, OpVector& deps, std::stringstream& out) {
 
+    return state.isNull(nth);
   }
+
+  
+  
+  std::string nullsInit(int32_t begin, int32_t end, std::vector<AbstractOperand*>& keys, std::vector<AbstractOperand*>& deps) {
+    std::stringstream inits;
+    for (auto i = begin; i < end; ++i) {
+      inits << fmt::format("({} ? 0 : {}U", nthNull(i), 1U << i) << (i < end - 1 ? " | " : "");
+    }
+  }
+
+void nullsAndKeysInit(CompileState& state, int32_t begin, int32_t end, std::vector<AbstractOperand*>& keys, std::vector<AbstractOperand*>& deps) {
+  auto& out = state.generated();
+  out << fmt::format("  row->nulls{} {} {};\", begin / 32, (begin % 32 == 0 ? "=" : "|="), nullsInit(begin, end, keys, deps);
+  VELOX_CHECK_LE(end, keys.size());
+		     
+}
   
 void makeInitKey(
     CompileState& state,
