@@ -150,8 +150,8 @@ struct AbstractOperand {
   std::string toString() const;
 };
 
-  using OpVector = std::vector<AbstractOperand>;
-  using OpCVector = std::vector<const AbstractOperand>;
+  using OpVector = std::vector<AbstractOperand*>;
+  using OpCVector = std::vector<const AbstractOperand*>;
   
 class WaveStream;
 struct OperatorState;

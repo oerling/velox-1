@@ -407,7 +407,7 @@ bool CompileState::tryPlanOperator(
       auto* func = makeStep<AggregateUpdate>();
       func->step = aggregationStep;
       func->name = agg.call->name();
-      func.accumulatorIdx = i;
+      func->accumulatorIdx = i;
       func->rows = step->rows;
       func->signature = agg.rawInputTypes;
       func->generator = aggregateRegistry_.getGenerator(*func);

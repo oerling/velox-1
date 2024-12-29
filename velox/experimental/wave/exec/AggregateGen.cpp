@@ -26,10 +26,15 @@ std::string makeAggregateRow(CompileState& state, const AggregateProbe& probe) {
 
   makeKeyMembers(probe.keys, out);
   int32_t numNullable = probe.keys.size() + probe.updates.size();
-  for (auto n = 0; n < numNullable; ++n) {
-    out << fmt::format("  uint32_t nulls{} = ~0;\n", n / 32);
+  for (auto n = 0; n < numNullable; n += 32) {
+    out << fmt::format("  uint32_t nulls{};\n", n / 32);
   }
   for (auto i = 0; i < probe.updates.size(); ++i) {
+probe.updates[i]->generator->generateInclude(
+						 state, probe, *probe.updates[i]);
+probe.updates[i]->generator->generateInline(
+						 state, probe, *probe.updates[i]);
+
     out << probe.updates[i]->generator->generateAccumulator(
                state, probe, *probe.updates[i])
         << std::endl
@@ -43,16 +48,17 @@ void makeAggregateOps(
     CompileState& state,
     const AggregateProbe& probe,
     bool forRead) {
+  state.addInclude("velox/experimental/common/Hash.h");
   auto& out = state.inlines();
   out << makeAggregateRow(state, probe);
 
   out << "struct AggregateOps {\n"
-      << "  AggreegateOps(uintt64_t hash, WaveShared* shared) : hash(hash), shared(shared){}\n"
+      << "  AggregateOps(uint64_t hash, WaveShared* shared) : hash(hash), shared(shared){}\n"
       << "  uint64_t hash = 1;\n"
       << "  WaveShared* shared;\n";
   if (forRead) {
   } else {
-    out << "  uint64_t hash() const { return hash; }\n";
+    out << "  uint64_t __device__ hash() const { return hash; }\n";
     makeRowHash(state, probe.keys, true);
   }
   out << "};\n\n";
@@ -68,13 +74,13 @@ void makeUpdateLambda(
   out << "  [&](GpuHashTableBase* table, HashRow* row, uint32_t peers, int32_t leader, int32_t laneId) {\n";
   std::vector<const AggregateUpdate*> deferred;
 
-  auto emitUpdates = [&]() {
-    if (deferred.size() > 4) {
+  auto emitUpdates = [&](bool flush) {
+    if (flush || deferred.size() > 4) {
       for (auto& update : deferred) {
         update->generator->makeDeduppedUpdate(state, probe, *update);
       }
+      deferred.clear();
     }
-    deferred.clear();
   };
   for (auto lastIdx = 0; lastIdx < updates.size(); ++lastIdx) {
     auto* step = updates[lastIdx];
@@ -85,9 +91,9 @@ void makeUpdateLambda(
     auto& update = step->as<AggregateUpdate>();
     update.generator->loadArgs(state, probe, update);
     deferred.push_back(&update);
-    emitUpdates();
+    emitUpdates(false);
   }
-  emitUpdates();
+  emitUpdates(true);
 
   out << "  }";
 }
@@ -103,7 +109,7 @@ void makeAggregateProbe(CompileState& state, const AggregateProbe& probe) {
   out << "  state->table->updatingProbe<HashRow>(threadIdx.x, laneId(), laneStatus == ErrorCode::kOk, \n";
   makeCompareLambda(state, probe.keys, true);
   out << ",\n";
-  makeInitKey(state, probe.keys, {}, probe.updates, true);
+  makeInitGroupRow(state, probe.keys, probe.updates);
   out << ",\n";
   makeUpdateLambda(state, probe, probe.inlinedUpdates);
   out << ");\n";
@@ -128,6 +134,7 @@ std::string readAggRow(CompileState& state, const ReadAggregation& read) {
   }
   return out.str();
 }
+
 void makeReadAggregation(CompileState& state, const ReadAggregation& read) {
   auto& out = state.generated();
 

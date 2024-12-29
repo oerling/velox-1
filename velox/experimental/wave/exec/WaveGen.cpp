@@ -291,6 +291,9 @@ void CompileState::ensureOperand(AbstractOperand* op) {
 
 std::string CompileState::isNull(const AbstractOperand* op) {
   auto ord = ordinal(*op);
+  if (op->notNull) {
+    return "false";
+  }
   if (op->inRegister) {
     return fmt::format("(0 == (nulls{} & (1U << {})))", ord / 32, ord & 31);
   }
@@ -537,7 +540,7 @@ ProgramKey CompileState::makeLevelText(
             "case {}: goto continue{};\n", stepIdx_, stepIdx_);
       }
       if (anyRetry) {
-        generated_ << "}}\n}\n";
+        generated_ << "}\n}\n";
       }
     }
     for (stepIdx_ = 0; stepIdx_ < box.steps.size(); ++stepIdx_) {
@@ -576,7 +579,7 @@ ProgramKey CompileState::makeLevelText(
     head << fmt::format(" uint32_t nulls{} = ~0;\n", i / 32);
   }
   head << generated_.str();
-
+  generated_ = std::stringstream();
   std::vector<AbstractOperand*> input;
   std::vector<AbstractOperand*> local;
   std::vector<AbstractOperand*> output;

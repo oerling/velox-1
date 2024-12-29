@@ -54,7 +54,7 @@ void makeHash(
     } else {
       if (!keys[i]->notNull) {
         out << fmt::format(
-            "  if ({}) {{hash *= hashMix(hash, 13); }} else {{ hash = hashMix(hash, hashValue({})); }}\n",
+            "  if ({}) {{ hash = hashMix(hash, 13); }} else {{ hash = hashMix(hash, hashValue({})); }}\n",
             state.isNull(op),
             state.operandValue(op));
       } else {
@@ -76,109 +76,60 @@ void makeCompareLambda(
     bool nullableKeys) {
   auto& out = state.generated();
   out << "  [&](HashRow* row) -> bool {\n";
+  if (nullableKeys) {
+    out << "   uint32_t keyNulls = asDeviceAtomic<uint32_t>(&row->nulls0)->load(cuda::memory_order_consume);\n";
+    VELOX_CHECK_LE(keys.size(), 32);
+  }
   for (auto i = 0; i < keys.size(); ++i) {
     auto* op = keys[i];
     if (nullableKeys && !op->notNull) {
       out << fmt::format(
-          "  if (({} != (0 == (row->nulls{} & (1U << {})))) return false;\n",
-          state.isNull(op),
-          i / 32,
-          i & 31);
+			 "  if ({} != (0 == (keyNulls & (1U << {})))) return false;\n",
+			 state.isNull(op),
+			 i / 32,
+			 i & 31);
     }
     out << fmt::format(
-        "  if ({} != row->key{}) return false;\n", state.operandValue(op), i);
+		       "  if ({} != row->key{}) return false;\n", state.operandValue(op), i);
   }
   out << "  return true;\n}\n";
 }
-
-  std::string nthFlag(int32_t nth, OpVector& keys, OpVector& deps, std::stringstream& out) {
-
-    return state.isNull(nth);
-  }
-
   
-  
-  std::string nullsInit(int32_t begin, int32_t end, std::vector<AbstractOperand*>& keys, std::vector<AbstractOperand*>& deps) {
+  std::string nullsInit(CompileState& state, int32_t begin, int32_t end, const OpVector& keys) {
     std::stringstream inits;
     for (auto i = begin; i < end; ++i) {
-      inits << fmt::format("({} ? 0 : {}U", nthNull(i), 1U << i) << (i < end - 1 ? " | " : "");
+      inits << fmt::format("({} ? 0 : {}U)", state.isNull(keys[i]), 1U << i, (i < end - 1 ? " | " : ""));
     }
+    return inits.str();
   }
-
-void nullsAndKeysInit(CompileState& state, int32_t begin, int32_t end, std::vector<AbstractOperand*>& keys, std::vector<AbstractOperand*>& deps) {
-  auto& out = state.generated();
-  out << fmt::format("  row->nulls{} {} {};\", begin / 32, (begin % 32 == 0 ? "=" : "|="), nullsInit(begin, end, keys, deps);
-  VELOX_CHECK_LE(end, keys.size());
-		     
-}
   
-void makeInitKey(
+void makeInitGroupRow(
     CompileState& state,
-    const std::vector<AbstractOperand*>& keys,
-    const std::vector<const AbstractOperand*>& dependent,
-    const std::vector<const AggregateUpdate*>& aggregates,
-    bool nullableKeys) {
+    const OpVector& keys,
+    const std::vector<const AggregateUpdate*>& aggregates) {
   auto& out = state.generated();
   out << "  [&](HashRow* row) {\n";
   int32_t numNullFlags =
-      dependent.size() + aggregates.size() + (nullableKeys ? keys.size() : 0);
-  for (auto i = 0; i < numNullFlags; i += 32) {
-    out << fmt::format("  row->nulls{} = 0U;\n", i / 32);
-  }
+    aggregates.size() + keys.size();
   for (auto i = 0; i < keys.size(); ++i) {
     auto* op = keys[i];
-    if (nullableKeys) {
-      auto nthNull = i;
-      out << fmt::format(
-			 "   if ({}) { nulls{} &= ~(1U << {};\n    row->key{} = {};\n",
+    out << fmt::format(
+			 "   if (!{}) {{ row->key{} = {};}}\n",
 		       state.isNull(op),
-		       nthNull / 32,
-		       nthNull & 31,
 		       i,
 		       state.operandValue(op));
   }
 
-  for (auto i = 0; i < dependent.size(); ++i) {
-    auto* op = dependent[i];
-    auto nthNull = i + keys.size();
-    out << fmt::format(
-        "   if ({}) { nulls{} &= ~(1U << {};\n    row->dep{} = {};\n",
-        state.isNull(op),
-        nthNull / 32,
-        nthNull & 31,
-        i,
-        state.operandValue(op));
-  }
   for (auto i = 0; i < aggregates.size(); ++i) {
     auto* update = aggregates[i];
     out << update->generator->generateInit(state, *update);
   }
-  // The first key is written last with a release semantic. At probe time the
-  // first key is read first with an acquire semantic.
-  for (int32_t i = keys.size() - 10; i >= 0; --i) {
-    auto* op = keys[i];
-    if (nullableKeys) {
-      out << fmt::format(
-          "    if ({}) {{ nulls{} &= ~(1U << {});\n",
-          state.isNull(op),
-          i / 32,
-          i & 31);
-    }
-    if (i == 0) {
-      out << fmt::format(
-          "   asDeviceAtomic<{}>(&row->key{})->store({}, cuda::memory_order_release);\n",
-          cudaTypeName(*op->type),
-          i,
-          state.operandValue(op));
-    } else {
-      out << fmt::format(
-          "      row->key{} = {};\n", i, state.operandValue(keys[i]));
-    }
-    out << "}\n";
-    if (nullableKeys) {
-      out << "}\n";
-    }
+
+  VELOX_CHECK_LE(keys.size(), 32);
+  for (auto i = 32; i < numNullFlags; i += 32) {
+    out << fmt::format("   row->nulls{} = 0;\n", i / 32);
   }
+  out << fmt::format("  asDeviceAtomic<uint32_t>(&row->nulls0)->store({}, cuda::memory_order_release);\n", nullsInit(state, 0, keys.size(), keys)); 
   out << "}\n";
 }
 
@@ -192,13 +143,13 @@ void makeRowHash(
   for (auto i = 0; i < keys.size(); ++i) {
     if (nullableKeys) {
       out << fmt::format(
-          "    if (0 == (row->nulls{} & (1U << {}))) {{ hash = hashMix(hash, 13)); }} else {{",
+          "    if (0 == (row->nulls{} & (1U << {}))) {{ hash = hashMix(hash, 13); }} else {{",
           i / 32,
           i & 32);
     }
     out << fmt::format("    hash = hashMix(hash, hashValue(row->key{}));\n", i);
     if (nullableKeys) {
-      out << "  }}\n";
+      out << "  }\n";
     }
   }
   out << "  return hash;\n}\n";

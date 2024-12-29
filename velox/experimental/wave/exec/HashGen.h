@@ -44,12 +44,10 @@ void makeCompareLambda(
 /// Emits a lambda to initialize a new group by row or keys of a hash join build
 /// row. 'nullableKeys' is true for group by. The signature is [&](GroupRow*
 /// row).
-void makeInitKey(
+void makeInitGroupRow(
     CompileState& state,
-    const std::vector<AbstractOperand*>& keys,
-    const std::vector<const AbstractOperand*>& dependent,
-    const std::vector<const AggregateUpdate*>& aggregates,
-    bool nullableKeys);
+    const OpVector& keys,
+    const std::vector<const AggregateUpdate*>& aggregates);
 
 void makeRowHash(
     CompileState& state,
