@@ -509,6 +509,8 @@ ProgramKey CompileState::makeLevelText(
     int32_t kernelSeq,
     KernelSpec& spec) {
   std::lock_guard<std::mutex> l(generateMutex_);
+  VELOX_CHECK(generated_.str().empty());
+  VELOX_CHECK(inlines_.str().empty());
   insideNullPropagating_ = false;
   declared_ = OperandSet();
   currentCandidate_ = &selectedPipelines_[pipelineIdx];
@@ -520,7 +522,7 @@ ProgramKey CompileState::makeLevelText(
   VELOX_CHECK_EQ(1, level.size(), "Only one program per level supported");
   std::stringstream head;
   auto kernelName = fmt::format("wavegen{}", ++kernelCounter_);
-  std::vector<std::string> entryPoints = {
+  entryPoints_ = {
       fmt::format("facebook::velox::wave::{}", kernelName)};
   generated_ << "  GENERATED_PREAMBLE(0);\n";
   for (branchIdx_ = 0; branchIdx_ < level.size(); ++branchIdx_) {
@@ -579,7 +581,13 @@ ProgramKey CompileState::makeLevelText(
     head << fmt::format(" uint32_t nulls{} = ~0;\n", i / 32);
   }
   head << generated_.str();
+
+  // Reset the generated text and state before generating the next kernel.
   generated_ = std::stringstream();
+  inlines_ = std::stringstream();
+  includeText_ = std::stringstream();
+  includes_.clear();
+  functions_.clear();
   std::vector<AbstractOperand*> input;
   std::vector<AbstractOperand*> local;
   std::vector<AbstractOperand*> output;
@@ -592,7 +600,7 @@ ProgramKey CompileState::makeLevelText(
       [&](int32_t id) { output.push_back(operands_[id].get()); });
 
   spec.code = head.str();
-  spec.entryPoints = std::move(entryPoints);
+  spec.entryPoints = std::move(entryPoints_);
   spec.filePath = fmt::format("/tmp/{}.cu", kernelName);
   // Write the geneerated code to a file for debugger.
   writeDebugFile(spec);
@@ -673,6 +681,8 @@ void CompileState::makeLevel(std::vector<KernelBox>& level) {
         return spec;
       });
   std::vector<std::unique_ptr<AbstractInstruction>> instructions;
+  int32_t entryPointCounter = 1;
+  std::unordered_map<int32_t, int32_t> entryPoints;
   for (branchIdx_ = 0; branchIdx_ < level.size(); ++branchIdx_) {
     currentBox_ = &level[branchIdx_];
     for (stepIdx_ = 0; stepIdx_ < currentBox_->steps.size(); ++stepIdx_) {
@@ -685,7 +695,10 @@ void CompileState::makeLevel(std::vector<KernelBox>& level) {
         }
         auto opInst = dynamic_cast<AbstractOperator*>(instruction.get());
         if (opInst) {
-          AbstractState* state = opInst->state;
+	  if (auto* agg = dynamic_cast<AbstractAggregation*>(opInst)) {
+	    entryPoints[agg->serial] = entryPointCounter++;
+	  }
+	  AbstractState* state = opInst->state;
           state->instruction = instruction.get();
         }
       }
@@ -725,6 +738,9 @@ void CompileState::makeLevel(std::vector<KernelBox>& level) {
       operands_,
       std::move(states),
       std::move(kernel));
+  for (auto& pair : entryPoints) {
+    program->addEntryPointForSerial(pair.first, pair.second);
+  }
   for (auto& i : instructions) {
     program->add(std::move(i));
   }

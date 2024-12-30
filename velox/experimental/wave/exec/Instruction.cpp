@@ -147,8 +147,12 @@ void resupplyHashTable(WaveStream& stream, AbstractInstruction& inst) {
     control.head = head;
     control.oldBuckets = oldBuckets->as<char>();
     control.numOldBuckets = numOldBuckets;
+    auto* exe = stream.executableByInstruction(&inst);
+    VELOX_CHECK_NOT_NULL(exe);
+    auto* program = exe->programShared.get();
+    auto entryPointIdx = program->entryPointIdxBySerial(agg->serial);
     reinterpret_cast<WaveKernelStream*>(deviceStream.get())
-        ->setupAggregation(control);
+      ->setupAggregation(control, entryPointIdx, program->kernel());
   }
   deviceStream->wait();
   WaveStream::releaseStream(std::move(deviceStream));

@@ -355,6 +355,21 @@ void WaveStream::resultToHost() {
   hostReturnEvent_->record(*transferStream);
 }
 
+Executable* WaveStream::executableByInstruction(const AbstractInstruction* instruction) {
+  for (auto& exe : executables_) {
+    if (exe->programShared != nullptr) {
+      for (auto& i : exe->programShared->instructions()) {
+	if (i.get() == instruction) {
+	  return exe.get();
+	}
+      }
+    }
+  }
+  return nullptr;
+}
+
+
+  
 namespace {
 // Copies from pageable host to unified address. Multithreaded memcpy is
 // probably best.

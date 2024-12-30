@@ -59,7 +59,7 @@ class SimpleAggregate : public AggregateGenerator {
 
   std::string generateInit(CompileState& state, const AggregateUpdate& update)
       const override {
-    return fmt::format("  acc{} = 0;\n", update.accumulatorIdx);
+    return fmt::format("  row->acc{} = 0;\n", update.accumulatorIdx);
   }
 
   bool hasAtomic() const override {
@@ -81,10 +81,10 @@ class SimpleAggregate : public AggregateGenerator {
       VELOX_NYI();
     } else {
       auto nullIdx = update.accumulatorIdx + probe.keys.size();
-      auto reduceName =
-          fmt::format("plus<{}>", cudaTypeName(*update.args[0]->type));
+      auto reduceName = "plus";
+      //fmt::format("plus<{}>", cudaTypeName(*update.args[0]->type));
       state.generated() << fmt::format(
-          "  simpleAccumulate(peers, leader, lane, &row->acc{}, &row->nulls{}, {}, {}, {}, {});\n",
+          "  simpleAccumulate(peers, leader, laneId, &row->acc{}, &row->nulls{}, {}, {}, {}, {});\n",
           update.accumulatorIdx,
           nullIdx / 32,
           1U << nullIdx,

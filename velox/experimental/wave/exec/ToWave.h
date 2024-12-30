@@ -802,6 +802,14 @@ class CompileState : public std::enable_shared_from_this<CompileState> {
     return operands_[id].get();
   }
 
+  void addEntryPoint(int32_t serial, int32_t entryPointIdx) {
+    serialToEntryPointIdx_[serial] = entryPointIdx;
+  }
+
+  void addEntryPoint(const std::string& name) {
+    entryPoints_.push_back(name);
+  }
+  
  private:
   bool
   addOperator(exec::Operator* op, int32_t& nodeIndex, RowTypePtr& outputType);
@@ -1007,6 +1015,7 @@ class CompileState : public std::enable_shared_from_this<CompileState> {
   // Concatenated text of inlineable definitions of functions called from the
   // kernel.
   std::stringstream inlines_;
+  std::stringstream declarations_;
 
   //  Text of the kernel being generated.
   std::stringstream generated_;
@@ -1071,6 +1080,11 @@ class CompileState : public std::enable_shared_from_this<CompileState> {
   // Operands that have a declaration. Set when emitting code.
   OperandSet declared_;
 
+  // Names of __global__ in the compiled module being generated.
+  std::vector<std::string> entryPoints_;
+  
+  folly::F14FastMap<int32_t, int32_t> serialToEntryPointIdx_;
+  
   // Mutex serializing the background code generation after missing kernel
   // cache.
   std::mutex generateMutex_;

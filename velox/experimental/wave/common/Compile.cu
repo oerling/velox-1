@@ -149,6 +149,7 @@ void getNvrtcOptions(std::vector<std::string>& data) {
       flags = end + 1;
     }
   }
+  //addFlag("--device-as-default-execution-space", "", 0, data);
 }
 
 // Contains header names and file contents as a std::string with a trailing 0.

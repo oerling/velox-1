@@ -18,7 +18,7 @@
 
 namespace facebook::velox::wave {
 
-std::string makeAggregateRow(CompileState& state, const AggregateProbe& probe) {
+  std::string makeAggregateRow(CompileState& state, const AggregateProbe& probe) {
   std::stringstream out;
   out << "struct HashRow {\n"
          "  int32_t flags;\n"
@@ -48,20 +48,42 @@ void makeAggregateOps(
     CompileState& state,
     const AggregateProbe& probe,
     bool forRead) {
-  state.addInclude("velox/experimental/common/Hash.h");
+  state.addInclude("velox/experimental/wave/common/Hash.h");
+  state.addInclude("velox/experimental/wave/common/BitUtil.cuh");
+  state.addInclude("velox/experimental/wave/common/HashTable.cuh");
   auto& out = state.inlines();
   out << makeAggregateRow(state, probe);
 
   out << "struct AggregateOps {\n"
-      << "  AggregateOps(uint64_t hash, WaveShared* shared) : hash(hash), shared(shared){}\n"
-      << "  uint64_t hash = 1;\n"
+      << "  __device__ AggregateOps(uint64_t hash, WaveShared* shared) : hashNumber(hash), shared(shared){}\n"
+      << "  uint64_t hashNumber;\n"
       << "  WaveShared* shared;\n";
   if (forRead) {
   } else {
-    out << "  uint64_t __device__ hash() const { return hash; }\n";
+    out << "  uint64_t __device__ hash() const { return hashNumber; }\n";
     makeRowHash(state, probe.keys, true);
   }
   out << "};\n\n";
+
+  if (forRead) {
+    return;
+  }
+  state.addEntryPoint("facebook::velox::wave::setupAggregationKernel");
+  out << 
+"void __global__ setupAggregationKernel(AggregationControl op) {\n"
+"  if (op.oldBuckets) {\n"
+"    auto table = op.head->table;\n"
+"    reinterpret_cast<GpuHashTable*>(table)->rehash<HashRow>(\n"
+"        reinterpret_cast<GpuBucket*>(op.oldBuckets),\n"
+"        op.numOldBuckets,\n"
+"        AggregateOps(0, nullptr));\n"
+"    return;\n"
+"  }\n"
+"  auto* data = new (op.head) DeviceAggregation();\n"
+"  data->rowSize = op.rowSize;\n"
+"  data->singleRow = reinterpret_cast<char*>(data + 1);\n"
+"  memset(data->singleRow, 0, op.rowSize);\n"
+"}\n";
 }
 
 /// Emits a lambda that performs the inlined aggregate update.
@@ -71,7 +93,7 @@ void makeUpdateLambda(
     std::vector<const KernelStep*> updates) {
   auto& out = state.generated();
 
-  out << "  [&](GpuHashTableBase* table, HashRow* row, uint32_t peers, int32_t leader, int32_t laneId) {\n";
+  out << "  [&](GpuHashTable* table, HashRow* row, uint32_t peers, int32_t leader, int32_t laneId) {\n";
   std::vector<const AggregateUpdate*> deferred;
 
   auto emitUpdates = [&](bool flush) {
@@ -106,7 +128,7 @@ void makeAggregateProbe(CompileState& state, const AggregateProbe& probe) {
              "  auto state =\n"
              "    reinterpret_cast<DeviceAggregation*>(shared->states[{}]);\n",
              state.stateOrdinal(*probe.state));
-  out << "  state->table->updatingProbe<HashRow>(threadIdx.x, laneId(), laneStatus == ErrorCode::kOk, \n";
+  out << "  reinterpret_cast<GpuHashTable*>(state->table)->updatingProbe<HashRow>(threadIdx.x, LaneId(), laneStatus == ErrorCode::kOk, ops, \n";
   makeCompareLambda(state, probe.keys, true);
   out << ",\n";
   makeInitGroupRow(state, probe.keys, probe.updates);
@@ -137,24 +159,24 @@ std::string readAggRow(CompileState& state, const ReadAggregation& read) {
 
 void makeReadAggregation(CompileState& state, const ReadAggregation& read) {
   auto& out = state.generated();
-
-  out << "  AggregateOps ops(hash, shared);\n";
-  out << "  if (threadIdx.x != 0) { lanestatus = ErrorCode::kInactive; } else {\n"
-      << fmt::format(
-             "  auto state =\n"
-             "    reinterpret_cast<DeviceAggregation*>(shared->states[{}]);\n",
-             state.stateOrdinal(*read.state));
+  auto stateOrdinal = state.stateOrdinal(*read.state);
   if (read.probe->keys.empty()) {
+    // Case with no grouping.
+    out << "  if (threadIdx.x != 0) { lanestatus = ErrorCode::kInactive; } else {\n"
+	<< fmt::format(
+		       "  auto state =\n"
+		       "    reinterpret_cast<DeviceAggregation*>(shared->states[{}]);\n", stateOrdinal);
     out << "  HashRow* row = reinterpret_cast<HashRow*>(state->singleRow);\n";
     out << readAggRow(state, read);
-    out << "    shared->status->numRows = 1;\n";
-    out << "  }\n";
+    out << "    shared->status->numRows = 1;\n"
+	<< "  }\n";
     return;
   }
   out << "  auto rowIdx = blockIdx.x * kBlockSize + threadIdx.x + 1;\n"
          "  auto numRows = state->resultRowPointers[shared->streamIdx][0];\n"
          "  if (rowIdx <= numRows) {\n"
-         "    auto* row = reinterpret_cast<HashRow*>(\n"
+    "  auto state = reinterpret_cast<DeviceAggregation*>(shared->states[" << stateOrdinal << "]);\n"
+    "    auto* row = reinterpret_cast<HashRow*>(\n"
          "      state->resultRowPointers[shared->streamIdx][rowIdx]);\n";
   // Copy keys and accumulators to output.
   for (auto i = 0; i < read.probe->keys.size(); ++i) {
@@ -169,7 +191,12 @@ void makeReadAggregation(CompileState& state, const ReadAggregation& read) {
       << "    shared->numRows = rowIdx + kBlockSize <= numRows \n"
       << "   ? kBlockSize \n"
       << "    : numRows - blockIdx.x * kBlockSize;\n"
+      << "  }\n"
       << "    }\n";
 }
 
+  std::string streamToString(std::stringstream* s) {
+    return s->str();
+  }
+  
 } // namespace facebook::velox::wave
