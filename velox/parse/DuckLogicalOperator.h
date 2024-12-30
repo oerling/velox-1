@@ -43,6 +43,9 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 #include <duckdb.hpp> // @manual
 
+/// Extract from DuckDB headers describing resolved logical
+/// plans. This is a verbatic extract and naming conventions are those
+/// of DuckDB.
 namespace duckdb {
 
 //! LogicalDummyScan represents a dummy scan returning a single row
@@ -196,7 +199,7 @@ class LogicalCrossProduct : public LogicalOperator {
   void ResolveTypes() override;
 };
 
-//! LogicalLimit represents a LIMIT clause
+/// LogicalLimit represents a LIMIT clause
 class LogicalLimit : public LogicalOperator {
  public:
   LogicalLimit(
@@ -205,12 +208,12 @@ class LogicalLimit : public LogicalOperator {
       unique_ptr<Expression> limit,
       unique_ptr<Expression> offset);
 
-  //! Limit and offset values in case they are constants, used in optimizations.
+  /// Limit and offset values in case they are constants, used in optimizations.
   int64_t limit_val;
   int64_t offset_val;
-  //! The maximum amount of elements to emit
+  /// The maximum amount of elements to emit
   unique_ptr<Expression> limit;
-  //! The offset from the start to begin emitting elements
+  /// The offset from the start to begin emitting elements
   unique_ptr<Expression> offset;
 
  public:
@@ -263,19 +266,20 @@ class LogicalJoin : public LogicalOperator {
   static void GetTableReferences(
       LogicalOperator& op,
       unordered_set<idx_t>& bindings);
+
   static void GetExpressionBindings(
       Expression& expr,
       unordered_set<idx_t>& bindings);
 
-  //! The type of the join (INNER, OUTER, etc...)
+  /// The type of the join (INNER, OUTER, etc...)
   JoinType join_type;
-  //! Table index used to refer to the MARK column (in case of a MARK join)
+  /// Table index used to refer to the MARK column (in case of a MARK join)
   idx_t mark_index;
-  //! The columns of the LHS that are output by the join
+  /// The columns of the LHS that are output by the join
   vector<idx_t> left_projection_map;
-  //! The columns of the RHS that are output by the join
+  /// The columns of the RHS that are output by the join
   vector<idx_t> right_projection_map;
-  //! Join Keys statistics (optional)
+  /// Join Keys statistics (optional)
   vector<unique_ptr<BaseStatistics>> join_stats;
 
  public:

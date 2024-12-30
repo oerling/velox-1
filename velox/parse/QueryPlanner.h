@@ -22,8 +22,8 @@
 
 namespace facebook::velox::core {
 
-// Hook to allow plugging different connectors for table scan to
-// DuckDbQueryPlanner.
+/// Hook to allow plugging different connectors for table scan to
+/// DuckDbQueryPlanner.
 using MakeTableScan = std::function<PlanNodePtr(
     const std::string& id,
     const std::string& name,
@@ -54,7 +54,7 @@ class DuckDbQueryPlanner {
       const TypePtr& returnType);
 
   void registerTableScan(MakeTableScan func) {
-    makeTableScan_ = func;
+    makeTableScan_ = std::move(func);
   }
 
   PlanNodePtr plan(const std::string& sql);

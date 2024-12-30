@@ -175,6 +175,7 @@ PlanNodePtr toVeloxPlan(
     return queryContext.makeTableScan(
         queryContext.nextNodeId(), tableName, rowType, columnNames);
   }
+
   std::vector<RowVectorPtr> data;
   for (auto& rowVector : it->second) {
     std::vector<VectorPtr> children;
@@ -207,8 +208,9 @@ TypedExprPtr toVeloxComparisonExpression(
   return std::make_shared<CallTypedExpr>(BOOLEAN(), std::move(children), name);
 }
 
-struct VeloxProjections {
-  VeloxProjections(QueryContext& context) : context(context) {}
+  namespace {
+struct VeloxColumnProjections {
+  VeloxColumnProjections(QueryContext& context) : context(context) {}
 
   core::FieldAccessTypedExprPtr toFieldAccess(
       ::duckdb::Expression& expression,
@@ -220,9 +222,10 @@ struct VeloxProjections {
       exprs.push_back(expr);
       return column;
     }
+
     allIdentity = false;
     exprs.push_back(expr);
-    auto name = context.nextColumnName("_p");
+    const auto name = context.nextColumnName("_p");
     auto projected =
         std::make_shared<FieldAccessTypedExpr>(exprs.back()->type(), name);
     columns.push_back(projected);
@@ -230,8 +233,8 @@ struct VeloxProjections {
   }
 
   void addColumn(const FieldAccessTypedExprPtr& column) {
-    for (auto& previous : columns) {
-      if (column->name() == previous->name()) {
+    for (auto& existingColumn : columns) {
+      if (column->name() == existingColumn->name()) {
         return;
       }
     }
@@ -239,11 +242,14 @@ struct VeloxProjections {
     columns.push_back(column);
   }
 
+  /// Returns 'input' wrapped in the projections of 'this'. May only be called once.
   PlanNodePtr source(PlanNodePtr input) {
     if (allIdentity) {
       return input;
     }
+
     std::vector<std::string> names;
+    names.reserve(columns.size());
     for (auto& column : columns) {
       names.push_back(column->name());
     }
@@ -256,7 +262,8 @@ struct VeloxProjections {
   std::vector<core::TypedExprPtr> exprs;
   std::vector<core::FieldAccessTypedExprPtr> columns;
 };
-
+  }
+    
 TypedExprPtr toVeloxExpression(
     ::duckdb::Expression& expression,
     const TypePtr& inputType) {
@@ -388,6 +395,7 @@ PlanNodePtr toVeloxPlan(
 
 namespace {
 std::string translateAggregateName(const std::string& name) {
+  // first(x) is used to get one element of a set. The closes Velox counterpart is arbitrary, which usually returns the first value it sees.
   if (name == "first") {
     return "arbitrary";
   }
@@ -491,7 +499,7 @@ PlanNodePtr toVeloxPlan(
     memory::MemoryPool* pool,
     std::vector<PlanNodePtr> sources,
     QueryContext& queryContext) {
-  VeloxProjections projections(queryContext);
+  VeloxColumnProjections projections(queryContext);
   std::vector<FieldAccessTypedExprPtr> keys;
   std::vector<SortOrder> sortOrder;
   auto source = sources[0];
@@ -509,7 +517,7 @@ PlanNodePtr toVeloxPlan(
       queryContext.nextNodeId(),
       keys,
       sortOrder,
-      false,
+      /*isPartial=*/false,
       projections.source(source));
 }
 
@@ -541,6 +549,7 @@ PlanNodePtr toVeloxPlan(
       ROW(std::move(names), std::move(types)));
 }
 
+namespace {
 std::vector<size_t> columnIndices(std::vector<idx_t> map, int32_t size) {
   if (size > 0 && map.empty()) {
     std::vector<size_t> result(size);
@@ -549,7 +558,8 @@ std::vector<size_t> columnIndices(std::vector<idx_t> map, int32_t size) {
   }
   return map;
 }
-
+}
+  
 PlanNodePtr toVeloxPlan(
     ::duckdb::LogicalComparisonJoin& join,
     memory::MemoryPool* pool,
@@ -560,8 +570,8 @@ PlanNodePtr toVeloxPlan(
   auto& leftInputType = sources[0]->outputType();
   auto& rightInputType = sources[1]->outputType();
 
-  VeloxProjections leftProjection(queryContext);
-  VeloxProjections rightProjection(queryContext);
+  VeloxColumnProjections leftProjection(queryContext);
+  VeloxColumnProjections rightProjection(queryContext);
   JoinType joinType = JoinType::kInner;
   switch (join.join_type) {
     case ::duckdb::JoinType::INNER:
@@ -622,9 +632,10 @@ PlanNodePtr toVeloxPlan(
   auto outputType = ROW(std::move(names), std::move(types));
   TypedExprPtr filter;
   if (!join.expressions.empty()) {
-    VELOX_CHECK_EQ(1, join.expressions.size());
+    VELOX_CHECK_EQ(join.expressions.size(), 1);
     filter = toVeloxExpression(*join.expressions.front(), outputType);
   }
+
   std::vector<FieldAccessTypedExprPtr> leftKeys;
   std::vector<FieldAccessTypedExprPtr> rightKeys;
   for (auto& condition : join.conditions) {
@@ -950,7 +961,7 @@ void DuckDbQueryPlanner::registerTable(
     const std::string& name,
     const std::vector<RowVectorPtr>& data) {
   VELOX_CHECK_EQ(
-      0, tables_.count(name), "Table is already registered: {}", name);
+		 tables_.count(name), 0, "Table is already registered: {}", name);
 
   auto createTableSql =
       duckdb::makeCreateTableSql(name, *asRowType(data[0]->type()));
@@ -965,11 +976,10 @@ void DuckDbQueryPlanner::registerTable(
     const std::string& name,
     const RowTypePtr& type) {
   VELOX_CHECK_EQ(
-      0, tables_.count(name), "Table is already registered: {}", name);
+		 tables_.count(name), 0, "Table is already registered: {}", name);
 
   auto createTableSql = duckdb::makeCreateTableSql(name, *type);
   auto res = conn_.Query(createTableSql);
-  // VELOX_CHECK(res->success, "Failed to create DuckDB table: {}", res->error);
 }
 
 void DuckDbQueryPlanner::registerScalarFunction(
