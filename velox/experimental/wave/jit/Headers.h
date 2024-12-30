@@ -1342,7 +1342,7 @@ const char* velox_experimental_wave_exec_Accumulators_cuh =
     "\n"
     "  template <>\n"
     "__device__ inline void atomicInc(int64_t* ptr, int64_t inc) {\n"
-    "  atomicAdd((long long*)ptr, (long long)inc);\n"
+    "  atomicAdd((unsigned long long*)ptr, (unsigned long long)inc);\n"
     "}\n"
     "\n"
     "template <typename AccType, typename IncType, typename Reduce2>\n"

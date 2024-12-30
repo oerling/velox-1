@@ -680,6 +680,8 @@ void CompileState::makeLevel(std::vector<KernelBox>& level) {
         sharedState->makeLevelText(pipelineIdx, kernelSeq, spec);
         return spec;
       });
+  // Sync with compilation to serialize compile order.
+  kernel->info(0);
   std::vector<std::unique_ptr<AbstractInstruction>> instructions;
   int32_t entryPointCounter = 1;
   std::unordered_map<int32_t, int32_t> entryPoints;

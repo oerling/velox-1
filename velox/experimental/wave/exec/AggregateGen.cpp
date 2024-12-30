@@ -60,7 +60,7 @@ void makeAggregateOps(
       << "  WaveShared* shared;\n";
   if (forRead) {
   } else {
-    out << "  uint64_t __device__ hash() const { return hashNumber; }\n";
+    out << "  uint64_t __device__ hash(int32_t /*i*/) const { return hashNumber; }\n";
     makeRowHash(state, probe.keys, true);
   }
   out << "};\n\n";
