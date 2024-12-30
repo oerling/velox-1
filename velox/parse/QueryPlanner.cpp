@@ -208,7 +208,7 @@ TypedExprPtr toVeloxComparisonExpression(
   return std::make_shared<CallTypedExpr>(BOOLEAN(), std::move(children), name);
 }
 
-  namespace {
+namespace {
 struct VeloxColumnProjections {
   VeloxColumnProjections(QueryContext& context) : context(context) {}
 
@@ -242,7 +242,8 @@ struct VeloxColumnProjections {
     columns.push_back(column);
   }
 
-  /// Returns 'input' wrapped in the projections of 'this'. May only be called once.
+  /// Returns 'input' wrapped in the projections of 'this'. May only be called
+  /// once.
   PlanNodePtr source(PlanNodePtr input) {
     if (allIdentity) {
       return input;
@@ -262,8 +263,8 @@ struct VeloxColumnProjections {
   std::vector<core::TypedExprPtr> exprs;
   std::vector<core::FieldAccessTypedExprPtr> columns;
 };
-  }
-    
+} // namespace
+
 TypedExprPtr toVeloxExpression(
     ::duckdb::Expression& expression,
     const TypePtr& inputType) {
@@ -395,7 +396,8 @@ PlanNodePtr toVeloxPlan(
 
 namespace {
 std::string translateAggregateName(const std::string& name) {
-  // first(x) is used to get one element of a set. The closes Velox counterpart is arbitrary, which usually returns the first value it sees.
+  // first(x) is used to get one element of a set. The closes Velox counterpart
+  // is arbitrary, which usually returns the first value it sees.
   if (name == "first") {
     return "arbitrary";
   }
@@ -558,8 +560,8 @@ std::vector<size_t> columnIndices(std::vector<idx_t> map, int32_t size) {
   }
   return map;
 }
-}
-  
+} // namespace
+
 PlanNodePtr toVeloxPlan(
     ::duckdb::LogicalComparisonJoin& join,
     memory::MemoryPool* pool,
@@ -961,7 +963,7 @@ void DuckDbQueryPlanner::registerTable(
     const std::string& name,
     const std::vector<RowVectorPtr>& data) {
   VELOX_CHECK_EQ(
-		 tables_.count(name), 0, "Table is already registered: {}", name);
+      tables_.count(name), 0, "Table is already registered: {}", name);
 
   auto createTableSql =
       duckdb::makeCreateTableSql(name, *asRowType(data[0]->type()));
@@ -976,7 +978,7 @@ void DuckDbQueryPlanner::registerTable(
     const std::string& name,
     const RowTypePtr& type) {
   VELOX_CHECK_EQ(
-		 tables_.count(name), 0, "Table is already registered: {}", name);
+      tables_.count(name), 0, "Table is already registered: {}", name);
 
   auto createTableSql = duckdb::makeCreateTableSql(name, *type);
   auto res = conn_.Query(createTableSql);
