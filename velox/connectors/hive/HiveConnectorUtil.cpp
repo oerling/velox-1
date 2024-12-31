@@ -369,6 +369,7 @@ std::shared_ptr<common::ScanSpec> makeScanSpec(
     const std::unordered_map<std::string, std::shared_ptr<HiveColumnHandle>>&
         infoColumns,
     const SpecialColumnNames& specialColumns,
+    bool disableStatsBasedFilterReorder,
     memory::MemoryPool* pool) {
   auto spec = std::make_shared<common::ScanSpec>("root");
   folly::F14FastMap<std::string, std::vector<const common::Subfield*>>
@@ -458,6 +459,9 @@ std::shared_ptr<common::ScanSpec> makeScanSpec(
     fieldSpec->addFilter(*pair.second);
   }
 
+  if (disableStatsBasedFilterReorder) {
+    spec->disableStatsBasedFilterReorder();
+  }
   return spec;
 }
 
@@ -556,8 +560,9 @@ void configureReaderOptions(
     const std::shared_ptr<const HiveConnectorSplit>& hiveSplit,
     const std::unordered_map<std::string, std::string>& tableParameters) {
   auto sessionProperties = connectorQueryCtx->sessionProperties();
-  readerOptions.setLoadQuantum(hiveConfig->loadQuantum());
-  readerOptions.setMaxCoalesceBytes(hiveConfig->maxCoalescedBytes());
+  readerOptions.setLoadQuantum(hiveConfig->loadQuantum(sessionProperties));
+  readerOptions.setMaxCoalesceBytes(
+      hiveConfig->maxCoalescedBytes(sessionProperties));
   readerOptions.setMaxCoalesceDistance(
       hiveConfig->maxCoalescedDistanceBytes(sessionProperties));
   readerOptions.setFileColumnNamesReadAsLowerCase(
@@ -975,7 +980,7 @@ void updateDWRFWriterOptions(
       std::dynamic_pointer_cast<dwrf::WriterOptions>(writerOptions);
   VELOX_CHECK_NOT_NULL(
       dwrfWriterOptions, "DWRF writer expected a DWRF WriterOptions object.");
-  std::map<std::string, std::string> configs;
+  std::map<std::string, std::string> configs = writerOptions->serdeParameters;
 
   if (writerOptions->compressionKind.has_value()) {
     configs.emplace(

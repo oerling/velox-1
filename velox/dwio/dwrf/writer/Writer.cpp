@@ -239,7 +239,7 @@ void Writer::ensureWriteFits(size_t appendBytes, size_t appendRows) {
   const size_t estimatedAppendMemoryBytes =
       std::max(appendBytes, context.estimateNextWriteSize(appendRows));
   const double estimatedMemoryGrowthRatio =
-      (double)estimatedAppendMemoryBytes / totalMemoryUsage;
+      static_cast<double>(estimatedAppendMemoryBytes) / totalMemoryUsage;
   if (!maybeReserveMemory(
           MemoryUsageCategory::GENERAL, estimatedMemoryGrowthRatio)) {
     return;
@@ -281,7 +281,7 @@ void Writer::ensureStripeFlushFits() {
         .maybeReserve(outputMemoryToReserve);
   } else {
     const double estimatedMemoryGrowthRatio =
-        (double)estimateFlushMemoryBytes / outputMemoryUsage;
+        static_cast<double>(estimateFlushMemoryBytes) / outputMemoryUsage;
     maybeReserveMemory(
         MemoryUsageCategory::OUTPUT_STREAM, estimatedMemoryGrowthRatio);
   }
@@ -448,7 +448,7 @@ void Writer::flushStripe(bool close) {
   uint32_t lastIndex = 0;
   uint64_t offset = 0;
   const auto addStream = [&](const DwrfStreamIdentifier& stream,
-                             const auto& out) {
+                             const DataBufferHolder& out) {
     uint32_t currentIndex = 0;
     const auto nodeId = stream.encodingKey().node();
     proto::Stream* s = encodingManager.addStreamToFooter(nodeId, currentIndex);
@@ -482,28 +482,24 @@ void Writer::flushStripe(bool close) {
   uint64_t indexLength = 0;
   sink.setMode(WriterSink::Mode::Index);
   auto result = layoutPlanner_->plan(encodingManager, getStreamList(context));
-  result.iterateIndexStreams([&](auto& streamId, auto& content) {
-    DWIO_ENSURE(
-        isIndexStream(streamId.kind()),
-        "unexpected stream kind ",
-        streamId.kind());
-    indexLength += content.size();
-    addStream(streamId, content);
-    sink.addBuffers(content);
-  });
+  result.iterateIndexStreams(
+      [&](const DwrfStreamIdentifier& streamId, DataBufferHolder& content) {
+        VELOX_CHECK(isIndexStream(streamId.kind()), "unexpected stream kind");
+        indexLength += content.size();
+        addStream(streamId, content);
+        sink.addBuffers(content);
+      });
 
   uint64_t dataLength = 0;
   sink.setMode(WriterSink::Mode::Data);
-  result.iterateDataStreams([&](auto& streamId, auto& content) {
-    DWIO_ENSURE(
-        !isIndexStream(streamId.kind()),
-        "unexpected stream kind ",
-        streamId.kind());
-    dataLength += content.size();
-    addStream(streamId, content);
-    sink.addBuffers(content);
-  });
-  DWIO_ENSURE_GT(dataLength, 0);
+  result.iterateDataStreams(
+      [&](const DwrfStreamIdentifier& streamId, DataBufferHolder& content) {
+        VELOX_CHECK(!isIndexStream(streamId.kind()), "unexpected stream kind");
+        dataLength += content.size();
+        addStream(streamId, content);
+        sink.addBuffers(content);
+      });
+  VELOX_CHECK_GT(dataLength, 0);
   metrics.stripeSize = dataLength;
 
   if (handler.isEncrypted()) {
@@ -519,7 +515,7 @@ void Writer::flushStripe(bool close) {
 
   // flush footer
   const uint64_t footerOffset = sink.size();
-  DWIO_ENSURE_EQ(footerOffset, stripeOffset + dataLength + indexLength);
+  VELOX_CHECK_EQ(footerOffset, stripeOffset + dataLength + indexLength);
 
   sink.setMode(WriterSink::Mode::Footer);
   writerBase_->writeProto(encodingManager.getFooter());

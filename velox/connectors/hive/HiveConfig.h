@@ -102,6 +102,8 @@ class HiveConfig {
 
   /// The max coalesce bytes for a request.
   static constexpr const char* kMaxCoalescedBytes = "max-coalesced-bytes";
+  static constexpr const char* kMaxCoalescedBytesSession =
+      "max-coalesced-bytes";
 
   /// The max merge distance to combine read requests.
   /// Note: The session property name differs from the constant name for
@@ -116,6 +118,7 @@ class HiveConfig {
   /// The total size in bytes for a direct coalesce request. Up to 8MB load
   /// quantum size is supported when SSD cache is enabled.
   static constexpr const char* kLoadQuantum = "load-quantum";
+  static constexpr const char* kLoadQuantumSession = "load-quantum";
 
   /// Maximum number of entries in the file handle cache.
   static constexpr const char* kNumCacheFileHandles = "num_cached_file_handles";
@@ -206,8 +209,15 @@ class HiveConfig {
   static constexpr const char* kReadTimestampUnitSession =
       "hive.reader.timestamp_unit";
 
+  static constexpr const char* kReadStatsBasedFilterReorderDisabled =
+      "hive.reader.stats_based_filter_reorder_disabaled";
+  static constexpr const char* kReadStatsBasedFilterReorderDisabledSession =
+      "hive.reader.stats_based_filter_reorder_disabaled";
+
   static constexpr const char* kCacheNoRetention = "cache.no_retention";
   static constexpr const char* kCacheNoRetentionSession = "cache.no_retention";
+  static constexpr const char* kLocalDataPath = "hive_local_data_path";
+  static constexpr const char* kLocalFileFormat = "hive_local_file_format";
 
   InsertExistingPartitionsBehavior insertExistingPartitionsBehavior(
       const config::ConfigBase* session) const;
@@ -237,13 +247,13 @@ class HiveConfig {
 
   bool ignoreMissingFiles(const config::ConfigBase* session) const;
 
-  int64_t maxCoalescedBytes() const;
+  int64_t maxCoalescedBytes(const config::ConfigBase* session) const;
 
   int32_t maxCoalescedDistanceBytes(const config::ConfigBase* session) const;
 
   int32_t prefetchRowGroups() const;
 
-  int32_t loadQuantum() const;
+  int32_t loadQuantum(const config::ConfigBase* session) const;
 
   int32_t numCacheFileHandles() const;
 
@@ -292,12 +302,25 @@ class HiveConfig {
   // Returns the timestamp unit used when reading timestamps from files.
   uint8_t readTimestampUnit(const config::ConfigBase* session) const;
 
+  /// Returns true if the stats based filter reorder for read is disabled.
+  bool readStatsBasedFilterReorderDisabled(
+      const config::ConfigBase* session) const;
+
   /// Returns true to evict out a query scanned data out of in-memory cache
   /// right after the access, and also skip staging to the ssd cache. This helps
   /// to prevent the cache space pollution from the one-time table scan by large
   /// batch query when mixed running with interactive query which has high data
   /// locality.
   bool cacheNoRetention(const config::ConfigBase* session) const;
+
+  /// Returns the file system path containing local data. If non-empty,
+  /// initializes LocalHiveConnectorMetadata to provide metadata for the tables
+  /// in the directory.
+  std::string hiveLocalDataPath() const;
+
+  /// Returns the name of the file format to use in interpreting the contents of
+  /// hiveLocalDataPath().
+  std::string hiveLocalFileFormat() const;
 
   HiveConfig(std::shared_ptr<const config::ConfigBase> config) {
     VELOX_CHECK_NOT_NULL(
