@@ -522,7 +522,7 @@ ProgramKey CompileState::makeLevelText(
   VELOX_CHECK_EQ(1, level.size(), "Only one program per level supported");
   std::stringstream head;
   auto kernelName = fmt::format("wavegen{}", ++kernelCounter_);
-  entryPoints_ = {
+  kernelEntryPoints_ = {
       fmt::format("facebook::velox::wave::{}", kernelName)};
   generated_ << "  GENERATED_PREAMBLE(0);\n";
   for (branchIdx_ = 0; branchIdx_ < level.size(); ++branchIdx_) {
@@ -532,18 +532,20 @@ ProgramKey CompileState::makeLevelText(
     bool anyRetry = false;
     bool needActiveCheck = true;
     for (stepIdx_ = 0; stepIdx_ < box.steps.size(); ++stepIdx_) {
-      if (box.steps[stepIdx_]->hasContinue()) {
+      auto* step = box.steps[stepIdx_];
+      auto label = step->continueLabel();
+      if (label.has_value()) {
         if (!anyRetry) {
           anyRetry = true;
           generated_ << "if (shared->isContinue) {\n"
-                     << "switch(entryPoint) {\n";
+                     << "switch(shared->startLabel) {\n";
         }
         generated_ << fmt::format(
-            "case {}: goto continue{};\n", stepIdx_, stepIdx_);
+				  "case {}: goto continue{};\n", label.value(), label.value());
       }
-      if (anyRetry) {
-        generated_ << "}\n}\n";
-      }
+    }
+    if (anyRetry) {
+      generated_ << "    case 0xffff: return;\n}\n}\n";
     }
     for (stepIdx_ = 0; stepIdx_ < box.steps.size(); ++stepIdx_) {
       if (needActiveCheck) {
@@ -557,8 +559,9 @@ ProgramKey CompileState::makeLevelText(
         ++nextSyncLabel_;
         needActiveCheck = true;
       }
-      if (step->hasContinue()) {
-        generated_ << fmt::format("enter{}: \n", stepIdx_);
+      auto label = step->continueLabel();
+      if (label.has_value()) {
+        generated_ << fmt::format("continue{}: \n", label.value());
       }
       step->generateMain(*this);
     }
@@ -600,7 +603,7 @@ ProgramKey CompileState::makeLevelText(
       [&](int32_t id) { output.push_back(operands_[id].get()); });
 
   spec.code = head.str();
-  spec.entryPoints = std::move(entryPoints_);
+  spec.entryPoints = std::move(kernelEntryPoints_);
   spec.filePath = fmt::format("/tmp/{}.cu", kernelName);
   // Write the geneerated code to a file for debugger.
   writeDebugFile(spec);
@@ -666,6 +669,33 @@ void CompileState::fillExtraWrap(OperandSet& extraWrap) {
 
 void CompileState::makeLevel(std::vector<KernelBox>& level) {
   VELOX_CHECK_EQ(1, level.size(), "Only one program per level supported");
+  std::vector<std::unique_ptr<AbstractInstruction>> instructions;
+  int32_t kernelEntryPointCounter = 1;
+  std::unordered_map<int32_t, int32_t> kernelEntryPoints;
+  for (branchIdx_ = 0; branchIdx_ < level.size(); ++branchIdx_) {
+    currentBox_ = &level[branchIdx_];
+    for (stepIdx_ = 0; stepIdx_ < currentBox_->steps.size(); ++stepIdx_) {
+      auto instructionUnique = currentBox_->steps[stepIdx_]->addInstruction(*this);
+      if (instructionUnique) {
+	instructions.push_back(std::move(instructionUnique));
+	auto* instruction = instructions.back().get();
+        instruction->reserveState(instructionStatus_);
+        auto* status = instruction->mutableInstructionStatus();
+        if (status) {
+          currentBox_->steps[stepIdx_]->status = *status;
+        }
+        auto opInst = dynamic_cast<AbstractOperator*>(instruction);
+        if (opInst) {
+	  if (auto* agg = dynamic_cast<AbstractAggregation*>(opInst)) {
+	    kernelEntryPoints[agg->continueIdx()] = kernelEntryPointCounter++;
+	  }
+	  AbstractState* state = opInst->state;
+          state->instruction = instruction;
+        }
+      }
+    }
+  }
+
   int32_t sharedSize = 0;
   programs_.clear();
   auto key = makeKey(sharedSize);
@@ -682,30 +712,6 @@ void CompileState::makeLevel(std::vector<KernelBox>& level) {
       });
   // Sync with compilation to serialize compile order.
   kernel->info(0);
-  std::vector<std::unique_ptr<AbstractInstruction>> instructions;
-  int32_t entryPointCounter = 1;
-  std::unordered_map<int32_t, int32_t> entryPoints;
-  for (branchIdx_ = 0; branchIdx_ < level.size(); ++branchIdx_) {
-    currentBox_ = &level[branchIdx_];
-    for (stepIdx_ = 0; stepIdx_ < currentBox_->steps.size(); ++stepIdx_) {
-      auto instruction = currentBox_->steps[stepIdx_]->addInstruction(*this);
-      if (instruction) {
-        instruction->reserveState(instructionStatus_);
-        auto* status = instruction->mutableInstructionStatus();
-        if (status) {
-          currentBox_->steps[stepIdx_]->status = *status;
-        }
-        auto opInst = dynamic_cast<AbstractOperator*>(instruction.get());
-        if (opInst) {
-	  if (auto* agg = dynamic_cast<AbstractAggregation*>(opInst)) {
-	    entryPoints[agg->serial] = entryPointCounter++;
-	  }
-	  AbstractState* state = opInst->state;
-          state->instruction = instruction.get();
-        }
-      }
-    }
-  }
 
   auto& params = currentCandidate_->levelParams[kernelSeq_];
   auto numBranches = currentCandidate_->steps[kernelSeq_].size();
@@ -740,7 +746,7 @@ void CompileState::makeLevel(std::vector<KernelBox>& level) {
       operands_,
       std::move(states),
       std::move(kernel));
-  for (auto& pair : entryPoints) {
+  for (auto& pair : kernelEntryPoints) {
     program->addEntryPointForSerial(pair.first, pair.second);
   }
   for (auto& i : instructions) {

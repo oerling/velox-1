@@ -78,8 +78,9 @@ struct KernelStep {
     return false;
   }
 
-  virtual bool hasContinue() const {
-    return false;
+  /// Returns the instruction index to use wen continuing from this. nullopt if 'this' is not a continuable point.
+  virtual std::optional<int32_t> continueLabel() const {
+    return std::nullopt;
   }
 
   virtual bool preservesRegisters() const {
@@ -187,9 +188,11 @@ struct Compute : public KernelStep {
   StepKind kind() const override {
     return StepKind::kOperand;
   }
-  bool hasContinue() const override {
-    return operand->retriable;
+
+  std::optional<int32_t> continueLabel() const override {
+    return operand->retriable ? std::optional<int32_t>(continueInstruction->continueIdx()) : std::nullopt;
   }
+
   void visitReferences(std::function<void(AbstractOperand*)> visitor) override;
 
   void visitResults(std::function<void(AbstractOperand*)> visitor) override;
@@ -197,6 +200,7 @@ struct Compute : public KernelStep {
   void generateMain(CompileState& state) override;
 
   AbstractOperand* operand;
+  AbstractInstruction* continueInstruction{nullptr};
 };
 
 struct Filter : public KernelStep {
@@ -361,8 +365,8 @@ struct AggregateProbe : public KernelStep {
     return StepKind::kAggregateProbe;
   }
 
-  bool hasContinue() const override {
-    return true;
+  std::optional<int32_t> continueLabel() const override {
+    return abstractAggregation->continueIdx();
   }
 
   bool isSink() const override {
@@ -410,7 +414,7 @@ struct AggregateProbe : public KernelStep {
   bool allUpdatesInlined{false};
 
   // The instruction, used for generating the read of the aggregate state.
-  AbstractAggregation* abstractAggregation;
+  AbstractAggregation* abstractAggregation{nullptr};
 };
 
 struct ReadAggregation : public KernelStep {
@@ -807,7 +811,7 @@ class CompileState : public std::enable_shared_from_this<CompileState> {
   }
 
   void addEntryPoint(const std::string& name) {
-    entryPoints_.push_back(name);
+    kernelEntryPoints_.push_back(name);
   }
   
  private:
@@ -1081,8 +1085,12 @@ class CompileState : public std::enable_shared_from_this<CompileState> {
   OperandSet declared_;
 
   // Names of __global__ in the compiled module being generated.
-  std::vector<std::string> entryPoints_;
+  std::vector<std::string> kernelEntryPoints_;
   
+  // Maps from the continue idx of the instruction to the kernel entry
+  // point of the kernel that manages the resource associated with the
+  // instruction. For example, serial of the AbstractAggregation maps
+  // to the kernel entry point index for the rehash kernel.
   folly::F14FastMap<int32_t, int32_t> serialToEntryPointIdx_;
   
   // Mutex serializing the background code generation after missing kernel

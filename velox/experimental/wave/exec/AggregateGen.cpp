@@ -44,6 +44,65 @@ probe.updates[i]->generator->generateInline(
   return out.str();
 }
 
+const char* aggregateOpsBoilerPlate =
+
+"HashRow* __device__\n"
+"  newRow(GpuHashTable* table, int32_t partition, int32_t i) {\n"
+"    auto* allocator = &table->allocators[partition];\n"
+"    return allocator->allocateRow<HashRow>();\n"
+"}\n"
+
+"  template <typename InitRow>\n"
+"  ProbeState __device__ insert(\n"
+"      GpuHashTable* table,\n"
+"      int32_t partition,\n"
+"      GpuBucket* bucket,\n"
+"      uint32_t misses,\n"
+"      uint32_t oldTags,\n"
+"      uint32_t tagWord,\n"
+"      int32_t i,\n"
+"      HashRow*& row,\n"
+"      InitRow init) {\n"
+"    if (!row) {\n"
+"      row = newRow(table, partition, i);\n"
+"      if (!row) {\n"
+"        return ProbeState::kNeedSpace;\n"
+"      }\n"
+"   init(row);\n"
+"    }\n"
+"    auto missShift = __ffs(misses) - 1;\n"
+"    if (!bucket->addNewTag(tagWord, oldTags, missShift)) {\n"
+"      return ProbeState::kRetry;\n"
+"    }\n"
+"    bucket->store(missShift / 8, row);\n"
+"    atomicInc(&table->numDistinct, static_cast<int64_t>(1));\n"
+"    return ProbeState::kDone;\n"
+"  }\n"
+"\n"
+"  void __device__ addHostRetry(int32_t i) {\n"
+"    shared->hasContinue = true;\n"
+"    shared->status[i / kBlockSize].errors[i & (kBlockSize - 1)] =\n"
+"        ErrorCode::kInsufficientMemory;\n"
+"  }\n"
+"\n"
+"  void __device__\n"
+"  freeInsertable(GpuHashTable* table, HashRow* row, uint64_t h) {\n"
+"    int32_t partition = table->partitionIdx(h);\n"
+"    auto* allocator = &table->allocators[partition];\n"
+"    allocator->markRowFree(row);\n"
+"  }\n"
+"\n"
+"  HashRow* __device__ getExclusive(\n"
+"      GpuHashTable* table,\n"
+"      GpuBucket* bucket,\n"
+"      HashRow* row,\n"
+"      int32_t hitIdx) {\n"
+"    return row;\n"
+"  }\n"
+"\n"
+"  void __device__ writeDone(HashRow* row) {}\n"
+"\n";
+  
 void makeAggregateOps(
     CompileState& state,
     const AggregateProbe& probe,
@@ -62,6 +121,7 @@ void makeAggregateOps(
   } else {
     out << "  uint64_t __device__ hash(int32_t /*i*/) const { return hashNumber; }\n";
     makeRowHash(state, probe.keys, true);
+    out << aggregateOpsBoilerPlate;
   }
   out << "};\n\n";
 
@@ -128,7 +188,8 @@ void makeAggregateProbe(CompileState& state, const AggregateProbe& probe) {
              "  auto state =\n"
              "    reinterpret_cast<DeviceAggregation*>(shared->states[{}]);\n",
              state.stateOrdinal(*probe.state));
-  out << "  reinterpret_cast<GpuHashTable*>(state->table)->updatingProbe<HashRow>(threadIdx.x, LaneId(), laneStatus == ErrorCode::kOk, ops, \n";
+  out << "  auto* table = reinterpret_cast<GpuHashTable*>(state->table);\n"
+    "  table->updatingProbe<HashRow>(threadIdx.x, LaneId(), laneStatus == ErrorCode::kOk, ops, \n";
   makeCompareLambda(state, probe.keys, true);
   out << ",\n";
   makeInitGroupRow(state, probe.keys, probe.updates);
@@ -138,7 +199,9 @@ void makeAggregateProbe(CompileState& state, const AggregateProbe& probe) {
   out << "      __syncthreads();\n"
          "  laneStatus = shared->status->errors[threadIdx.x];\n"
          "  if (threadIdx.x == 0 && shared->hasContinue) {\n"
-         "    auto ret = gridStatus<AggregateReturn>(shared, agg->status);\n"
+    "    auto ret = gridStatus<AggregateReturn>(shared, " 
+<< probe.abstractAggregation->mutableInstructionStatus()->gridState
+<< ");\n"
          "    ret->numDistinct = table->numDistinct;\n"
          "  }\n"
          "  __syncthreads();\n"

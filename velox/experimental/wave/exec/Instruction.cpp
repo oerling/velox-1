@@ -172,7 +172,7 @@ AdvanceResult AbstractAggregation::canAdvance(
     // resupply the device side hash table.
     return {
         .numRows = stream.numRows(),
-        .instructionIdx = instructionIdx,
+        .instructionIdx = serial,
         .isRetry = true,
         .syncDrivers = true,
         .updateStatus = resupplyHashTable,

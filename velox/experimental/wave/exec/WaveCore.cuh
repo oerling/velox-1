@@ -24,15 +24,23 @@ namespace facebook::velox::wave {
 
 template <typename T>
 inline T* __device__
-gridStatus(const WaveShared* shared, const InstructionStatus& status) {
+gridStatus(const WaveShared* shared, int32_t gridState) {
   return reinterpret_cast<T*>(
       roundUp(
           reinterpret_cast<uintptr_t>(
               &shared->status
                    [shared->numBlocks - (shared->blockBase / kBlockSize)]),
           8) +
-      status.gridState);
+      gridState);
 }
+
+template <typename T>
+inline T* __device__
+gridStatus(const WaveShared* shared, const InstructionStatus& status) {
+  return gridStatus<T>(shared, status.gridState);
+}
+
+
 
 template <typename T>
 inline T* __device__ laneStatus(
@@ -273,6 +281,9 @@ __device__ inline T& flatResult(Operand* op, int32_t blockBase) {
     shared->numRowsPerThread = params.numRowsPerThread;                        \
     shared->streamIdx = params.streamIdx;                                      \
     shared->isContinue = params.startPC != nullptr;                            \
+    if (shared->isContinue) {\
+      shared->startLabel = params.startPC[programIndex];\
+    }\
     shared->extraWraps = params.extraWraps;                                    \
     shared->numExtraWraps = params.numExtraWraps;                               \
     shared->hasContinue = false;                                               \
@@ -282,16 +293,11 @@ __device__ inline T& flatResult(Operand* op, int32_t blockBase) {
   auto blockBase = shared->blockBase;                                          \
   auto operands = shared->operands;                                            \
   ErrorCode laneStatus;                                                        \
-  int32_t entryPoint = 0;                                                      \
   if (!shared->isContinue) {                                                   \
     laneStatus =                                                               \
         threadIdx.x < shared->numRows ? ErrorCode::kOk : ErrorCode::kInactive; \
-  } else {                                                                     \
-    entryPoint = params.startPC[programIndex];                                 \
-    if (entryPoint == ~0) {                                                    \
-      return; /* no continue in this program*/                                 \
-    }                                                                          \
-    laneStatus = shared->status->errors[threadIdx.x];                          \
+  } else { \
+    laneStatus = shared->status->errors[threadIdx.x];	\
   }
 
 #define PROGRAM_EPILOGUE()                          \

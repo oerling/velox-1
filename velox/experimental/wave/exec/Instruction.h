@@ -201,7 +201,7 @@ struct AdvanceResult {
 };
 
 struct AbstractInstruction {
-  AbstractInstruction(OpCode opCode) : opCode(opCode) {}
+  AbstractInstruction(OpCode opCode, int32_t serial = -1) : opCode(opCode), serial(serial) {}
 
   virtual ~AbstractInstruction() = default;
 
@@ -249,6 +249,11 @@ struct AbstractInstruction {
     return false;
   }
 
+  /// Returns the instructionIdx to use in AdvanceResult to pick up from 'this'.
+  virtual int32_t continueIdx() const {
+    return serial; 
+  }
+  
   virtual void reserveState(InstructionStatus& state) {}
 
   /// Returns the InstructionStatus if any. Used for patching the grid
@@ -262,6 +267,8 @@ struct AbstractInstruction {
   virtual std::string toString() const {
     return fmt::format("OpCode {}", static_cast<int32_t>(opCode));
   }
+
+  int32_t serial{-1};
 };
 
 struct AbstractReturn : public AbstractInstruction {
@@ -401,9 +408,8 @@ struct AbstractOperator : public AbstractInstruction {
       int32_t serial,
       AbstractState* state,
       RowTypePtr outputType)
-      : AbstractInstruction(opCode),
-        serial(serial),
-        state(state),
+    : AbstractInstruction(opCode, serial),
+	state(state),
         outputType(outputType) {}
 
   std::optional<int32_t> stateId() const override {
@@ -413,20 +419,10 @@ struct AbstractOperator : public AbstractInstruction {
     return state->id;
   }
 
-  // Identifies the bit in 'continuable' to indicate need for post-return
-  // action.
-  int32_t serial;
-
   // Handle on device side state, e.g. aggregate hash table or repartitioning
   // output buffers.
   AbstractState* state;
   RowTypePtr outputType;
-};
-
-/// Represents a block of generated code possibly with a retry entry point.
-struct AbstractBlock : public AbstractInstruction {
-  int32_t serial;
-  InstructionStatus status;
 };
 
 /// Describes a field in a row-wise container for hash build/group by.

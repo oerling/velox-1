@@ -33,3 +33,5 @@ oneReadAggregate(KernelParams params, int32_t pc, int32_t base) {
 }
 
 } // namespace facebook::velox::wave
+
+#include "wavegen1.cu"

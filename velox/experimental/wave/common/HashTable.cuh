@@ -317,7 +317,7 @@ void __device__
       while (hits) {
         hitIdx = (__ffs(hits) - 1) / 8;
         auto candidate = bucket->loadWithWait<RowType>(hitIdx);
-        if (compare(this, candidate)) {
+        if (compare(candidate)) {
           if (toInsert) {
             ops.freeInsertable(this, toInsert, h);
           }
