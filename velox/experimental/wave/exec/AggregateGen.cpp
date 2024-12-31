@@ -18,7 +18,7 @@
 
 namespace facebook::velox::wave {
 
-  std::string makeAggregateRow(CompileState& state, const AggregateProbe& probe) {
+std::string makeAggregateRow(CompileState& state, const AggregateProbe& probe) {
   std::stringstream out;
   out << "struct HashRow {\n"
          "  int32_t flags;\n"
@@ -30,10 +30,10 @@ namespace facebook::velox::wave {
     out << fmt::format("  uint32_t nulls{};\n", n / 32);
   }
   for (auto i = 0; i < probe.updates.size(); ++i) {
-probe.updates[i]->generator->generateInclude(
-						 state, probe, *probe.updates[i]);
-probe.updates[i]->generator->generateInline(
-						 state, probe, *probe.updates[i]);
+    probe.updates[i]->generator->generateInclude(
+        state, probe, *probe.updates[i]);
+    probe.updates[i]->generator->generateInline(
+        state, probe, *probe.updates[i]);
 
     out << probe.updates[i]->generator->generateAccumulator(
                state, probe, *probe.updates[i])
@@ -46,63 +46,63 @@ probe.updates[i]->generator->generateInline(
 
 const char* aggregateOpsBoilerPlate =
 
-"HashRow* __device__\n"
-"  newRow(GpuHashTable* table, int32_t partition, int32_t i) {\n"
-"    auto* allocator = &table->allocators[partition];\n"
-"    return allocator->allocateRow<HashRow>();\n"
-"}\n"
+    "HashRow* __device__\n"
+    "  newRow(GpuHashTable* table, int32_t partition, int32_t i) {\n"
+    "    auto* allocator = &table->allocators[partition];\n"
+    "    return allocator->allocateRow<HashRow>();\n"
+    "}\n"
 
-"  template <typename InitRow>\n"
-"  ProbeState __device__ insert(\n"
-"      GpuHashTable* table,\n"
-"      int32_t partition,\n"
-"      GpuBucket* bucket,\n"
-"      uint32_t misses,\n"
-"      uint32_t oldTags,\n"
-"      uint32_t tagWord,\n"
-"      int32_t i,\n"
-"      HashRow*& row,\n"
-"      InitRow init) {\n"
-"    if (!row) {\n"
-"      row = newRow(table, partition, i);\n"
-"      if (!row) {\n"
-"        return ProbeState::kNeedSpace;\n"
-"      }\n"
-"   init(row);\n"
-"    }\n"
-"    auto missShift = __ffs(misses) - 1;\n"
-"    if (!bucket->addNewTag(tagWord, oldTags, missShift)) {\n"
-"      return ProbeState::kRetry;\n"
-"    }\n"
-"    bucket->store(missShift / 8, row);\n"
-"    atomicInc(&table->numDistinct, static_cast<int64_t>(1));\n"
-"    return ProbeState::kDone;\n"
-"  }\n"
-"\n"
-"  void __device__ addHostRetry(int32_t i) {\n"
-"    shared->hasContinue = true;\n"
-"    shared->status[i / kBlockSize].errors[i & (kBlockSize - 1)] =\n"
-"        ErrorCode::kInsufficientMemory;\n"
-"  }\n"
-"\n"
-"  void __device__\n"
-"  freeInsertable(GpuHashTable* table, HashRow* row, uint64_t h) {\n"
-"    int32_t partition = table->partitionIdx(h);\n"
-"    auto* allocator = &table->allocators[partition];\n"
-"    allocator->markRowFree(row);\n"
-"  }\n"
-"\n"
-"  HashRow* __device__ getExclusive(\n"
-"      GpuHashTable* table,\n"
-"      GpuBucket* bucket,\n"
-"      HashRow* row,\n"
-"      int32_t hitIdx) {\n"
-"    return row;\n"
-"  }\n"
-"\n"
-"  void __device__ writeDone(HashRow* row) {}\n"
-"\n";
-  
+    "  template <typename InitRow>\n"
+    "  ProbeState __device__ insert(\n"
+    "      GpuHashTable* table,\n"
+    "      int32_t partition,\n"
+    "      GpuBucket* bucket,\n"
+    "      uint32_t misses,\n"
+    "      uint32_t oldTags,\n"
+    "      uint32_t tagWord,\n"
+    "      int32_t i,\n"
+    "      HashRow*& row,\n"
+    "      InitRow init) {\n"
+    "    if (!row) {\n"
+    "      row = newRow(table, partition, i);\n"
+    "      if (!row) {\n"
+    "        return ProbeState::kNeedSpace;\n"
+    "      }\n"
+    "   init(row);\n"
+    "    }\n"
+    "    auto missShift = __ffs(misses) - 1;\n"
+    "    if (!bucket->addNewTag(tagWord, oldTags, missShift)) {\n"
+    "      return ProbeState::kRetry;\n"
+    "    }\n"
+    "    bucket->store(missShift / 8, row);\n"
+    "    atomicInc(&table->numDistinct, static_cast<int64_t>(1));\n"
+    "    return ProbeState::kDone;\n"
+    "  }\n"
+    "\n"
+    "  void __device__ addHostRetry(int32_t i) {\n"
+    "    shared->hasContinue = true;\n"
+    "    shared->status[i / kBlockSize].errors[i & (kBlockSize - 1)] =\n"
+    "        ErrorCode::kInsufficientMemory;\n"
+    "  }\n"
+    "\n"
+    "  void __device__\n"
+    "  freeInsertable(GpuHashTable* table, HashRow* row, uint64_t h) {\n"
+    "    int32_t partition = table->partitionIdx(h);\n"
+    "    auto* allocator = &table->allocators[partition];\n"
+    "    allocator->markRowFree(row);\n"
+    "  }\n"
+    "\n"
+    "  HashRow* __device__ getExclusive(\n"
+    "      GpuHashTable* table,\n"
+    "      GpuBucket* bucket,\n"
+    "      HashRow* row,\n"
+    "      int32_t hitIdx) {\n"
+    "    return row;\n"
+    "  }\n"
+    "\n"
+    "  void __device__ writeDone(HashRow* row) {}\n"
+    "\n";
+
 void makeAggregateOps(
     CompileState& state,
     const AggregateProbe& probe,
@@ -129,21 +129,20 @@ void makeAggregateOps(
     return;
   }
   state.addEntryPoint("facebook::velox::wave::setupAggregationKernel");
-  out << 
-"void __global__ setupAggregationKernel(AggregationControl op) {\n"
-"  if (op.oldBuckets) {\n"
-"    auto table = op.head->table;\n"
-"    reinterpret_cast<GpuHashTable*>(table)->rehash<HashRow>(\n"
-"        reinterpret_cast<GpuBucket*>(op.oldBuckets),\n"
-"        op.numOldBuckets,\n"
-"        AggregateOps(0, nullptr));\n"
-"    return;\n"
-"  }\n"
-"  auto* data = new (op.head) DeviceAggregation();\n"
-"  data->rowSize = op.rowSize;\n"
-"  data->singleRow = reinterpret_cast<char*>(data + 1);\n"
-"  memset(data->singleRow, 0, op.rowSize);\n"
-"}\n";
+  out << "void __global__ setupAggregationKernel(AggregationControl op) {\n"
+         "  if (op.oldBuckets) {\n"
+         "    auto table = op.head->table;\n"
+         "    reinterpret_cast<GpuHashTable*>(table)->rehash<HashRow>(\n"
+         "        reinterpret_cast<GpuBucket*>(op.oldBuckets),\n"
+         "        op.numOldBuckets,\n"
+         "        AggregateOps(0, nullptr));\n"
+         "    return;\n"
+         "  }\n"
+         "  auto* data = new (op.head) DeviceAggregation();\n"
+         "  data->rowSize = op.rowSize;\n"
+         "  data->singleRow = reinterpret_cast<char*>(data + 1);\n"
+         "  memset(data->singleRow, 0, op.rowSize);\n"
+         "}\n";
 }
 
 /// Emits a lambda that performs the inlined aggregate update.
@@ -189,7 +188,7 @@ void makeAggregateProbe(CompileState& state, const AggregateProbe& probe) {
              "    reinterpret_cast<DeviceAggregation*>(shared->states[{}]);\n",
              state.stateOrdinal(*probe.state));
   out << "  auto* table = reinterpret_cast<GpuHashTable*>(state->table);\n"
-    "  table->updatingProbe<HashRow>(threadIdx.x, LaneId(), laneStatus == ErrorCode::kOk, ops, \n";
+         "  table->updatingProbe<HashRow>(threadIdx.x, LaneId(), laneStatus == ErrorCode::kOk, ops, \n";
   makeCompareLambda(state, probe.keys, true);
   out << ",\n";
   makeInitGroupRow(state, probe.keys, probe.updates);
@@ -199,9 +198,9 @@ void makeAggregateProbe(CompileState& state, const AggregateProbe& probe) {
   out << "      __syncthreads();\n"
          "  laneStatus = shared->status->errors[threadIdx.x];\n"
          "  if (threadIdx.x == 0 && shared->hasContinue) {\n"
-    "    auto ret = gridStatus<AggregateReturn>(shared, " 
-<< probe.abstractAggregation->mutableInstructionStatus()->gridState
-<< ");\n"
+         "    auto ret = gridStatus<AggregateReturn>(shared, "
+      << probe.abstractAggregation->mutableInstructionStatus()->gridState
+      << ");\n"
          "    ret->numDistinct = table->numDistinct;\n"
          "  }\n"
          "  __syncthreads();\n"
@@ -226,20 +225,23 @@ void makeReadAggregation(CompileState& state, const ReadAggregation& read) {
   if (read.probe->keys.empty()) {
     // Case with no grouping.
     out << "  if (threadIdx.x != 0) { lanestatus = ErrorCode::kInactive; } else {\n"
-	<< fmt::format(
-		       "  auto state =\n"
-		       "    reinterpret_cast<DeviceAggregation*>(shared->states[{}]);\n", stateOrdinal);
+        << fmt::format(
+               "  auto state =\n"
+               "    reinterpret_cast<DeviceAggregation*>(shared->states[{}]);\n",
+               stateOrdinal);
     out << "  HashRow* row = reinterpret_cast<HashRow*>(state->singleRow);\n";
     out << readAggRow(state, read);
     out << "    shared->status->numRows = 1;\n"
-	<< "  }\n";
+        << "  }\n";
     return;
   }
   out << "  auto rowIdx = blockIdx.x * kBlockSize + threadIdx.x + 1;\n"
          "  auto numRows = state->resultRowPointers[shared->streamIdx][0];\n"
          "  if (rowIdx <= numRows) {\n"
-    "  auto state = reinterpret_cast<DeviceAggregation*>(shared->states[" << stateOrdinal << "]);\n"
-    "    auto* row = reinterpret_cast<HashRow*>(\n"
+         "  auto state = reinterpret_cast<DeviceAggregation*>(shared->states["
+      << stateOrdinal
+      << "]);\n"
+         "    auto* row = reinterpret_cast<HashRow*>(\n"
          "      state->resultRowPointers[shared->streamIdx][rowIdx]);\n";
   // Copy keys and accumulators to output.
   for (auto i = 0; i < read.probe->keys.size(); ++i) {
@@ -258,8 +260,8 @@ void makeReadAggregation(CompileState& state, const ReadAggregation& read) {
       << "    }\n";
 }
 
-  std::string streamToString(std::stringstream* s) {
-    return s->str();
-  }
-  
+std::string streamToString(std::stringstream* s) {
+  return s->str();
+}
+
 } // namespace facebook::velox::wave

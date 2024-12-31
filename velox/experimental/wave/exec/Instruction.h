@@ -150,9 +150,9 @@ struct AbstractOperand {
   std::string toString() const;
 };
 
-  using OpVector = std::vector<AbstractOperand*>;
-  using OpCVector = std::vector<const AbstractOperand*>;
-  
+using OpVector = std::vector<AbstractOperand*>;
+using OpCVector = std::vector<const AbstractOperand*>;
+
 class WaveStream;
 struct OperatorState;
 struct LaunchControl;
@@ -201,7 +201,8 @@ struct AdvanceResult {
 };
 
 struct AbstractInstruction {
-  AbstractInstruction(OpCode opCode, int32_t serial = -1) : opCode(opCode), serial(serial) {}
+  AbstractInstruction(OpCode opCode, int32_t serial = -1)
+      : opCode(opCode), serial(serial) {}
 
   virtual ~AbstractInstruction() = default;
 
@@ -251,9 +252,9 @@ struct AbstractInstruction {
 
   /// Returns the instructionIdx to use in AdvanceResult to pick up from 'this'.
   virtual int32_t continueIdx() const {
-    return serial; 
+    return serial;
   }
-  
+
   virtual void reserveState(InstructionStatus& state) {}
 
   /// Returns the InstructionStatus if any. Used for patching the grid
@@ -408,8 +409,8 @@ struct AbstractOperator : public AbstractInstruction {
       int32_t serial,
       AbstractState* state,
       RowTypePtr outputType)
-    : AbstractInstruction(opCode, serial),
-	state(state),
+      : AbstractInstruction(opCode, serial),
+        state(state),
         outputType(outputType) {}
 
   std::optional<int32_t> stateId() const override {

@@ -152,7 +152,7 @@ void resupplyHashTable(WaveStream& stream, AbstractInstruction& inst) {
     auto* program = exe->programShared.get();
     auto entryPointIdx = program->entryPointIdxBySerial(agg->serial);
     reinterpret_cast<WaveKernelStream*>(deviceStream.get())
-      ->setupAggregation(control, entryPointIdx, program->kernel());
+        ->setupAggregation(control, entryPointIdx, program->kernel());
   }
   deviceStream->wait();
   WaveStream::releaseStream(std::move(deviceStream));

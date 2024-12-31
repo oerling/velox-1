@@ -522,8 +522,7 @@ ProgramKey CompileState::makeLevelText(
   VELOX_CHECK_EQ(1, level.size(), "Only one program per level supported");
   std::stringstream head;
   auto kernelName = fmt::format("wavegen{}", ++kernelCounter_);
-  kernelEntryPoints_ = {
-      fmt::format("facebook::velox::wave::{}", kernelName)};
+  kernelEntryPoints_ = {fmt::format("facebook::velox::wave::{}", kernelName)};
   generated_ << "  GENERATED_PREAMBLE(0);\n";
   for (branchIdx_ = 0; branchIdx_ < level.size(); ++branchIdx_) {
     auto& box = level[branchIdx_];
@@ -541,7 +540,7 @@ ProgramKey CompileState::makeLevelText(
                      << "switch(shared->startLabel) {\n";
         }
         generated_ << fmt::format(
-				  "case {}: goto continue{};\n", label.value(), label.value());
+            "case {}: goto continue{};\n", label.value(), label.value());
       }
     }
     if (anyRetry) {
@@ -675,10 +674,11 @@ void CompileState::makeLevel(std::vector<KernelBox>& level) {
   for (branchIdx_ = 0; branchIdx_ < level.size(); ++branchIdx_) {
     currentBox_ = &level[branchIdx_];
     for (stepIdx_ = 0; stepIdx_ < currentBox_->steps.size(); ++stepIdx_) {
-      auto instructionUnique = currentBox_->steps[stepIdx_]->addInstruction(*this);
+      auto instructionUnique =
+          currentBox_->steps[stepIdx_]->addInstruction(*this);
       if (instructionUnique) {
-	instructions.push_back(std::move(instructionUnique));
-	auto* instruction = instructions.back().get();
+        instructions.push_back(std::move(instructionUnique));
+        auto* instruction = instructions.back().get();
         instruction->reserveState(instructionStatus_);
         auto* status = instruction->mutableInstructionStatus();
         if (status) {
@@ -686,10 +686,10 @@ void CompileState::makeLevel(std::vector<KernelBox>& level) {
         }
         auto opInst = dynamic_cast<AbstractOperator*>(instruction);
         if (opInst) {
-	  if (auto* agg = dynamic_cast<AbstractAggregation*>(opInst)) {
-	    kernelEntryPoints[agg->continueIdx()] = kernelEntryPointCounter++;
-	  }
-	  AbstractState* state = opInst->state;
+          if (auto* agg = dynamic_cast<AbstractAggregation*>(opInst)) {
+            kernelEntryPoints[agg->continueIdx()] = kernelEntryPointCounter++;
+          }
+          AbstractState* state = opInst->state;
           state->instruction = instruction;
         }
       }
@@ -801,7 +801,10 @@ void CompileState::generatePrograms() {
     if (firstStep->kind() == StepKind::kTableScan) {
       auto& scanStep = firstStep->as<TableScanStep>();
       operators_.push_back(std::make_unique<TableScan>(
-						       *this, operators_.size(), *scanStep.node, std::move(scanStep.defines)));
+          *this,
+          operators_.size(),
+          *scanStep.node,
+          std::move(scanStep.defines)));
       start = 1;
     }
     if (firstStep->kind() == StepKind::kValues) {
@@ -836,7 +839,6 @@ void CompileState::generatePrograms() {
     currentCandidate_->setOutputIds(
         this, operators_.back().get(), start, currentCandidate_->steps.size());
   }
-  
 }
 
 } // namespace facebook::velox::wave

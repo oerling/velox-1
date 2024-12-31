@@ -87,7 +87,7 @@ class AsyncCompiledKernel : public CompiledKernel {
   KernelInfo info(int32_t kernelIdx) override {
     return (*ptr_)->info(kernelIdx);
   }
-  
+
  private:
   KernelPtr ptr_;
 };

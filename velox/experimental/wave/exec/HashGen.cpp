@@ -84,40 +84,47 @@ void makeCompareLambda(
     auto* op = keys[i];
     if (nullableKeys && !op->notNull) {
       out << fmt::format(
-			 "  if ({} != (0 == (keyNulls & (1U << {})))) return false;\n",
-			 state.isNull(op),
-			 i / 32,
-			 i & 31);
+          "  if ({} != (0 == (keyNulls & (1U << {})))) return false;\n",
+          state.isNull(op),
+          i / 32,
+          i & 31);
     }
     out << fmt::format(
-		       "  if ({} != row->key{}) return false;\n", state.operandValue(op), i);
+        "  if ({} != row->key{}) return false;\n", state.operandValue(op), i);
   }
   out << "  return true;\n}\n";
 }
-  
-  std::string nullsInit(CompileState& state, int32_t begin, int32_t end, const OpVector& keys) {
-    std::stringstream inits;
-    for (auto i = begin; i < end; ++i) {
-      inits << fmt::format("({} ? 0 : {}U)", state.isNull(keys[i]), 1U << i, (i < end - 1 ? " | " : ""));
-    }
-    return inits.str();
+
+std::string nullsInit(
+    CompileState& state,
+    int32_t begin,
+    int32_t end,
+    const OpVector& keys) {
+  std::stringstream inits;
+  for (auto i = begin; i < end; ++i) {
+    inits << fmt::format(
+        "({} ? 0 : {}U)",
+        state.isNull(keys[i]),
+        1U << i,
+        (i < end - 1 ? " | " : ""));
   }
-  
+  return inits.str();
+}
+
 void makeInitGroupRow(
     CompileState& state,
     const OpVector& keys,
     const std::vector<const AggregateUpdate*>& aggregates) {
   auto& out = state.generated();
   out << "  [&](HashRow* row) {\n";
-  int32_t numNullFlags =
-    aggregates.size() + keys.size();
+  int32_t numNullFlags = aggregates.size() + keys.size();
   for (auto i = 0; i < keys.size(); ++i) {
     auto* op = keys[i];
     out << fmt::format(
-			 "   if (!{}) {{ row->key{} = {};}}\n",
-		       state.isNull(op),
-		       i,
-		       state.operandValue(op));
+        "   if (!{}) {{ row->key{} = {};}}\n",
+        state.isNull(op),
+        i,
+        state.operandValue(op));
   }
 
   for (auto i = 0; i < aggregates.size(); ++i) {
@@ -129,7 +136,9 @@ void makeInitGroupRow(
   for (auto i = 32; i < numNullFlags; i += 32) {
     out << fmt::format("   row->nulls{} = 0;\n", i / 32);
   }
-  out << fmt::format("  asDeviceAtomic<uint32_t>(&row->nulls0)->store({}, cuda::memory_order_release);\n", nullsInit(state, 0, keys.size(), keys)); 
+  out << fmt::format(
+      "  asDeviceAtomic<uint32_t>(&row->nulls0)->store({}, cuda::memory_order_release);\n",
+      nullsInit(state, 0, keys.size(), keys));
   out << "}\n";
 }
 

@@ -82,7 +82,7 @@ class SimpleAggregate : public AggregateGenerator {
     } else {
       auto nullIdx = update.accumulatorIdx + probe.keys.size();
       auto reduceName = "plus";
-      //fmt::format("plus<{}>", cudaTypeName(*update.args[0]->type));
+      // fmt::format("plus<{}>", cudaTypeName(*update.args[0]->type));
       state.generated() << fmt::format(
           "  simpleAccumulate(peers, leader, laneId, &row->acc{}, &row->nulls{}, {}, {}, {}, {});\n",
           update.accumulatorIdx,

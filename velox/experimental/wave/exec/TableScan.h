@@ -31,7 +31,7 @@ class TableScan : public WaveSourceOperator {
       CompileState& state,
       int32_t operatorId,
       const core::TableScanNode& tableScanNode,
-	    DefinesMap defines)
+      DefinesMap defines)
       : WaveSourceOperator(
             state,
             tableScanNode.outputType(),

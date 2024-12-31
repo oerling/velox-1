@@ -78,7 +78,8 @@ struct KernelStep {
     return false;
   }
 
-  /// Returns the instruction index to use wen continuing from this. nullopt if 'this' is not a continuable point.
+  /// Returns the instruction index to use wen continuing from this. nullopt if
+  /// 'this' is not a continuable point.
   virtual std::optional<int32_t> continueLabel() const {
     return std::nullopt;
   }
@@ -190,7 +191,9 @@ struct Compute : public KernelStep {
   }
 
   std::optional<int32_t> continueLabel() const override {
-    return operand->retriable ? std::optional<int32_t>(continueInstruction->continueIdx()) : std::nullopt;
+    return operand->retriable
+        ? std::optional<int32_t>(continueInstruction->continueIdx())
+        : std::nullopt;
   }
 
   void visitReferences(std::function<void(AbstractOperand*)> visitor) override;
@@ -813,7 +816,7 @@ class CompileState : public std::enable_shared_from_this<CompileState> {
   void addEntryPoint(const std::string& name) {
     kernelEntryPoints_.push_back(name);
   }
-  
+
  private:
   bool
   addOperator(exec::Operator* op, int32_t& nodeIndex, RowTypePtr& outputType);
@@ -879,7 +882,9 @@ class CompileState : public std::enable_shared_from_this<CompileState> {
   /// Makes an array of AbstractOperands to correspond to the fields
   /// of 'rowType' in the top level scope. If 'defines' is given,
   /// fills it with the subfield to operand mapping.
-  std::vector<AbstractOperand*> rowTypeToOperands(const RowTypePtr& rowType, DefinesMap* defines = nullptr);
+  std::vector<AbstractOperand*> rowTypeToOperands(
+      const RowTypePtr& rowType,
+      DefinesMap* defines = nullptr);
 
   AbstractOperand* fieldToOperand(
       const core::FieldAccessTypedExpr& field,
@@ -960,7 +965,9 @@ class CompileState : public std::enable_shared_from_this<CompileState> {
   // Transforms the leading operators into WaveOperators with codegen.
   // 'operatorIndex' is set to 1 after the index of the last transformed
   // operator inde the original Driver.
-  RowTypePtr makeOperators(int32_t& operatorIndex, std::vector<OperandId>& resultOrder);
+  RowTypePtr makeOperators(
+      int32_t& operatorIndex,
+      std::vector<OperandId>& resultOrder);
 
   // Generates a check for lane active.
   void generateSkip();
@@ -1086,13 +1093,13 @@ class CompileState : public std::enable_shared_from_this<CompileState> {
 
   // Names of __global__ in the compiled module being generated.
   std::vector<std::string> kernelEntryPoints_;
-  
+
   // Maps from the continue idx of the instruction to the kernel entry
   // point of the kernel that manages the resource associated with the
   // instruction. For example, serial of the AbstractAggregation maps
   // to the kernel entry point index for the rehash kernel.
   folly::F14FastMap<int32_t, int32_t> serialToEntryPointIdx_;
-  
+
   // Mutex serializing the background code generation after missing kernel
   // cache.
   std::mutex generateMutex_;

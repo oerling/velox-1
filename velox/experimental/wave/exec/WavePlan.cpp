@@ -161,7 +161,8 @@ AbstractOperand* CompileState::fieldToOperand(
 }
 
 std::vector<AbstractOperand*> CompileState::rowTypeToOperands(
-							      const RowTypePtr& rowType, DefinesMap* defines) {
+    const RowTypePtr& rowType,
+    DefinesMap* defines) {
   std::vector<AbstractOperand*> ops;
   for (auto i = 0; i < rowType->size(); ++i) {
     auto* field = toSubfield(rowType->nameOf(i));
@@ -667,18 +668,18 @@ void CompileState::placeAggregation(
       for (auto& update : probe.updates) {
         if (update->condition) {
           placeExpr(candidate, update->condition, false);
-	}
-	for (auto& arg : update->args) {
-	  placeExpr(candidate, arg, false);
-	}
-	candidate.currentBox->steps.push_back(
-					      const_cast<AggregateUpdate*>(update));
+        }
+        for (auto& arg : update->args) {
+          placeExpr(candidate, arg, false);
+        }
+        candidate.currentBox->steps.push_back(
+            const_cast<AggregateUpdate*>(update));
       }
       // Move the kernel steps for updates into 'inlinedUpdates' of the probe.
       probe.inlinedUpdates.insert(
-				  probe.inlinedUpdates.end(),
-				  candidate.currentBox->steps.begin() + firstUpdateIdx,
-				  candidate.currentBox->steps.end());
+          probe.inlinedUpdates.end(),
+          candidate.currentBox->steps.begin() + firstUpdateIdx,
+          candidate.currentBox->steps.end());
       candidate.currentBox->steps.resize(firstUpdateIdx);
       break;
     }
@@ -998,7 +999,9 @@ ProgramKey CompileState::makeKey(int32_t& sharedSize) {
       .output = std::move(output)};
 }
 
-  RowTypePtr CompileState::makeOperators(int32_t& operatorIndex, std::vector<OperandId>& resultOrder) {
+RowTypePtr CompileState::makeOperators(
+    int32_t& operatorIndex,
+    std::vector<OperandId>& resultOrder) {
   makeSegments(operatorIndex);
   auto outputType = segments_.back().outputType;
   for (auto i = 0; i < outputType->size(); ++i) {

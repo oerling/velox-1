@@ -88,7 +88,8 @@ void WaveBarrier::enter() {
 }
 
 void WaveBarrier::maybeReleaseAcquireLocked() {
-  if (numJoined_ - numInArrive_ == exclusivePromises_.size() && !exclusivePromises_.empty()) {
+  if (numJoined_ - numInArrive_ == exclusivePromises_.size() &&
+      !exclusivePromises_.empty()) {
     exclusiveToken_ = exclusiveTokens_.back();
     exclusivePromises_.back().setValue(true);
     exclusivePromises_.pop_back();

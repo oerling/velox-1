@@ -500,10 +500,11 @@ class Program : public std::enable_shared_from_this<Program> {
     instructions_.push_back(std::move(instruction));
   }
 
-  const std::vector<std::unique_ptr<AbstractInstruction>>& instructions() const {
+  const std::vector<std::unique_ptr<AbstractInstruction>>& instructions()
+      const {
     return instructions_;
   }
-  
+
   /// Specifies that Operand with 'id' is used by a dependent operation.
   void markOutput(OperandId id) {
     outputIds_.add(id);
@@ -621,12 +622,11 @@ class Program : public std::enable_shared_from_this<Program> {
     return numBranches_;
   }
 
-
-  /// Register that 'entryPointIdx' in 'kernel' manages the state of the instruction at with 'serial'.
+  /// Register that 'entryPointIdx' in 'kernel' manages the state of the
+  /// instruction at with 'serial'.
   void addEntryPointForSerial(int32_t serial, int32_t entryPointIdx) {
     serialToEntryPoint_[serial] = entryPointIdx;
   }
-  
 
   int32_t entryPointIdxBySerial(int32_t serial) {
     auto it = serialToEntryPoint_.find(serial);
@@ -723,7 +723,8 @@ class Program : public std::enable_shared_from_this<Program> {
 
   std::vector<AbstractOperand*> extraWraps_;
 
-  // Maps from AbstratcOperator::serial to the per-operator kernel entry point number, e.g. for rehashing a hash table.
+  // Maps from AbstratcOperator::serial to the per-operator kernel entry point
+  // number, e.g. for rehashing a hash table.
   folly::F14FastMap<int32_t, int32_t> serialToEntryPoint_;
 };
 
@@ -1055,7 +1056,7 @@ class WaveStream {
 
   Executable* executableByInstruction(const AbstractInstruction* instruction);
 
-private:
+ private:
   // true if 'op' is nullable in the context of 'this'.
   bool isNullable(const AbstractOperand& op) const;
 
