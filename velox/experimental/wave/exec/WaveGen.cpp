@@ -98,10 +98,17 @@ int32_t CompileState::declareVariable(const AbstractOperand& op) {
     return ord;
   }
   declared_.add(op.id);
-  generated_ << fmt::format("{} r{};\n", cudaTypeName(*op.type), ord);
+  declarations_ << fmt::format("{} r{};\n", cudaTypeName(*op.type), ord);
   return ord;
 }
 
+void CompileState::declareNamed(const std::string& line) {
+  declarations_ << line << std::endl;
+}
+
+
+
+  
 bool CompileState::hasMoreReferences(AbstractOperand* op, int32_t pc) {
   for (auto i = pc; i < currentBox_->steps.size(); ++i) {
     if (!currentBox_->steps[i]->preservesRegisters()) {
@@ -121,7 +128,7 @@ void CompileState::clearInRegister() {
   }
 }
 
-void NullCheck::generateMain(CompileState& state) {
+  void NullCheck::generateMain(CompileState& state, int32_t /*syncLable*/) {
   std::vector<AbstractOperand*> lastUse;
   bool isFirst = true;
   state.setInsideNullPropagating(true);
@@ -176,7 +183,7 @@ void NullCheck::generateMain(CompileState& state) {
   }
 }
 
-void EndNullCheck::generateMain(CompileState& state) {
+void EndNullCheck::generateMain(CompileState& state, int32_t /*syncLable*/) {
   auto ord = state.ordinal(*result);
   state.generated() << fmt::format("goto skip{};\n", label)
                     << fmt::format("end{}: \n", label);
@@ -237,7 +244,7 @@ void CompileState::generateOperand(const AbstractOperand& op) {
   }
 }
 
-void Compute::generateMain(CompileState& state) {
+  void Compute::generateMain(CompileState& state, int32_t /*syncLable*/) {
   VELOX_CHECK_NOT_NULL(operand->expr);
   auto& flags = state.flags(*operand);
   auto ord = state.declareVariable(*operand);
@@ -414,14 +421,16 @@ int32_t CompileState::wrapLiteral(int32_t nthWrap) {
   return ops.size();
 }
 
-void Filter::generateMain(CompileState& state) {
+  void Filter::generateMain(CompileState& state, int32_t syncLabel) {
   auto flagValue = state.generateIsTrue(*flag);
-  state.generated() << fmt::format(
+  auto& out = state.generated();
+  out << fmt::format(" sync{}:\n", syncLabel);
+  out << fmt::format(
       "filterKernel({}, operands, {}, blockBase, shared, laneStatus);\n",
       flagValue,
       state.ordinal(*indices));
   auto numWraps = state.wrapLiteral(nthWrap);
-  state.generated() << fmt::format(
+  out << fmt::format(
       "wrapKernel(wraps{}, {}, {}, operands, blockBase, shared);\n",
       nthWrap,
       numWraps,
@@ -430,18 +439,23 @@ void Filter::generateMain(CompileState& state) {
   state.clearInRegister();
 }
 
-void AggregateProbe::generateMain(CompileState& state) {
+  void AggregateProbe::generateMain(CompileState& state, int32_t syncLabel) {
   makeAggregateOps(state, *this, false);
-  makeAggregateProbe(state, *this);
+  makeAggregateProbe(state, *this, syncLabel);
 }
 
+std::string AggregateProbe::preContinueCode(CompileState& state) {
+  return "    laneStatus = laneStatus == ErrorCode::kInsufficientMemory\n"
+    "      ? ErrorCode::kOk : ErrorCode::kInactive;\n";
+}
+  
 std::unique_ptr<AbstractInstruction> AggregateProbe::addInstruction(
     CompileState& state) {
   RowTypePtr type;
   static std::vector<AbstractAggInstruction> empty;
   auto agg = std::make_unique<AbstractAggregation>(
       state.nextSerial(), keys, empty, this->state, type);
-  int32_t offset = bits::roundUp(keys.size() + updates.size(), 32) / 8;
+  int32_t offset = sizeof(int32_t) + bits::roundUp(keys.size() + updates.size(), 32) / 8;
   for (auto& key : keys) {
     int32_t align = cudaTypeAlign(*key->type);
     int32_t width = cudaTypeSize(*key->type);
@@ -456,9 +470,9 @@ std::unique_ptr<AbstractInstruction> AggregateProbe::addInstruction(
   return agg;
 }
 
-void AggregateUpdate::generateMain(CompileState& state) {}
+  void AggregateUpdate::generateMain(CompileState& state, int32_t /*syncLabel*/) {}
 
-void ReadAggregation::generateMain(CompileState& state) {
+  void ReadAggregation::generateMain(CompileState& state, int32_t /*syncLabel*/) {
   visitResults([&](auto op) { op->isStored = true; });
   makeAggregateOps(state, *probe, true);
   makeReadAggregation(state, *this);
@@ -504,6 +518,12 @@ int32_t findLastWrap(const PipelineCandidate& candidate, int32_t kernelSeq) {
   return -1;
 }
 
+  std::string checkLaneStatus() {
+    return "  if ((int)laneStatus > 4) {\n"
+      "printf(\"bad laneStatus\\n\");\n"
+      "  }\n";
+  }
+  
 ProgramKey CompileState::makeLevelText(
     int32_t pipelineIdx,
     int32_t kernelSeq,
@@ -530,6 +550,10 @@ ProgramKey CompileState::makeLevelText(
     clearInRegister();
     bool anyRetry = false;
     bool needActiveCheck = true;
+    generated_ << "if (!shared->isContinue) {\n"
+	       << checkLaneStatus()
+	       << "  }\n";
+
     for (stepIdx_ = 0; stepIdx_ < box.steps.size(); ++stepIdx_) {
       auto* step = box.steps[stepIdx_];
       auto label = step->continueLabel();
@@ -537,10 +561,11 @@ ProgramKey CompileState::makeLevelText(
         if (!anyRetry) {
           anyRetry = true;
           generated_ << "if (shared->isContinue) {\n"
+		     << checkLaneStatus()
                      << "switch(shared->startLabel) {\n";
         }
         generated_ << fmt::format(
-            "case {}: goto continue{};\n", label.value(), label.value());
+				  "case {}: {} goto continue{};\n", label.value(), step->preContinueCode(*this), label.value());
       }
     }
     if (anyRetry) {
@@ -548,21 +573,27 @@ ProgramKey CompileState::makeLevelText(
     }
     for (stepIdx_ = 0; stepIdx_ < box.steps.size(); ++stepIdx_) {
       if (needActiveCheck) {
+	for (auto next = stepIdx_; next < box.steps.size(); ++next) {
+	  auto label = box.steps[next]->continueLabel();
+	  if (label.has_value()) {
+	    generated_ << fmt::format(" continue{}:\n", label.value());
+	  }
+	  if (box.steps[next]->isBarrier()) {
+	    break;
+	  }
+	}
         generateSkip();
         needActiveCheck = false;
       }
       // Generate the  code for first execution.
       auto step = box.steps[stepIdx_];
+      int32_t syncLabel = -1;
       if (step->isBarrier()) {
-        generated_ << fmt::format(" sync{}: \n", nextSyncLabel_);
+	syncLabel = nextSyncLabel_;
         ++nextSyncLabel_;
         needActiveCheck = true;
       }
-      auto label = step->continueLabel();
-      if (label.has_value()) {
-        generated_ << fmt::format("continue{}: \n", label.value());
-      }
-      step->generateMain(*this);
+      step->generateMain(*this, syncLabel);
     }
   }
   generated_ << fmt::format("sync{}: ;\n", nextSyncLabel_);
@@ -582,10 +613,12 @@ ProgramKey CompileState::makeLevelText(
   for (auto i = 0; i < numRegs; i += 32) {
     head << fmt::format(" uint32_t nulls{} = ~0;\n", i / 32);
   }
+  head << declarations_.str();
   head << generated_.str();
 
   // Reset the generated text and state before generating the next kernel.
   generated_ = std::stringstream();
+  declarations_ = std::stringstream();
   inlines_ = std::stringstream();
   includeText_ = std::stringstream();
   includes_.clear();

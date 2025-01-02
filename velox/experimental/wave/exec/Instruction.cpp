@@ -168,6 +168,8 @@ AdvanceResult AbstractAggregation::canAdvance(
   }
   auto gridState = stream.gridStatus<AggregateReturn>(instructionStatus);
   if (gridState->numDistinct) {
+    stream.checkBlockStatuses();
+    stream.clearGridStatus<AggregateReturn>(instructionStatus);
     // The hash table needs memory or rehash. Request a Task-wide break to
     // resupply the device side hash table.
     return {

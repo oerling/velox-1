@@ -57,6 +57,7 @@ void makeRowHash(
 std::string extractColumn(
     const std::string& row,
     const std::string& field,
+    int32_t nthNull,
     int32_t ordinal,
     const AbstractOperand& result);
 

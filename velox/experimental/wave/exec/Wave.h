@@ -1044,6 +1044,22 @@ class WaveStream {
         status.gridState);
   }
 
+  /// Asynchronously zeroes out the device side  copy of the grid status.
+  template <typename T>
+  void clearGridStatus(const InstructionStatus& status) {
+    if (!deviceBlockStatus_) {
+      return;
+    }
+    auto numBlocks = bits::roundUp(numRows_, kBlockSize) / kBlockSize;
+    auto deviceAddress = 
+        bits::roundUp(
+            reinterpret_cast<uintptr_t>(
+                &deviceBlockStatus_[numBlocks]),
+            8) +
+        status.gridState;
+    streams_[0]->memset(reinterpret_cast<char*>(deviceAddress), 0, sizeof(T));
+  }
+  
   BlockStatus* hostBlockStatus() const {
     return hostBlockStatus_->as<BlockStatus>();
   }
@@ -1052,8 +1068,13 @@ class WaveStream {
     return streamIdx_;
   }
 
+  /// Integrity check for Executables in 'this'.
   void checkExecutables() const;
 
+  /// Integrity check for error codes and row counts in host/device side statuses.
+  void checkBlockStatuses() const;
+  
+  /// Returns the Executable associated with 'this' whose Program contains 'instruction'. nullptr if not found.
   Executable* executableByInstruction(const AbstractInstruction* instruction);
 
  private:
