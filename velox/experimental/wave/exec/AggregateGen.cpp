@@ -195,7 +195,7 @@ std::string checkReturnBlockStatus() {
     const AggregateProbe& probe,
     int32_t syncLabel) {
   auto& out = state.generated();
-  out << fmt::format("  {}:\n", syncLabel);
+  out << fmt::format("  sync{}:\n", syncLabel);
   state.declareNamed("DeviceAggregation* state;");
   state.declareNamed("uint32_t accNulls;");
   out << fmt::format(

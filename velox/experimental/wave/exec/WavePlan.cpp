@@ -78,6 +78,9 @@ void AggregateProbe::visitReferences(
   for (auto& key : keys) {
     visitor(key);
   }
+  for (auto& update : inlinedUpdates) {
+    update->visitReferences(visitor);
+  }
 }
 
 void AggregateUpdate::visitReferences(
