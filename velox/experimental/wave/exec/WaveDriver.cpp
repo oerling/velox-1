@@ -388,7 +388,7 @@ void WaveDriver::waitForArrival(Pipeline& pipeline) {
       if (pipeline.running[i]->isArrived(set, waitUs, 0)) {
         incStats((pipeline.running[i]->stats()));
         pipeline.running[i]->setState(WaveStream::State::kNotRunning);
-	pipeline.running[i]->checkBlockStatuses();
+        pipeline.running[i]->checkBlockStatuses();
         moveTo(pipeline.running, i, pipeline.arrived);
       }
       ++waitLoops;

@@ -131,7 +131,7 @@ class SimpleAggregate : public AggregateGenerator {
         ord,
         nthNull / 32,
         nthNull & 31,
-	cudaTypeName(*update.result->type),
+        cudaTypeName(*update.result->type),
         ord,
         update.accumulatorIdx);
   }

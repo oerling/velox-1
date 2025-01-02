@@ -180,36 +180,39 @@ void makeUpdateLambda(
 }
 
 std::string checkReturnBlockStatus() {
-    return "  if ((int)laneStatus > 4) {\n"
-      "printf(\"bad laneStatus\\n\");\n"
-      "  }\n";
-  }
-  
-  void makeAggregateProbe(CompileState& state, const AggregateProbe& probe, int32_t syncLabel) {
+  return "  if ((int)laneStatus > 4) {\n"
+         "printf(\"bad laneStatus\\n\");\n"
+         "  }\n";
+}
+
+void makeAggregateProbe(
+    CompileState& state,
+    const AggregateProbe& probe,
+    int32_t syncLabel) {
   auto& out = state.generated();
   state.declareNamed("uint64_t hash;");
   makeHash(state, probe.keys, true, "");
   state.declareNamed("AggregateOps ops;");
   out << "  ops = AggregateOps(hash, shared);\n";
-    state.declareNamed("DeviceAggregation* state;");
-    state.declareNamed("uint32_t keyNulls;");
-    out << fmt::format(
-             "  state =\n"
-             "    reinterpret_cast<DeviceAggregation*>(shared->states[{}]);\n",
-             state.stateOrdinal(*probe.state));
-    state.declareNamed("GpuHashTable* table;");
-    out << "  table = reinterpret_cast<GpuHashTable*>(state->table);\n";
-    out << fmt::format(" sync{}:\n", syncLabel);
-    out << "  shared->status->errors[threadIdx.x] = laneStatus;\n";
-    out << "  table->updatingProbe<HashRow>(threadIdx.x, LaneId(), laneStatus == ErrorCode::kOk, ops, \n";
-    makeCompareLambda(state, probe.keys, true);
+  state.declareNamed("DeviceAggregation* state;");
+  state.declareNamed("uint32_t keyNulls;");
+  out << fmt::format(
+      "  state =\n"
+      "    reinterpret_cast<DeviceAggregation*>(shared->states[{}]);\n",
+      state.stateOrdinal(*probe.state));
+  state.declareNamed("GpuHashTable* table;");
+  out << "  table = reinterpret_cast<GpuHashTable*>(state->table);\n";
+  out << fmt::format(" sync{}:\n", syncLabel);
+  out << "  shared->status->errors[threadIdx.x] = laneStatus;\n";
+  out << "  table->updatingProbe<HashRow>(threadIdx.x, LaneId(), laneStatus == ErrorCode::kOk, ops, \n";
+  makeCompareLambda(state, probe.keys, true);
   out << ",\n";
   makeInitGroupRow(state, probe.keys, probe.updates);
   out << ",\n";
   makeUpdateLambda(state, probe, probe.inlinedUpdates);
   out << ");\n";
   out << "      __syncthreads();\n"
-    "  laneStatus = shared->status->errors[threadIdx.x];\n";
+         "  laneStatus = shared->status->errors[threadIdx.x];\n";
   out << checkReturnBlockStatus();
   out << "  if (threadIdx.x == 0 && shared->hasContinue) {\n"
          "    auto ret = gridStatus<AggregateReturn>(shared, "
@@ -251,15 +254,15 @@ void makeReadAggregation(CompileState& state, const ReadAggregation& read) {
     return;
   }
   out << fmt::format(
-               "  state =\n"
-               "    reinterpret_cast<DeviceAggregation*>(shared->states[{}]);\n",
-               stateOrdinal);
+      "  state =\n"
+      "    reinterpret_cast<DeviceAggregation*>(shared->states[{}]);\n",
+      stateOrdinal);
 
   state.declareNamed("int32_t rowIdx;");
   state.declareNamed("int32_t numRows;");
   state.declareNamed("HashRow* row;");
   out << "  rowIdx = blockIdx.x * kBlockSize + threadIdx.x + 1;\n"
-    "  numRows = state->resultRowPointers[shared->streamIdx][0];\n"
+         "  numRows = state->resultRowPointers[shared->streamIdx][0];\n"
          "  if (rowIdx <= numRows) {\n"
          "  auto state = reinterpret_cast<DeviceAggregation*>(shared->states["
       << stateOrdinal
@@ -271,7 +274,7 @@ void makeReadAggregation(CompileState& state, const ReadAggregation& read) {
     out << extractColumn(
         "row",
         fmt::format("key{}", i),
-	i,
+        i,
         state.ordinal(*read.keys[i]),
         *read.keys[i]);
   }

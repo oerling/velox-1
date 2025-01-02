@@ -300,7 +300,7 @@ std::vector<AbstractOperand*> CompileState::tryExprSet(
     resultSubfield.push_back(subfield);
   }
   for (auto i = 0; i < result.size(); ++i) {
-        topScope_.operandMap[Value(resultSubfield[i])] = result[i];
+    topScope_.operandMap[Value(resultSubfield[i])] = result[i];
     segments_.back().projectedName.push_back(resultSubfield[i]);
     segments_.back().topLevelDefined.push_back(result[i]);
   }

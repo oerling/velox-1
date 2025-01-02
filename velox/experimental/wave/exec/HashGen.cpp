@@ -180,12 +180,15 @@ std::string extractColumn(
           row,
           field);
       break;
-  default:
+    default:
       VELOX_NYI();
   }
   if (!result.notNull) {
-    out << fmt::format("  setNull(operands, {}, blockBase, (row->nulls{} & (1U << {})) == 0);\n",
-		       ordinal, nthNull / 32, nthNull & 31);
+    out << fmt::format(
+        "  setNull(operands, {}, blockBase, (row->nulls{} & (1U << {})) == 0);\n",
+        ordinal,
+        nthNull / 32,
+        nthNull & 31);
   }
   return out.str();
 }

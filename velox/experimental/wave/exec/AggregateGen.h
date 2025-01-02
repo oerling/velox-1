@@ -26,7 +26,10 @@ void makeAggregateOps(
     const AggregateProbe& probe,
     bool forRead);
 
- void makeAggregateProbe(CompileState& state, const AggregateProbe& probe, int32_t syncLabel);
+void makeAggregateProbe(
+    CompileState& state,
+    const AggregateProbe& probe,
+    int32_t syncLabel);
 
 void makeReadAggregation(CompileState& state, const ReadAggregation& read);
 

@@ -84,11 +84,12 @@ struct KernelStep {
     return std::nullopt;
   }
 
-  /// Returns code to execute before jumping to continueLabel() when continuing from this step.
+  /// Returns code to execute before jumping to continueLabel() when continuing
+  /// from this step.
   virtual std::string preContinueCode(CompileState& state) {
     return "";
   }
-  
+
   virtual bool preservesRegisters() const {
     return isWrap() == AbstractOperand::kNoWrap;
   }
@@ -108,7 +109,9 @@ struct KernelStep {
     return sizeof(WaveShared);
   }
 
-  ///  Generates the code. If 'this' is a barrier, places 'syncLabel' to the right place for skipping this, e.g. before any __syncthreads() or similar.
+  ///  Generates the code. If 'this' is a barrier, places 'syncLabel' to the
+  ///  right place for skipping this, e.g. before any __syncthreads() or
+  ///  similar.
   virtual void generateMain(CompileState& state, int32_t syncLabel) {
     VELOX_NYI();
   }
@@ -393,7 +396,7 @@ struct AggregateProbe : public KernelStep {
   void visitReferences(std::function<void(AbstractOperand*)> visitor) override;
 
   std::string preContinueCode(CompileState& state) override;
-  
+
   void visitResults(std::function<void(AbstractOperand*)> visitor) override {
     // If not all updates are inlined, this produces 'rows' as an output for the
     // accumulator updates in the next kernel.
