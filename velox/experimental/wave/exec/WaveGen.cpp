@@ -518,9 +518,13 @@ int32_t findLastWrap(const PipelineCandidate& candidate, int32_t kernelSeq) {
 }
 
 std::string checkLaneStatus() {
+#ifdef BLOCK_STATUS_CHECK
   return "  if ((int)laneStatus > 4) {\n"
          "printf(\"bad laneStatus\\n\");\n"
          "  }\n";
+#else
+  return "";
+#endif
 }
 
 ProgramKey CompileState::makeLevelText(

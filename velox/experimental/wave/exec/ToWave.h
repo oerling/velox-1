@@ -304,6 +304,11 @@ class AggregateGenerator {
       const AggregateProbe& probe,
       const AggregateUpdate& update) const = 0;
 
+  virtual void makeNonGroupedUpdate(
+      CompileState& state,
+      const AggregateProbe& probe,
+      const AggregateUpdate& update) const = 0;
+  
   /// Generates an update.
   virtual std::string generateUpdate(
       CompileState& state,
@@ -391,6 +396,15 @@ struct AggregateProbe : public KernelStep {
     return !updates.empty() && allUpdatesInlined;
   }
 
+  int32_t sharedMemorySize() const {
+    // If no grouping, we have one word plus one byte of shared memory
+    // per warp and a pad of 4 to align at 8. This is after the
+    // regular WaveShared struct.
+    int32_t reduceSpace = keys.empty() ? 4 + (kBlockSize / 32) * (1 + sizeof(int64_t)) : 0;
+    return sizeof(WaveShared) + reduceSpace;
+  }
+
+  
   void generateMain(CompileState& state, int32_t syncLabel) override;
 
   void visitReferences(std::function<void(AbstractOperand*)> visitor) override;

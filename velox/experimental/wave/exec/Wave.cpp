@@ -1054,6 +1054,7 @@ void WaveStream::checkExecutables() const {
 }
 
 void WaveStream::checkBlockStatuses() const {
+#ifdef BLOCK_STATUS_CHECK
   auto numBlocks = bits::roundUp(numRows_, kBlockSize) / kBlockSize;
   auto hostSide = hostBlockStatus();
   auto deviceSide = deviceBlockStatus_;
@@ -1069,6 +1070,7 @@ void WaveStream::checkBlockStatuses() const {
       }
     }
   }
+#endif
 }
 
 std::string WaveStream::toString() const {
