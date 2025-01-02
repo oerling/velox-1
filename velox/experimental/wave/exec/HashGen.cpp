@@ -30,12 +30,12 @@ void makeKeyMembers(
 void makeProbeKeyMembers(
     const std::vector<AbstractOperand*>& keys,
     std::stringstream& out) {
+  for (auto n = 0; n < keys.size(); n += 32) {
+    out << fmt::format("  uint32_t nulls{};\n", n / 32);
+  }
   for (auto i = 0; i < keys.size(); ++i) {
     auto* key = keys[i];
     out << cudaTypeName(*key->type) << " key" << i << ";\n";
-  }
-  for (auto n = 0; n < keys.size(); n += 32) {
-    out << fmt::format("  uint32_t nulls{};\n", n / 32);
   }
 }
 
@@ -45,7 +45,7 @@ void makeHash(
     bool nullableKeys,
     std::string nullCode) {
   auto& out = state.generated();
-  out << "  uint64_t hash = 1;\n";
+  out << "  hash = 1;\n";
   for (auto i = 0; i < keys.size(); ++i) {
     auto* op = keys[i];
     state.ensureOperand(op);
@@ -77,7 +77,7 @@ void makeCompareLambda(
   auto& out = state.generated();
   out << "  [&](HashRow* row) -> bool {\n";
   if (nullableKeys) {
-    out << "   uint32_t keyNulls = asDeviceAtomic<uint32_t>(&row->nulls0)->load(cuda::memory_order_consume);\n";
+    out << "   keyNulls = asDeviceAtomic<uint32_t>(&row->nulls0)->load(cuda::memory_order_consume);\n";
     VELOX_CHECK_LE(keys.size(), 32);
   }
   for (auto i = 0; i < keys.size(); ++i) {
@@ -137,7 +137,7 @@ void makeInitGroupRow(
     out << fmt::format("   row->nulls{} = 0;\n", i / 32);
   }
   out << fmt::format(
-      "  asDeviceAtomic<uint32_t>(&row->nulls0)->store({}, cuda::memory_order_release);\n",
+      "  asDeviceAtomic<uint32_t>(&row->nulls0)->store(keyNulls = {}, cuda::memory_order_release);\n",
       nullsInit(state, 0, keys.size(), keys));
   out << "}\n";
 }
@@ -167,19 +167,30 @@ void makeRowHash(
 std::string extractColumn(
     const std::string& row,
     const std::string& field,
+    int32_t nthNull,
     int32_t ordinal,
     const AbstractOperand& result) {
+  std::stringstream out;
   switch (result.type->kind()) {
     case TypeKind::BIGINT:
-      return fmt::format(
+      out << fmt::format(
           "    flatResult<{}>(operands, {}, blockBase) = {}->{};\n",
           cudaTypeName(*result.type),
           ordinal,
           row,
           field);
+      break;
     default:
       VELOX_NYI();
   }
+  if (!result.notNull) {
+    out << fmt::format(
+        "  setNull(operands, {}, blockBase, (row->nulls{} & (1U << {})) == 0);\n",
+        ordinal,
+        nthNull / 32,
+        nthNull & 31);
+  }
+  return out.str();
 }
 
 } // namespace facebook::velox::wave

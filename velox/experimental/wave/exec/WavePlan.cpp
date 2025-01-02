@@ -284,7 +284,8 @@ std::vector<AbstractOperand*> CompileState::tryExprSet(
     const std::vector<exec::IdentityProjection>* resultProjections,
     const RowTypePtr& outputType) {
   auto& exprs = exprSet.exprs();
-  auto& result = segments_.back().topLevelDefined;
+  std::vector<AbstractOperand*> result;
+  std::vector<Subfield*> resultSubfield;
   for (auto i = begin; i < end; ++i) {
     result.push_back(exprToOperand(*exprs[i], &topScope_));
     int32_t outputIdx = -1;
@@ -296,8 +297,12 @@ std::vector<AbstractOperand*> CompileState::tryExprSet(
     }
     VELOX_CHECK_NE(-1, outputIdx);
     auto* subfield = toSubfield(outputType->nameOf(outputIdx));
-    topScope_.operandMap[Value(subfield)] = result.back();
-    segments_.back().projectedName.push_back(subfield);
+    resultSubfield.push_back(subfield);
+  }
+  for (auto i = 0; i < result.size(); ++i) {
+    topScope_.operandMap[Value(resultSubfield[i])] = result[i];
+    segments_.back().projectedName.push_back(resultSubfield[i]);
+    segments_.back().topLevelDefined.push_back(result[i]);
   }
   return result;
 }

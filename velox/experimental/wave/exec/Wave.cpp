@@ -779,6 +779,7 @@ LaunchControl* WaveStream::prepareProgramLaunch(
     for (auto& info : control.programInfo) {
       if (info.advance.isRetry) {
         isContinue = true;
+        checkBlockStatuses();
         break;
       }
     }
@@ -858,10 +859,10 @@ LaunchControl* WaveStream::prepareProgramLaunch(
     // Writing errors is not serialized but each lane with at least one error
     // will show one error.
     control.params.status = addBytes<BlockStatus*>(start, statusOffset);
+    deviceBlockStatus_ = control.params.status;
     // Memory is already set to all 0.
     for (auto i = 0; i < blocksPerExe; ++i) {
       auto status = &control.params.status[i];
-      deviceBlockStatus_ = status;
       status->numRows =
           i == blocksPerExe - 1 ? inputRows % kBlockSize : kBlockSize;
     }
@@ -1047,6 +1048,24 @@ void WaveStream::checkExecutables() const {
       for (auto i = 0; i < numOperands; ++i) {
         auto& op = exe->operands[i];
         checkOperand(op);
+      }
+    }
+  }
+}
+
+void WaveStream::checkBlockStatuses() const {
+  auto numBlocks = bits::roundUp(numRows_, kBlockSize) / kBlockSize;
+  auto hostSide = hostBlockStatus();
+  auto deviceSide = deviceBlockStatus_;
+  for (auto i = 0; i < numBlocks; ++i) {
+    for (auto j = 0; j < kBlockSize; ++j) {
+      if (hostSide) {
+        VELOX_CHECK_LE(hostSide[i].numRows, 256);
+        VELOX_CHECK_LE(static_cast<uint8_t>(hostSide[i].errors[j]), 4);
+      }
+      if (deviceSide) {
+        VELOX_CHECK_LE(deviceSide[i].numRows, 256);
+        VELOX_CHECK_LE(static_cast<uint8_t>(deviceSide[i].errors[j]), 4);
       }
     }
   }

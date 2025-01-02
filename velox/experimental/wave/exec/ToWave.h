@@ -84,6 +84,12 @@ struct KernelStep {
     return std::nullopt;
   }
 
+  /// Returns code to execute before jumping to continueLabel() when continuing
+  /// from this step.
+  virtual std::string preContinueCode(CompileState& state) {
+    return "";
+  }
+
   virtual bool preservesRegisters() const {
     return isWrap() == AbstractOperand::kNoWrap;
   }
@@ -103,7 +109,10 @@ struct KernelStep {
     return sizeof(WaveShared);
   }
 
-  virtual void generateMain(CompileState& state) {
+  ///  Generates the code. If 'this' is a barrier, places 'syncLabel' to the
+  ///  right place for skipping this, e.g. before any __syncthreads() or
+  ///  similar.
+  virtual void generateMain(CompileState& state, int32_t syncLabel) {
     VELOX_NYI();
   }
 
@@ -167,7 +176,7 @@ struct NullCheck : public KernelStep {
     return StepKind::kNullCheck;
   }
 
-  void generateMain(CompileState& state) override;
+  void generateMain(CompileState& state, int32_t syncLabel) override;
 
   std::vector<AbstractOperand*> operands;
   AbstractOperand* result;
@@ -179,7 +188,7 @@ struct EndNullCheck : public KernelStep {
   StepKind kind() const override {
     return StepKind::kEndNullCheck;
   }
-  void generateMain(CompileState& state) override;
+  void generateMain(CompileState& state, int32_t syncLabel) override;
 
   AbstractOperand* result;
   int32_t label;
@@ -200,7 +209,7 @@ struct Compute : public KernelStep {
 
   void visitResults(std::function<void(AbstractOperand*)> visitor) override;
 
-  void generateMain(CompileState& state) override;
+  void generateMain(CompileState& state, int32_t syncLabel) override;
 
   AbstractOperand* operand;
   AbstractInstruction* continueInstruction{nullptr};
@@ -231,7 +240,7 @@ struct Filter : public KernelStep {
     visitor(indices);
   }
 
-  void generateMain(CompileState& state) override;
+  void generateMain(CompileState& state, int32_t syncLabel) override;
 
   AbstractOperand* flag;
   AbstractOperand* indices;
@@ -340,7 +349,7 @@ struct AggregateUpdate : public KernelStep {
 
   void visitReferences(std::function<void(AbstractOperand*)> visitor) override;
 
-  void generateMain(CompileState& state) override;
+  void generateMain(CompileState& state, int32_t syncLabel) override;
 
   std::string name;
   core::AggregationNode::Step step;
@@ -372,15 +381,21 @@ struct AggregateProbe : public KernelStep {
     return abstractAggregation->continueIdx();
   }
 
+  bool isBarrier() const override {
+    return true;
+  }
+
   bool isSink() const override {
     // If all accumulator updates are inline, this is a sink and produces no
     // output.
     return !updates.empty() && allUpdatesInlined;
   }
 
-  void generateMain(CompileState& state) override;
+  void generateMain(CompileState& state, int32_t syncLabel) override;
 
   void visitReferences(std::function<void(AbstractOperand*)> visitor) override;
+
+  std::string preContinueCode(CompileState& state) override;
 
   void visitResults(std::function<void(AbstractOperand*)> visitor) override {
     // If not all updates are inlined, this produces 'rows' as an output for the
@@ -431,7 +446,7 @@ struct ReadAggregation : public KernelStep {
     visitor(state);
   }
 
-  void generateMain(CompileState& state) override;
+  void generateMain(CompileState& state, int32_t syncLabel) override;
 
   std::unique_ptr<AbstractInstruction> addInstruction(
       CompileState& state) override;
@@ -716,6 +731,8 @@ class CompileState : public std::enable_shared_from_this<CompileState> {
   }
 
   int32_t declareVariable(const AbstractOperand& op);
+
+  void declareNamed(const std::string& line);
 
   int32_t ordinal(const AbstractOperand& op);
 

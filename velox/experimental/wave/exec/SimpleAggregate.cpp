@@ -84,7 +84,7 @@ class SimpleAggregate : public AggregateGenerator {
       auto reduceName = "plus";
       // fmt::format("plus<{}>", cudaTypeName(*update.args[0]->type));
       state.generated() << fmt::format(
-          "  simpleAccumulate(peers, leader, laneId, &row->acc{}, &row->nulls{}, {}, {}, {}, {});\n",
+          "  simpleAccumulate(peers, leader, laneId, &row->acc{}, keyNulls, &row->nulls{}, {}, {}, {}, {});\n",
           update.accumulatorIdx,
           nullIdx / 32,
           1U << nullIdx,
@@ -127,10 +127,11 @@ class SimpleAggregate : public AggregateGenerator {
     auto nthNull = update.accumulatorIdx + probe.keys.size();
     return fmt::format(
         "   setNull(operands, {}, blockBase, (row->nulls{} & (1U << {})) == 0);\n"
-        "    flatValue<T>(operands, {}, blockBase) = row->acc{};\n",
+        "    flatResult<{}>(operands, {}, blockBase) = row->acc{};\n",
         ord,
         nthNull / 32,
         nthNull & 31,
+        cudaTypeName(*update.result->type),
         ord,
         update.accumulatorIdx);
   }
