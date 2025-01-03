@@ -133,7 +133,8 @@ void NullCheck::generateMain(CompileState& state, int32_t /*syncLable*/) {
   for (auto* op : operands) {
     if (!op->inRegister && state.hasMoreReferences(op, endIdx)) {
       if (isFirst) {
-        state.generated() << fmt::format("bool anyNull{} = false;\n", label);
+	state.declareNamed(fmt::format("bool anyNull{};", label));
+        state.generated() << fmt::format("  anyNull{} = false;\n", label);
         isFirst = false;
       }
       auto& flags = state.flags(*op);

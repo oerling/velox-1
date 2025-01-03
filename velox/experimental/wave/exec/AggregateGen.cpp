@@ -205,9 +205,8 @@ std::string checkReturnBlockStatus() {
   state.declareNamed("HashRow* row;");
   out << "  row = reinterpret_cast<HashRow*>(state->singleRow);\n";
   for (auto i = 0; i < probe.updates.size(); i += 32) {
-    state.declareNamed(fmt::format("uint32_t rowNulls{};", i / 32));
     out << "  if (threadIdx.x == 0) {\n"
-	<< fmt::format("  rowNulls{} = row->nulls{};\n", i / 32, i / 32)
+	<< fmt::format("  accNulls = row->nulls{};\n", i / 32)
 	<< "  }\n";
   std::vector<const AggregateUpdate*> deferred;
   int32_t currentAccNulls = -1;
@@ -235,9 +234,6 @@ std::string checkReturnBlockStatus() {
     emitUpdates(false);
   }
   emitUpdates(true);
-
-  out << "  }";
-
   }
   }
 
@@ -302,7 +298,7 @@ void makeReadAggregation(CompileState& state, const ReadAggregation& read) {
   state.declareNamed("DeviceAggregation* state;");
   if (read.probe->keys.empty()) {
     // Case with no grouping.
-    out << "  if (threadIdx.x != 0) { lanestatus = ErrorCode::kInactive; } else {\n"
+    out << "  if (threadIdx.x != 0) { laneStatus = ErrorCode::kInactive; } else {\n"
         << fmt::format(
                "  state =\n"
                "    reinterpret_cast<DeviceAggregation*>(shared->states[{}]);\n",

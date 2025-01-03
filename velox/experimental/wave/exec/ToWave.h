@@ -118,11 +118,11 @@ struct KernelStep {
 
   virtual void generateContinue(CompileState& state){};
 
-  virtual void visitReferences(std::function<void(AbstractOperand*)> visitor){};
+  virtual void visitReferences(std::function<void(AbstractOperand*)> visitor) const {};
 
-  virtual void visitResults(std::function<void(AbstractOperand*)> visitor){};
+  virtual void visitResults(std::function<void(AbstractOperand*)> visitor) const {};
 
-  virtual void visitStates(std::function<void(AbstractState*)> visitor){};
+  virtual void visitStates(std::function<void(AbstractState*)> visitor) const {};
 
   bool references(AbstractOperand* op);
 
@@ -153,7 +153,7 @@ struct ValuesStep : public KernelStep {
     return StepKind::kValues;
   }
 
-  void visitResults(std::function<void(AbstractOperand*)> visitor) override;
+  void visitResults(std::function<void(AbstractOperand*)> visitor) const override;
 
   const core::ValuesNode* node;
   std::vector<AbstractOperand*> results;
@@ -164,7 +164,7 @@ struct TableScanStep : public KernelStep {
     return StepKind::kTableScan;
   }
 
-  void visitResults(std::function<void(AbstractOperand*)> visitor) override;
+  void visitResults(std::function<void(AbstractOperand*)> visitor) const override;
 
   const core::TableScanNode* node;
   std::vector<AbstractOperand*> results;
@@ -205,9 +205,9 @@ struct Compute : public KernelStep {
         : std::nullopt;
   }
 
-  void visitReferences(std::function<void(AbstractOperand*)> visitor) override;
+  void visitReferences(std::function<void(AbstractOperand*)> visitor) const override;
 
-  void visitResults(std::function<void(AbstractOperand*)> visitor) override;
+  void visitResults(std::function<void(AbstractOperand*)> visitor) const override;
 
   void generateMain(CompileState& state, int32_t syncLabel) override;
 
@@ -232,11 +232,11 @@ struct Filter : public KernelStep {
     return sizeof(WaveShared) + (kBlockSize / 32) * sizeof(int32_t);
   }
 
-  void visitReferences(std::function<void(AbstractOperand*)> visitor) override {
+  void visitReferences(std::function<void(AbstractOperand*)> visitor) const override {
     visitor(flag);
   }
 
-  void visitResults(std::function<void(AbstractOperand*)> visitor) override {
+  void visitResults(std::function<void(AbstractOperand*)> visitor) const override {
     visitor(indices);
   }
 
@@ -352,7 +352,7 @@ struct AggregateUpdate : public KernelStep {
     return true;
   }
 
-  void visitReferences(std::function<void(AbstractOperand*)> visitor) override;
+  void visitReferences(std::function<void(AbstractOperand*)> visitor) const override;
 
   void generateMain(CompileState& state, int32_t syncLabel) override;
 
@@ -407,11 +407,11 @@ struct AggregateProbe : public KernelStep {
   
   void generateMain(CompileState& state, int32_t syncLabel) override;
 
-  void visitReferences(std::function<void(AbstractOperand*)> visitor) override;
+  void visitReferences(std::function<void(AbstractOperand*)> visitor) const override;
 
   std::string preContinueCode(CompileState& state) override;
 
-  void visitResults(std::function<void(AbstractOperand*)> visitor) override {
+  void visitResults(std::function<void(AbstractOperand*)> visitor) const override {
     // If not all updates are inlined, this produces 'rows' as an output for the
     // accumulator updates in the next kernel.
     if (!allUpdatesInlined) {
@@ -419,7 +419,7 @@ struct AggregateProbe : public KernelStep {
     }
   }
 
-  void visitStates(std::function<void(AbstractState*)> visitor) override {
+  void visitStates(std::function<void(AbstractState*)> visitor) const override {
     visitor(state);
   }
 
@@ -454,9 +454,9 @@ struct ReadAggregation : public KernelStep {
     return StepKind::kReadAggregation;
   }
 
-  void visitResults(std::function<void(AbstractOperand*)> visitor) override;
+  void visitResults(std::function<void(AbstractOperand*)> visitor) const override;
 
-  void visitStates(std::function<void(AbstractState*)> visitor) override {
+  void visitStates(std::function<void(AbstractState*)> visitor) const override {
     visitor(state);
   }
 

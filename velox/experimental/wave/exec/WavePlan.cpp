@@ -51,30 +51,30 @@ std::string OperandFlags::toString() const {
 }
 
 void TableScanStep::visitResults(
-    std::function<void(AbstractOperand*)> visitor) {
+    std::function<void(AbstractOperand*)> visitor) const {
   for (auto& out : results) {
     visitor(out);
   }
 }
 
-void ValuesStep::visitResults(std::function<void(AbstractOperand*)> visitor) {
+void ValuesStep::visitResults(std::function<void(AbstractOperand*)> visitor) const {
   for (auto& out : results) {
     visitor(out);
   }
 }
 
-void Compute::visitReferences(std::function<void(AbstractOperand*)> visitor) {
+void Compute::visitReferences(std::function<void(AbstractOperand*)> visitor) const {
   for (auto& in : operand->inputs) {
     visitor(in);
   }
 }
 
-void Compute::visitResults(std::function<void(AbstractOperand*)> visitor) {
+void Compute::visitResults(std::function<void(AbstractOperand*)> visitor) const {
   visitor(operand);
 }
 
 void AggregateProbe::visitReferences(
-    std::function<void(AbstractOperand*)> visitor) {
+    std::function<void(AbstractOperand*)> visitor) const {
   for (auto& key : keys) {
     visitor(key);
   }
@@ -84,7 +84,7 @@ void AggregateProbe::visitReferences(
 }
 
 void AggregateUpdate::visitReferences(
-    std::function<void(AbstractOperand*)> visitor) {
+    std::function<void(AbstractOperand*)> visitor) const {
   for (auto& arg : args) {
     visitor(arg);
   }
@@ -94,7 +94,7 @@ void AggregateUpdate::visitReferences(
 }
 
 void ReadAggregation::visitResults(
-    std::function<void(AbstractOperand*)> visitor) {
+    std::function<void(AbstractOperand*)> visitor) const {
   for (auto& key : keys) {
     visitor(key);
   }
@@ -214,8 +214,12 @@ AbstractOperand* CompileState::exprToOperand(const Expr& expr, Scope* scope) {
   if (op) {
     return op;
   }
-
   if (auto* field = dynamic_cast<const exec::FieldReference*>(&expr)) {
+    auto subfield = toSubfield(field->name());
+    auto result = fieldToOperand(*subfield, scope);
+    if (result) {
+      return result;
+    }
     VELOX_FAIL("Should have been defined");
   } else if (auto* constant = dynamic_cast<const exec::ConstantExpr*>(&expr)) {
     auto op = newOperand(constant->value()->type(), constant->toString());

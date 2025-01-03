@@ -100,7 +100,7 @@ class SimpleAggregate : public AggregateGenerator {
       const AggregateUpdate& update) const override {
     auto& out = state.generated();
 
-    out << fmt::format("sumReduce<{}>({}, {}  laneStatus, nulls, &row->acc{}, &row->nulls{}, {}, &shared->data);\n",
+    out << fmt::format("sumReduce<{}>({}, {}, laneStatus, accNulls, &row->acc{}, &row->nulls{}, {}, &shared->data);\n",
 		       cudaTypeName(*update.args[0]->type),
 		       state.operandValue(update.args[0]),
 		       state.isNull(update.args[0]),

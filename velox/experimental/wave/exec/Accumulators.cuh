@@ -61,14 +61,14 @@ void __device__ __forceinline__ simpleAccumulate(uint32_t peers, int32_t leader,
 }
 
 template <typename T>
-__device__ __forceinline__ sumReduce(T input, bool isNull, ErrorCode laneStatus, uint32_t nulls, T* result, uint32_t* resultNulls, uint32_t nullMask, void* smem) {
+__device__ __forceinline__ void sumReduce(T input, bool isNull, ErrorCode laneStatus, uint32_t nulls, T* result, uint32_t* resultNulls, uint32_t nullMask, void* smem) {
   using Reduce = WarpReduce<T>;
   using Reduce8 = WarpReduce<T, 8>;
   constexpr int32_t kNumWarps = kBlockSize / kWarpThreads;
   T* warpSum = reinterpret_cast<T*>(smem);
   bool* warpAny = reinterpret_cast<bool*>(warpSum + kNumWarps);
   bool nonNull = laneStatus == ErrorCode::kOk && !isNull;
-  bool warpFlag = __ballot_sync(0xffffffff, nonNull);
+  bool warpFlag = __ballot_sync(0xffffffff, nonNull) != 0;
     T laneValue = nonNull ? input : 0;
   T warpResult = Reduce().reduce(laneValue, [](T x, T y) { return x + y;});
   if ((threadIdx.x & 31) == 0) {
@@ -78,7 +78,7 @@ __device__ __forceinline__ sumReduce(T input, bool isNull, ErrorCode laneStatus,
   __syncthreads();
     bool anyAtAll;
     if (threadIdx.x < kNumWarps) {
-      anyAtAll == __ballot_sync(lowMask<uint32_t>(kNumWarps), warpAny[threadIdx.x]);
+      anyAtAll = __ballot_sync(lowMask<uint32_t>(kNumWarps), warpAny[threadIdx.x]) != 0;
     }
     T finalSum;
     if (threadIdx.x < kWarpThreads) {
