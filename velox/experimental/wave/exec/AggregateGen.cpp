@@ -187,11 +187,11 @@ std::string checkReturnBlockStatus() {
          "  }\n";
 #else
   return "";
-  #endif
+#endif
 }
 
-  void makeNonGroupedAggregation(
-				     CompileState& state,
+void makeNonGroupedAggregation(
+    CompileState& state,
     const AggregateProbe& probe,
     int32_t syncLabel) {
   auto& out = state.generated();
@@ -206,38 +206,40 @@ std::string checkReturnBlockStatus() {
   out << "  row = reinterpret_cast<HashRow*>(state->singleRow);\n";
   for (auto i = 0; i < probe.updates.size(); i += 32) {
     out << "  if (threadIdx.x == 0) {\n"
-	<< fmt::format("  accNulls = row->nulls{};\n", i / 32)
-	<< "  }\n";
-  std::vector<const AggregateUpdate*> deferred;
-  int32_t currentAccNulls = -1;
-  auto emitUpdates = [&](bool flush) {
-    if (flush || deferred.size() > 4) {
-      for (auto& update : deferred) {
-	if (update->accumulatorIdx / 32 != currentAccNulls) {
-	  out << fmt::format("  accNulls = row->nulls{};\n", update->accumulatorIdx / 32);
-	  currentAccNulls = update->accumulatorIdx / 32;
-	}
-        update->generator->makeNonGroupedUpdate(state, probe, *update);
+        << fmt::format("  accNulls = row->nulls{};\n", i / 32) << "  }\n";
+    std::vector<const AggregateUpdate*> deferred;
+    int32_t currentAccNulls = -1;
+    auto emitUpdates = [&](bool flush) {
+      if (flush || deferred.size() > 4) {
+        for (auto& update : deferred) {
+          if (update->accumulatorIdx / 32 != currentAccNulls) {
+            out << fmt::format(
+                "  accNulls = row->nulls{};\n", update->accumulatorIdx / 32);
+            currentAccNulls = update->accumulatorIdx / 32;
+          }
+          update->generator->makeNonGroupedUpdate(state, probe, *update);
+        }
+        deferred.clear();
       }
-      deferred.clear();
+    };
+    for (auto lastIdx = i;
+         lastIdx < probe.inlinedUpdates.size() && lastIdx < i + 32;
+         ++lastIdx) {
+      auto* step = probe.inlinedUpdates[lastIdx];
+      if (step->kind() != StepKind::kAggregateUpdate) {
+        const_cast<KernelStep*>(step)->generateMain(state, -1);
+        continue;
+      }
+      auto& update = step->as<AggregateUpdate>();
+      update.generator->loadArgs(state, probe, update);
+      deferred.push_back(&update);
+      emitUpdates(false);
     }
-  };
-  for (auto lastIdx = i; lastIdx < probe.inlinedUpdates.size() && lastIdx < i + 32; ++lastIdx) {
-    auto* step = probe.inlinedUpdates[lastIdx];
-    if (step->kind() != StepKind::kAggregateUpdate) {
-      const_cast<KernelStep*>(step)->generateMain(state, -1);
-      continue;
-    }
-    auto& update = step->as<AggregateUpdate>();
-    update.generator->loadArgs(state, probe, update);
-    deferred.push_back(&update);
-    emitUpdates(false);
+    emitUpdates(true);
   }
-  emitUpdates(true);
-  }
-  }
+}
 
-  void makeAggregateProbe(
+void makeAggregateProbe(
     CompileState& state,
     const AggregateProbe& probe,
     int32_t syncLabel) {

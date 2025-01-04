@@ -132,13 +132,14 @@ std::string KernelBox::toString() const {
   }
   return out.str();
 }
-  
-  void NullCheck::visitReferences(std::function<void(AbstractOperand*)> visitor) const {
-    for (auto& op : operands) {
-      visitor(op);
-    }
+
+void NullCheck::visitReferences(
+    std::function<void(AbstractOperand*)> visitor) const {
+  for (auto& op : operands) {
+    visitor(op);
   }
-  
+}
+
 void NullCheck::generateMain(CompileState& state, int32_t /*syncLable*/) {
   std::vector<AbstractOperand*> lastUse;
   bool isFirst = true;
@@ -147,7 +148,7 @@ void NullCheck::generateMain(CompileState& state, int32_t /*syncLable*/) {
   for (auto* op : operands) {
     if (!op->inRegister && state.hasMoreReferences(op, endIdx + 1)) {
       if (isFirst) {
-	state.declareNamed(fmt::format("bool anyNull{};", label));
+        state.declareNamed(fmt::format("bool anyNull{};", label));
         state.generated() << fmt::format("  anyNull{} = false;\n", label);
         isFirst = false;
       }
@@ -195,17 +196,16 @@ void NullCheck::generateMain(CompileState& state, int32_t /*syncLable*/) {
   }
 }
 
-  std::string NullCheck::toString() const {
-    std::stringstream out;
-    out << "NullCheck: null in (";
-    for (auto& op : operands) {
-      out << op->toString() << " ";
-    }
-    out << ") makes null in " << result->toString() << std::endl;
-    return out.str();
+std::string NullCheck::toString() const {
+  std::stringstream out;
+  out << "NullCheck: null in (";
+  for (auto& op : operands) {
+    out << op->toString() << " ";
   }
+  out << ") makes null in " << result->toString() << std::endl;
+  return out.str();
+}
 
-  
 void EndNullCheck::generateMain(CompileState& state, int32_t /*syncLable*/) {
   auto ord = state.ordinal(*result);
   state.generated() << fmt::format("goto skip{};\n", label)
@@ -304,7 +304,7 @@ std::string Compute::toString() const {
   }
   return out.str();
 }
-  
+
 void CompileState::ensureOperand(AbstractOperand* op) {
   if (op->inRegister) {
     return;
@@ -433,7 +433,8 @@ int32_t CompileState::wrapLiteral(int32_t nthWrap) {
   std::vector<OperandIndex> ordinals;
   for (auto& op : operands_) {
     auto& flags = currentCandidate_->flags(op.get());
-    if (!flags.lastUse.empty() && !flags.definedIn.empty() && filter.isBefore(flags.lastUse) && flags.definedIn.isBefore(filter)) {
+    if (!flags.lastUse.empty() && !flags.definedIn.empty() &&
+        filter.isBefore(flags.lastUse) && flags.definedIn.isBefore(filter)) {
       auto wrappedAt = flags.wrappedAt;
       if (wrappedAt == AbstractOperand::kNoWrap) {
         op->wrappedAt = nthWrap;
@@ -780,11 +781,7 @@ void CompileState::makeLevel(std::vector<KernelBox>& level) {
   programs_.clear();
   KernelSpec spec;
   makeLevelText(pipelineIdx_, kernelSeq_, spec);
-  auto kernel = CompiledKernel::getKernel(
-      spec.code,
-      [spec]() {
-        return spec;
-      });
+  auto kernel = CompiledKernel::getKernel(spec.code, [spec]() { return spec; });
   // Sync with compilation to serialize compile order.
   kernel->info(0);
 
