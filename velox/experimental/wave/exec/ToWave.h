@@ -976,7 +976,7 @@ class CompileState : public std::enable_shared_from_this<CompileState> {
 
   void planPipelines();
 
-  // Marks the operands for the output type of the last segment as copied to
+  // Marks the operands in 'resultOrder_' as copied to
   // host.
   void markHostOutput();
 
@@ -1084,6 +1084,8 @@ class CompileState : public std::enable_shared_from_this<CompileState> {
   std::vector<Segment> segments_;
   Scope topScope_;
 
+  std::vector<OperandId>* resultOrder_{nullptr};
+  
   // Owns the steps of pipeline candidates.
   std::vector<std::unique_ptr<KernelStep>> allSteps_;
 

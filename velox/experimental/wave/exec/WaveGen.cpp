@@ -391,10 +391,10 @@ int32_t CompileState::wrapLiteral(int32_t nthWrap) {
   // that the Operand's lifetime crosses the filter.
   CodePosition filter(kernelSeq_, 0, stepIdx_);
   std::unordered_set<int32_t> wraps;
-  std::vector<OperandIndex> ops;
+  std::vector<OperandIndex> ordinals;
   for (auto& op : operands_) {
     auto& flags = currentCandidate_->flags(op.get());
-    if (filter.isBefore(flags.lastUse) && flags.definedIn.isBefore(filter)) {
+    if (!flags.lastUse.empty() && !flags.definedIn.empty() && filter.isBefore(flags.lastUse) && flags.definedIn.isBefore(filter)) {
       auto wrappedAt = flags.wrappedAt;
       if (wrappedAt == AbstractOperand::kNoWrap) {
         op->wrappedAt = nthWrap;
@@ -404,19 +404,19 @@ int32_t CompileState::wrapLiteral(int32_t nthWrap) {
       if (wraps.count(wrappedAt)) {
         continue;
       }
-      wraps.insert(nthWrap);
-      ops.push_back(op->id);
+      wraps.insert(wrappedAt);
+      ordinals.push_back(ordinal(*op));
     }
   }
   generated_ << fmt::format("const OperandIndex wraps{}[] = {{", nthWrap);
-  for (auto i = 0; i < ops.size(); ++i) {
-    generated_ << i;
-    if (i < ops.size() - 1) {
+  for (auto i = 0; i < ordinals.size(); ++i) {
+    generated_ << ordinals[i];
+    if (i < ordinals.size() - 1) {
       generated_ << ", ";
     }
   }
   generated_ << "};\n";
-  return ops.size();
+  return ordinals.size();
 }
 
 void Filter::generateMain(CompileState& state, int32_t syncLabel) {

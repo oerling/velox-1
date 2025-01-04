@@ -330,11 +330,11 @@ void CompileState::tryFilterProject(
     exec::Operator* op,
     RowTypePtr& outputType,
     int32_t& nodeIndex) {
+  auto inputType = outputType;
   auto filterProject = reinterpret_cast<exec::FilterProject*>(op);
   outputType = driverFactory_.planNodes[nodeIndex]->outputType();
   auto data = filterProject->exprsAndProjection();
   auto& identityProjections = filterProject->identityProjections();
-  auto inputType = outputType;
   int32_t firstProjection = 0;
   if (data.hasFilter) {
     tryFilter(*data.exprs->exprs()[0], outputType);
@@ -825,11 +825,12 @@ void PipelineCandidate::makeOperandSets(int32_t pipelineSeq) {
 }
 
 void CompileState::markHostOutput() {
+  VELOX_CHECK_NOT_NULL(resultOrder_);
   auto& candidate = selectedPipelines_.back();
   auto& defined = segments_.back().topLevelDefined;
   CodePosition afterEnd(candidate.steps.size());
-  for (auto i = 0; i < defined.size(); ++i) {
-    auto* op = defined[i];
+  for (auto i = 0; i < resultOrder_->size(); ++i) {
+    auto* op = operandById((*resultOrder_)[i]);
     auto& flags = candidate.flags(op);
     flags.lastUse = afterEnd;
     flags.needStore = true;
@@ -1020,10 +1021,11 @@ RowTypePtr CompileState::makeOperators(
     auto op = fieldToOperand(*toSubfield(outputType->nameOf(i)), &topScope_);
     resultOrder.push_back(op->id);
   }
-
+  resultOrder_ = &resultOrder;
   namesResolved_ = true;
   planPipelines();
   generatePrograms();
+  resultOrder_ = nullptr;
   return outputType;
 }
 
