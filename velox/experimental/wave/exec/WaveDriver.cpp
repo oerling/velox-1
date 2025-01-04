@@ -392,6 +392,7 @@ void WaveDriver::waitForArrival(Pipeline& pipeline) {
         moveTo(pipeline.running, i, pipeline.arrived);
       }
       ++waitLoops;
+      --i;
     }
   }
   totalWaitLoops += waitLoops;

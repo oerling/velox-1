@@ -125,13 +125,27 @@ void CompileState::clearInRegister() {
   }
 }
 
+std::string KernelBox::toString() const {
+  std::stringstream out;
+  for (auto i = 0; i < steps.size(); ++i) {
+    out << i << ": " << steps[i]->toString();
+  }
+  return out.str();
+}
+  
+  void NullCheck::visitReferences(std::function<void(AbstractOperand*)> visitor) const {
+    for (auto& op : operands) {
+      visitor(op);
+    }
+  }
+  
 void NullCheck::generateMain(CompileState& state, int32_t /*syncLable*/) {
   std::vector<AbstractOperand*> lastUse;
   bool isFirst = true;
   state.setInsideNullPropagating(true);
 
   for (auto* op : operands) {
-    if (!op->inRegister && state.hasMoreReferences(op, endIdx)) {
+    if (!op->inRegister && state.hasMoreReferences(op, endIdx + 1)) {
       if (isFirst) {
 	state.declareNamed(fmt::format("bool anyNull{};", label));
         state.generated() << fmt::format("  anyNull{} = false;\n", label);
@@ -181,6 +195,17 @@ void NullCheck::generateMain(CompileState& state, int32_t /*syncLable*/) {
   }
 }
 
+  std::string NullCheck::toString() const {
+    std::stringstream out;
+    out << "NullCheck: null in (";
+    for (auto& op : operands) {
+      out << op->toString() << " ";
+    }
+    out << ") makes null in " << result->toString() << std::endl;
+    return out.str();
+  }
+
+  
 void EndNullCheck::generateMain(CompileState& state, int32_t /*syncLable*/) {
   auto ord = state.ordinal(*result);
   state.generated() << fmt::format("goto skip{};\n", label)
@@ -266,6 +291,20 @@ void Compute::generateMain(CompileState& state, int32_t /*syncLable*/) {
   }
 }
 
+std::string Compute::toString() const {
+  std::stringstream out;
+  if (operand->expr) {
+    out << operand->expr->name() << "(";
+    for (auto& in : operand->inputs) {
+      out << in->toString() << " ";
+    }
+    out << ")" << std::endl;
+  } else {
+    out << operand->toString() << std::endl;
+  }
+  return out.str();
+}
+  
 void CompileState::ensureOperand(AbstractOperand* op) {
   if (op->inRegister) {
     return;
@@ -535,6 +574,7 @@ ProgramKey CompileState::makeLevelText(
   std::lock_guard<std::mutex> l(generateMutex_);
   VELOX_CHECK(generated_.str().empty());
   VELOX_CHECK(inlines_.str().empty());
+  sharedSize_ = 0;
   insideNullPropagating_ = false;
   declared_ = OperandSet();
   currentCandidate_ = &selectedPipelines_[pipelineIdx];
@@ -592,6 +632,8 @@ ProgramKey CompileState::makeLevelText(
       }
       // Generate the  code for first execution.
       auto step = box.steps[stepIdx_];
+      sharedSize_ = std::max<int32_t>(sharedSize_, step->sharedMemorySize());
+
       int32_t syncLabel = -1;
       if (step->isBarrier()) {
         syncLabel = nextSyncLabel_;
@@ -736,16 +778,11 @@ void CompileState::makeLevel(std::vector<KernelBox>& level) {
 
   int32_t sharedSize = 0;
   programs_.clear();
-  auto key = makeKey(sharedSize);
-  auto sharedState = shared_from_this();
-  // The generator function captures a shared 'this'. The
-  // code generation and compilation are on an executor and run after
-  // the plan transformation has returned.
+  KernelSpec spec;
+  makeLevelText(pipelineIdx_, kernelSeq_, spec);
   auto kernel = CompiledKernel::getKernel(
-      key.text,
-      [sharedState, pipelineIdx = pipelineIdx_, kernelSeq = kernelSeq_]() {
-        KernelSpec spec;
-        sharedState->makeLevelText(pipelineIdx, kernelSeq, spec);
+      spec.code,
+      [spec]() {
         return spec;
       });
   // Sync with compilation to serialize compile order.
@@ -780,7 +817,7 @@ void CompileState::makeLevel(std::vector<KernelBox>& level) {
       params.output,
       extraWrap,
       numBranches,
-      sharedSize,
+      sharedSize_,
       operands_,
       std::move(states),
       std::move(kernel));

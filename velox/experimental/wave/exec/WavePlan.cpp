@@ -539,7 +539,8 @@ void recordReference(PipelineCandidate& candidate, AbstractOperand* op) {
 }
 
 void distinctLeavesInner(
-    AbstractOperand* op,
+			 PipelineCandidate& candidate,
+			 AbstractOperand* op,
     folly::F14FastSet<AbstractOperand*>& ops) {
   if (op->constant) {
     return;
@@ -551,24 +552,34 @@ void distinctLeavesInner(
     ops.insert(op);
     return;
   }
+  auto flags = candidate.flags(op);
+  if (!flags.definedIn.empty()) {
+    // If a subexpr is already placed, use the nullness of that instead of the nullness of its leaves.
+    ops.insert(op);
+    return;
+  }
   for (auto& input : op->inputs) {
-    distinctLeavesInner(input, ops);
+    distinctLeavesInner(candidate, input, ops);
   }
 }
 
-std::vector<AbstractOperand*> distinctLeaves(AbstractOperand* op) {
+std::vector<AbstractOperand*> distinctLeaves(
+					     PipelineCandidate& candidate,
+					     AbstractOperand* op) {
   std::vector<AbstractOperand*> result;
   folly::F14FastSet<AbstractOperand*> ops;
-  distinctLeavesInner(op, ops);
+  distinctLeavesInner(candidate, op, ops);
   for (auto& op : ops) {
     result.push_back(op);
   }
   return result;
 }
 
-NullCheck* CompileState::addNullCheck(AbstractOperand* op) {
+NullCheck* CompileState::addNullCheck(
+				      PipelineCandidate& candidate,
+				      AbstractOperand* op) {
   auto* check = makeStep<NullCheck>();
-  check->operands = distinctLeaves(op);
+  check->operands = distinctLeaves(candidate, op);
   check->label = ++labelCounter_;
   check->result = op;
   return check;
@@ -589,7 +600,7 @@ void CompileState::placeExpr(
     ScopedVarSetter s(&insideNullPropagating_, true, checkNulls);
     NullCheck* check;
     if (checkNulls) {
-      check = addNullCheck(op);
+      check = addNullCheck(candidate, op);
       candidate.currentBox->steps.push_back(check);
     }
     for (auto* in : op->inputs) {
@@ -865,151 +876,6 @@ void CompileState::planPipelines() {
     }
     selectedPipelines_[pipelineIdx_].makeOperandSets(pipelineIdx_);
   }
-}
-
-ProgramKey CompileState::makeKey(int32_t& sharedSize) {
-  auto& candidate = selectedPipelines_[pipelineIdx_];
-  auto& params = candidate.levelParams[kernelSeq_];
-  std::stringstream out;
-  auto& level = candidate.steps[kernelSeq_];
-  folly::F14FastMap<int32_t, int32_t> renamed;
-  std::vector<AbstractOperand*> input;
-  std::vector<AbstractOperand*> local;
-  std::vector<AbstractOperand*> output;
-
-  params.input.forEach([&](int32_t id) {
-    auto op = operands_[id].get();
-    input.push_back(op);
-    out << fmt::format("I{} {} ", ordinal(*op), op->type->toString());
-  });
-
-  params.local.forEach([&](int32_t id) {
-    auto op = operands_[id].get();
-    local.push_back(op);
-    out << fmt::format("L{} {} ", ordinal(*op), op->type->toString());
-  });
-
-  params.output.forEach([&](int32_t id) {
-    auto op = operands_[id].get();
-    output.push_back(op);
-    out << fmt::format("O{} {} ", ordinal(*op), op->type->toString());
-  });
-
-  for (auto programIdx = 0; programIdx < level.size(); ++programIdx) {
-    auto& box = level[programIdx];
-    for (auto stepIdx = 0; stepIdx < box.steps.size(); ++stepIdx) {
-      auto paramString = [&](const AbstractOperand& op) -> std::string {
-        return fmt::format("P{}", ordinal(op));
-      };
-
-      auto renamedId = [&](AbstractOperand* op) -> int32_t {
-        auto it = renamed.find(op->id);
-        if (it == renamed.end()) {
-          return renamed[op->id] = renamed.size();
-        }
-        return it->second;
-      };
-
-      auto markOutput = [&](AbstractOperand* op) {
-        auto& flags = candidate.flags(op);
-        out << fmt::format("<P{} =", ordinal(*op));
-        if (flags.lastUse.kernelSeq > kernelSeq_) {
-          output.push_back(op);
-        }
-      };
-
-      auto markInput = [&](AbstractOperand* op) {
-        auto& flags = candidate.flags(op);
-        if (flags.definedIn.kernelSeq < kernelSeq_) {
-          out << fmt::format("P{} ", ordinal(*op));
-          input.push_back(op);
-        } else {
-          out << fmt::format("<T {} {}>", renamedId(op), op->type->toString());
-        }
-      };
-      auto* step = box.steps[stepIdx];
-      sharedSize = std::max<int32_t>(sharedSize, step->sharedMemorySize());
-      switch (step->kind()) {
-        case StepKind::kOperand: {
-          auto& compute = step->as<Compute>();
-          auto* op = compute.operand;
-          markOutput(op);
-          if (!op->expr) {
-            out << op->toString();
-          } else {
-            out << op->expr->name();
-            out << "(";
-            for (auto* in : op->inputs) {
-              markInput(in);
-            }
-            out << ")\n";
-          }
-          break;
-        }
-        case StepKind::kNullCheck: {
-          auto& check = step->as<NullCheck>();
-          out << "nullCheck(";
-          for (auto* op : check.operands) {
-            out << op->id << " ";
-          }
-          out << ") -> " << check.result->id << "\n";
-          break;
-        }
-        case StepKind::kEndNullCheck:
-          break;
-        case StepKind::kFilter: {
-          auto& filter = step->as<Filter>();
-          out << "filter(";
-          markInput(filter.flag);
-          out << ")\n";
-          break;
-        }
-        case StepKind::kAggregateProbe: {
-          auto& agg = step->as<AggregateProbe>();
-          out << "Aggregate(";
-          for (auto& k : agg.keys) {
-            markInput(k);
-          }
-          out << ") =";
-          if (!agg.isSink()) {
-            markOutput(agg.rows);
-          }
-          out << "\n";
-          break;
-        }
-        case StepKind::kAggregateUpdate: {
-          auto& func = step->as<AggregateUpdate>();
-          out << "update " << func.name << "(";
-          markInput(func.rows);
-          for (auto& op : func.args) {
-            markInput(op);
-          }
-          out << ")\n";
-          break;
-        }
-        case StepKind::kReadAggregation: {
-          auto& read = step->as<ReadAggregation>();
-          out << "readAgg " << static_cast<int32_t>(read.funcs[0]->step) << "(";
-          for (auto* key : read.keys) {
-            markOutput(key);
-          }
-          for (auto i = 0; i < read.funcs.size(); ++i) {
-            out << fmt::format("A:{} ", i);
-            markOutput(read.funcs[i]->result);
-          }
-          out << ")\n";
-          break;
-        }
-        default:
-          VELOX_NYI();
-      }
-    }
-  }
-  return ProgramKey{
-      .text = out.str(),
-      .input = std::move(input),
-      .local = std::move(local),
-      .output = std::move(output)};
 }
 
 RowTypePtr CompileState::makeOperators(
