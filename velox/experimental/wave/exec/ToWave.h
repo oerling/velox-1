@@ -101,7 +101,7 @@ struct KernelStep {
   }
 
   virtual std::string toString() const {
-    return fmt::format("step {} ", static_cast<int32_t>(kind()));
+    return fmt::format("step {}\n", static_cast<int32_t>(kind()));
   }
 
   /// Returns the dynamic shared memory needed by 'this'.
@@ -176,8 +176,12 @@ struct NullCheck : public KernelStep {
     return StepKind::kNullCheck;
   }
 
+  void visitReferences(std::function<void(AbstractOperand*)> visitor) const override;
+  
   void generateMain(CompileState& state, int32_t syncLabel) override;
 
+  std::string toString() const override;
+  
   std::vector<AbstractOperand*> operands;
   AbstractOperand* result;
   int32_t label;
@@ -188,6 +192,7 @@ struct EndNullCheck : public KernelStep {
   StepKind kind() const override {
     return StepKind::kEndNullCheck;
   }
+
   void generateMain(CompileState& state, int32_t syncLabel) override;
 
   AbstractOperand* result;
@@ -211,6 +216,8 @@ struct Compute : public KernelStep {
 
   void generateMain(CompileState& state, int32_t syncLabel) override;
 
+  std::string toString() const override;
+  
   AbstractOperand* operand;
   AbstractInstruction* continueInstruction{nullptr};
 };
@@ -512,6 +519,8 @@ struct JoinExpand : public KernelStep {
 };
 
 struct KernelBox {
+  std::string toString() const;
+
   std::vector<KernelStep*> steps;
   // Number of consecutive wraps (filter, join, unnest...).
   int32_t numWraps{0};
@@ -672,7 +681,7 @@ struct Segment {
   std::string toString() const;
 };
 
-class CompileState : public std::enable_shared_from_this<CompileState> {
+class CompileState {
  public:
   CompileState(const exec::DriverFactory& driverFactory, exec::Driver& driver);
 
@@ -759,11 +768,6 @@ class CompileState : public std::enable_shared_from_this<CompileState> {
   bool hasMoreReferences(AbstractOperand* op, int32_t pc);
 
   void generateOperand(const AbstractOperand& op);
-
-  /// Returns a key for kernel cache lookup for the step at
-  /// 'pipelineIdx_', 'kernelSeq_'. Updates 'sharedSize' to the
-  /// maximum dynamic shared memory needed by steps in the level.
-  ProgramKey makeKey(int32_t& sharedSize);
 
   /// Makes the source text for kernels for the level of 'pipelineIdx',
   /// 'kernelSeq'.
@@ -958,7 +962,7 @@ class CompileState : public std::enable_shared_from_this<CompileState> {
 
   void placeAggregation(PipelineCandidate& candidate, Segment& segment);
 
-  NullCheck* addNullCheck(AbstractOperand* op);
+  NullCheck* addNullCheck(PipelineCandidate& candidate, AbstractOperand* op);
 
   void markOutputStored(PipelineCandidate& candidate, Segment& segment);
 
@@ -1133,6 +1137,9 @@ class CompileState : public std::enable_shared_from_this<CompileState> {
   // to the kernel entry point index for the rehash kernel.
   folly::F14FastMap<int32_t, int32_t> serialToEntryPointIdx_;
 
+  // The shared memory needed by the kernel being generated.
+  int32_t sharedSize_{0};
+  
   // Mutex serializing the background code generation after missing kernel
   // cache.
   std::mutex generateMutex_;

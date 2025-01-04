@@ -225,6 +225,7 @@ void __global__ setupAggregationKernel(AggregationControl op) {
     numBlocks = std::min<int64_t>(
         roundUp(op.numOldBuckets, kBlockSize) / kBlockSize, 640);
   }
+  std::cout << "Start rehash\n";
   if (kernel) {
     void* args = &op;
     kernel->launch(entryPoint, numBlocks, numThreads, 0, this, &args);
@@ -232,6 +233,7 @@ void __global__ setupAggregationKernel(AggregationControl op) {
     setupAggregationKernel<<<numBlocks, numThreads, 0, stream_->stream>>>(op);
   }
   wait();
-}
+    std::cout << "Done rehash\n";
+  }
 
 } // namespace facebook::velox::wave
