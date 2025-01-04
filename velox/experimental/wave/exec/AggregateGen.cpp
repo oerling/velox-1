@@ -180,15 +180,71 @@ void makeUpdateLambda(
 }
 
 std::string checkReturnBlockStatus() {
+#ifdef BLOCK_STATUS_CHECK
+
   return "  if ((int)laneStatus > 4) {\n"
          "printf(\"bad laneStatus\\n\");\n"
          "  }\n";
+#else
+  return "";
+  #endif
 }
 
-void makeAggregateProbe(
+  void makeNonGroupedAggregation(
+				     CompileState& state,
+    const AggregateProbe& probe,
+    int32_t syncLabel) {
+  auto& out = state.generated();
+  out << fmt::format("  sync{}:\n", syncLabel);
+  state.declareNamed("DeviceAggregation* state;");
+  state.declareNamed("uint32_t accNulls;");
+  out << fmt::format(
+      "  state =\n"
+      "    reinterpret_cast<DeviceAggregation*>(shared->states[{}]);\n",
+      state.stateOrdinal(*probe.state));
+  state.declareNamed("HashRow* row;");
+  out << "  row = reinterpret_cast<HashRow*>(state->singleRow);\n";
+  for (auto i = 0; i < probe.updates.size(); i += 32) {
+    out << "  if (threadIdx.x == 0) {\n"
+	<< fmt::format("  accNulls = row->nulls{};\n", i / 32)
+	<< "  }\n";
+  std::vector<const AggregateUpdate*> deferred;
+  int32_t currentAccNulls = -1;
+  auto emitUpdates = [&](bool flush) {
+    if (flush || deferred.size() > 4) {
+      for (auto& update : deferred) {
+	if (update->accumulatorIdx / 32 != currentAccNulls) {
+	  out << fmt::format("  accNulls = row->nulls{};\n", update->accumulatorIdx / 32);
+	  currentAccNulls = update->accumulatorIdx / 32;
+	}
+        update->generator->makeNonGroupedUpdate(state, probe, *update);
+      }
+      deferred.clear();
+    }
+  };
+  for (auto lastIdx = i; lastIdx < probe.inlinedUpdates.size() && lastIdx < i + 32; ++lastIdx) {
+    auto* step = probe.inlinedUpdates[lastIdx];
+    if (step->kind() != StepKind::kAggregateUpdate) {
+      const_cast<KernelStep*>(step)->generateMain(state, -1);
+      continue;
+    }
+    auto& update = step->as<AggregateUpdate>();
+    update.generator->loadArgs(state, probe, update);
+    deferred.push_back(&update);
+    emitUpdates(false);
+  }
+  emitUpdates(true);
+  }
+  }
+
+  void makeAggregateProbe(
     CompileState& state,
     const AggregateProbe& probe,
     int32_t syncLabel) {
+  if (probe.keys.empty()) {
+    makeNonGroupedAggregation(state, probe, syncLabel);
+    return;
+  }
   auto& out = state.generated();
   state.declareNamed("uint64_t hash;");
   makeHash(state, probe.keys, true, "");
@@ -242,7 +298,7 @@ void makeReadAggregation(CompileState& state, const ReadAggregation& read) {
   state.declareNamed("DeviceAggregation* state;");
   if (read.probe->keys.empty()) {
     // Case with no grouping.
-    out << "  if (threadIdx.x != 0) { lanestatus = ErrorCode::kInactive; } else {\n"
+    out << "  if (threadIdx.x != 0) { laneStatus = ErrorCode::kInactive; } else {\n"
         << fmt::format(
                "  state =\n"
                "    reinterpret_cast<DeviceAggregation*>(shared->states[{}]);\n",

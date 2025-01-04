@@ -51,37 +51,40 @@ std::string OperandFlags::toString() const {
 }
 
 void TableScanStep::visitResults(
-    std::function<void(AbstractOperand*)> visitor) {
+    std::function<void(AbstractOperand*)> visitor) const {
   for (auto& out : results) {
     visitor(out);
   }
 }
 
-void ValuesStep::visitResults(std::function<void(AbstractOperand*)> visitor) {
+void ValuesStep::visitResults(std::function<void(AbstractOperand*)> visitor) const {
   for (auto& out : results) {
     visitor(out);
   }
 }
 
-void Compute::visitReferences(std::function<void(AbstractOperand*)> visitor) {
+void Compute::visitReferences(std::function<void(AbstractOperand*)> visitor) const {
   for (auto& in : operand->inputs) {
     visitor(in);
   }
 }
 
-void Compute::visitResults(std::function<void(AbstractOperand*)> visitor) {
+void Compute::visitResults(std::function<void(AbstractOperand*)> visitor) const {
   visitor(operand);
 }
 
 void AggregateProbe::visitReferences(
-    std::function<void(AbstractOperand*)> visitor) {
+    std::function<void(AbstractOperand*)> visitor) const {
   for (auto& key : keys) {
     visitor(key);
+  }
+  for (auto& update : inlinedUpdates) {
+    update->visitReferences(visitor);
   }
 }
 
 void AggregateUpdate::visitReferences(
-    std::function<void(AbstractOperand*)> visitor) {
+    std::function<void(AbstractOperand*)> visitor) const {
   for (auto& arg : args) {
     visitor(arg);
   }
@@ -91,7 +94,7 @@ void AggregateUpdate::visitReferences(
 }
 
 void ReadAggregation::visitResults(
-    std::function<void(AbstractOperand*)> visitor) {
+    std::function<void(AbstractOperand*)> visitor) const {
   for (auto& key : keys) {
     visitor(key);
   }
@@ -211,8 +214,12 @@ AbstractOperand* CompileState::exprToOperand(const Expr& expr, Scope* scope) {
   if (op) {
     return op;
   }
-
   if (auto* field = dynamic_cast<const exec::FieldReference*>(&expr)) {
+    auto subfield = toSubfield(field->name());
+    auto result = fieldToOperand(*subfield, scope);
+    if (result) {
+      return result;
+    }
     VELOX_FAIL("Should have been defined");
   } else if (auto* constant = dynamic_cast<const exec::ConstantExpr*>(&expr)) {
     auto op = newOperand(constant->value()->type(), constant->toString());
@@ -323,11 +330,11 @@ void CompileState::tryFilterProject(
     exec::Operator* op,
     RowTypePtr& outputType,
     int32_t& nodeIndex) {
+  auto inputType = outputType;
   auto filterProject = reinterpret_cast<exec::FilterProject*>(op);
   outputType = driverFactory_.planNodes[nodeIndex]->outputType();
   auto data = filterProject->exprsAndProjection();
   auto& identityProjections = filterProject->identityProjections();
-  auto inputType = outputType;
   int32_t firstProjection = 0;
   if (data.hasFilter) {
     tryFilter(*data.exprs->exprs()[0], outputType);
@@ -818,11 +825,12 @@ void PipelineCandidate::makeOperandSets(int32_t pipelineSeq) {
 }
 
 void CompileState::markHostOutput() {
+  VELOX_CHECK_NOT_NULL(resultOrder_);
   auto& candidate = selectedPipelines_.back();
   auto& defined = segments_.back().topLevelDefined;
   CodePosition afterEnd(candidate.steps.size());
-  for (auto i = 0; i < defined.size(); ++i) {
-    auto* op = defined[i];
+  for (auto i = 0; i < resultOrder_->size(); ++i) {
+    auto* op = operandById((*resultOrder_)[i]);
     auto& flags = candidate.flags(op);
     flags.lastUse = afterEnd;
     flags.needStore = true;
@@ -1013,10 +1021,11 @@ RowTypePtr CompileState::makeOperators(
     auto op = fieldToOperand(*toSubfield(outputType->nameOf(i)), &topScope_);
     resultOrder.push_back(op->id);
   }
-
+  resultOrder_ = &resultOrder;
   namesResolved_ = true;
   planPipelines();
   generatePrograms();
+  resultOrder_ = nullptr;
   return outputType;
 }
 

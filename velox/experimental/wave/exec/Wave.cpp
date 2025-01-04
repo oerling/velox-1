@@ -571,21 +571,21 @@ void WaveStream::ensureVector(
 }
 
 bool WaveStream::isNullable(const AbstractOperand& op) const {
-  bool notNull = op.notNull;
-  if (!notNull) {
-    if (op.sourceNullable) {
-      notNull = !operandNullable_[op.id];
-    } else {
-      notNull = true;
-      for (auto i : op.nullableIf) {
-        if (operandNullable_[i]) {
-          notNull = false;
-          break;
-        }
+  if (op.notNull) {
+    return false;
+  }
+  if (op.sourceNullable) {
+    return operandNullable_[op.id];
+  }
+  if (op.conditionalNonNull) {
+    for (auto i : op.nullableIf) {
+      if (operandNullable_[i]) {
+	return true;
       }
     }
+    return false;
   }
-  return !notNull;
+  return true;
 }
 
 void WaveStream::exeLaunchInfo(
@@ -1054,6 +1054,7 @@ void WaveStream::checkExecutables() const {
 }
 
 void WaveStream::checkBlockStatuses() const {
+#ifdef BLOCK_STATUS_CHECK
   auto numBlocks = bits::roundUp(numRows_, kBlockSize) / kBlockSize;
   auto hostSide = hostBlockStatus();
   auto deviceSide = deviceBlockStatus_;
@@ -1069,6 +1070,7 @@ void WaveStream::checkBlockStatuses() const {
       }
     }
   }
+#endif
 }
 
 std::string WaveStream::toString() const {

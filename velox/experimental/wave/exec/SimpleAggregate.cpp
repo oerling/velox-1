@@ -94,6 +94,22 @@ class SimpleAggregate : public AggregateGenerator {
     }
   }
 
+  void makeNonGroupedUpdate(
+      CompileState& state,
+      const AggregateProbe& probe,
+      const AggregateUpdate& update) const override {
+    auto& out = state.generated();
+
+    out << fmt::format("sumReduce<{}>({}, {}, laneStatus, accNulls, &row->acc{}, &row->nulls{}, {}, &shared->data);\n",
+		       cudaTypeName(*update.args[0]->type),
+		       state.operandValue(update.args[0]),
+		       state.isNull(update.args[0]),
+		       update.accumulatorIdx,
+		       update.accumulatorIdx / 32,
+		       1U << (update.accumulatorIdx & 31));
+
+  }
+
   std::string generateUpdate(
       CompileState& state,
       const AggregateProbe& probe,

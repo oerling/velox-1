@@ -23,6 +23,7 @@
 #include "velox/experimental/wave/exec/ExprKernelStream.h"
 #include "velox/experimental/wave/exec/WaveCore.cuh"
 #include "velox/experimental/wave/exec/ExprKernelStream.h"
+#include "velox/experimental/wave/exec/Accumulators.cuh"
 
 DEFINE_bool(kernel_gdb, false, "Run kernels sequentially for debugging");
 

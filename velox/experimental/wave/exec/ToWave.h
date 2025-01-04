@@ -118,11 +118,11 @@ struct KernelStep {
 
   virtual void generateContinue(CompileState& state){};
 
-  virtual void visitReferences(std::function<void(AbstractOperand*)> visitor){};
+  virtual void visitReferences(std::function<void(AbstractOperand*)> visitor) const {};
 
-  virtual void visitResults(std::function<void(AbstractOperand*)> visitor){};
+  virtual void visitResults(std::function<void(AbstractOperand*)> visitor) const {};
 
-  virtual void visitStates(std::function<void(AbstractState*)> visitor){};
+  virtual void visitStates(std::function<void(AbstractState*)> visitor) const {};
 
   bool references(AbstractOperand* op);
 
@@ -153,7 +153,7 @@ struct ValuesStep : public KernelStep {
     return StepKind::kValues;
   }
 
-  void visitResults(std::function<void(AbstractOperand*)> visitor) override;
+  void visitResults(std::function<void(AbstractOperand*)> visitor) const override;
 
   const core::ValuesNode* node;
   std::vector<AbstractOperand*> results;
@@ -164,7 +164,7 @@ struct TableScanStep : public KernelStep {
     return StepKind::kTableScan;
   }
 
-  void visitResults(std::function<void(AbstractOperand*)> visitor) override;
+  void visitResults(std::function<void(AbstractOperand*)> visitor) const override;
 
   const core::TableScanNode* node;
   std::vector<AbstractOperand*> results;
@@ -205,9 +205,9 @@ struct Compute : public KernelStep {
         : std::nullopt;
   }
 
-  void visitReferences(std::function<void(AbstractOperand*)> visitor) override;
+  void visitReferences(std::function<void(AbstractOperand*)> visitor) const override;
 
-  void visitResults(std::function<void(AbstractOperand*)> visitor) override;
+  void visitResults(std::function<void(AbstractOperand*)> visitor) const override;
 
   void generateMain(CompileState& state, int32_t syncLabel) override;
 
@@ -232,11 +232,11 @@ struct Filter : public KernelStep {
     return sizeof(WaveShared) + (kBlockSize / 32) * sizeof(int32_t);
   }
 
-  void visitReferences(std::function<void(AbstractOperand*)> visitor) override {
+  void visitReferences(std::function<void(AbstractOperand*)> visitor) const override {
     visitor(flag);
   }
 
-  void visitResults(std::function<void(AbstractOperand*)> visitor) override {
+  void visitResults(std::function<void(AbstractOperand*)> visitor) const override {
     visitor(indices);
   }
 
@@ -304,6 +304,11 @@ class AggregateGenerator {
       const AggregateProbe& probe,
       const AggregateUpdate& update) const = 0;
 
+  virtual void makeNonGroupedUpdate(
+      CompileState& state,
+      const AggregateProbe& probe,
+      const AggregateUpdate& update) const = 0;
+  
   /// Generates an update.
   virtual std::string generateUpdate(
       CompileState& state,
@@ -347,7 +352,7 @@ struct AggregateUpdate : public KernelStep {
     return true;
   }
 
-  void visitReferences(std::function<void(AbstractOperand*)> visitor) override;
+  void visitReferences(std::function<void(AbstractOperand*)> visitor) const override;
 
   void generateMain(CompileState& state, int32_t syncLabel) override;
 
@@ -391,13 +396,22 @@ struct AggregateProbe : public KernelStep {
     return !updates.empty() && allUpdatesInlined;
   }
 
+  int32_t sharedMemorySize() const {
+    // If no grouping, we have one word plus one byte of shared memory
+    // per warp and a pad of 4 to align at 8. This is after the
+    // regular WaveShared struct.
+    int32_t reduceSpace = keys.empty() ? 4 + (kBlockSize / 32) * (1 + sizeof(int64_t)) : 0;
+    return sizeof(WaveShared) + reduceSpace;
+  }
+
+  
   void generateMain(CompileState& state, int32_t syncLabel) override;
 
-  void visitReferences(std::function<void(AbstractOperand*)> visitor) override;
+  void visitReferences(std::function<void(AbstractOperand*)> visitor) const override;
 
   std::string preContinueCode(CompileState& state) override;
 
-  void visitResults(std::function<void(AbstractOperand*)> visitor) override {
+  void visitResults(std::function<void(AbstractOperand*)> visitor) const override {
     // If not all updates are inlined, this produces 'rows' as an output for the
     // accumulator updates in the next kernel.
     if (!allUpdatesInlined) {
@@ -405,7 +419,7 @@ struct AggregateProbe : public KernelStep {
     }
   }
 
-  void visitStates(std::function<void(AbstractState*)> visitor) override {
+  void visitStates(std::function<void(AbstractState*)> visitor) const override {
     visitor(state);
   }
 
@@ -440,9 +454,9 @@ struct ReadAggregation : public KernelStep {
     return StepKind::kReadAggregation;
   }
 
-  void visitResults(std::function<void(AbstractOperand*)> visitor) override;
+  void visitResults(std::function<void(AbstractOperand*)> visitor) const override;
 
-  void visitStates(std::function<void(AbstractState*)> visitor) override {
+  void visitStates(std::function<void(AbstractState*)> visitor) const override {
     visitor(state);
   }
 
@@ -962,7 +976,7 @@ class CompileState : public std::enable_shared_from_this<CompileState> {
 
   void planPipelines();
 
-  // Marks the operands for the output type of the last segment as copied to
+  // Marks the operands in 'resultOrder_' as copied to
   // host.
   void markHostOutput();
 
@@ -1070,6 +1084,8 @@ class CompileState : public std::enable_shared_from_this<CompileState> {
   std::vector<Segment> segments_;
   Scope topScope_;
 
+  std::vector<OperandId>* resultOrder_{nullptr};
+  
   // Owns the steps of pipeline candidates.
   std::vector<std::unique_ptr<KernelStep>> allSteps_;
 
