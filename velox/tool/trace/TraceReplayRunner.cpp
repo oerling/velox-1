@@ -92,9 +92,10 @@ DEFINE_string(
     "shared",
     "Specify the memory arbitrator type.");
 DEFINE_uint64(
-    query_memory_capacity_gb,
+    query_memory_capacity_mb,
     0,
     "Specify the query memory capacity limit in GB. If it is zero, then there is no limit.");
+DEFINE_bool(copy_results, false, "Copy the replaying results.");
 
 namespace facebook::velox::tool::trace {
 namespace {
@@ -311,6 +312,7 @@ TraceReplayRunner::createReplayer() const {
       exec::trace::getTaskTraceMetaFilePath(taskTraceDir),
       fs_,
       memory::MemoryManager::getInstance()->tracePool());
+  const auto queryCapacityBytes = (1ULL * FLAGS_query_memory_capacity_mb) << 20;
   if (traceNodeName == "TableWrite") {
     VELOX_USER_CHECK(
         !FLAGS_table_writer_output_dir.empty(),
@@ -322,7 +324,7 @@ TraceReplayRunner::createReplayer() const {
         FLAGS_node_id,
         traceNodeName,
         FLAGS_driver_ids,
-        (1ULL * FLAGS_query_memory_capacity_gb) << 30,
+        queryCapacityBytes,
         cpuExecutor_.get(),
         FLAGS_table_writer_output_dir);
   } else if (traceNodeName == "Aggregation") {
@@ -333,7 +335,7 @@ TraceReplayRunner::createReplayer() const {
         FLAGS_node_id,
         traceNodeName,
         FLAGS_driver_ids,
-        (1ULL * FLAGS_query_memory_capacity_gb) << 30,
+        queryCapacityBytes,
         cpuExecutor_.get());
   } else if (traceNodeName == "PartitionedOutput") {
     replayer = std::make_unique<tool::trace::PartitionedOutputReplayer>(
@@ -344,7 +346,7 @@ TraceReplayRunner::createReplayer() const {
         getVectorSerdeKind(),
         traceNodeName,
         FLAGS_driver_ids,
-        (1ULL * FLAGS_query_memory_capacity_gb) << 30,
+        queryCapacityBytes,
         cpuExecutor_.get());
   } else if (traceNodeName == "TableScan") {
     replayer = std::make_unique<tool::trace::TableScanReplayer>(
@@ -354,7 +356,7 @@ TraceReplayRunner::createReplayer() const {
         FLAGS_node_id,
         traceNodeName,
         FLAGS_driver_ids,
-        (1ULL * FLAGS_query_memory_capacity_gb) << 30,
+        queryCapacityBytes,
         cpuExecutor_.get());
   } else if (traceNodeName == "Filter" || traceNodeName == "Project") {
     replayer = std::make_unique<tool::trace::FilterProjectReplayer>(
@@ -364,7 +366,7 @@ TraceReplayRunner::createReplayer() const {
         FLAGS_node_id,
         traceNodeName,
         FLAGS_driver_ids,
-        (1ULL * FLAGS_query_memory_capacity_gb) << 30,
+        queryCapacityBytes,
         cpuExecutor_.get());
   } else if (traceNodeName == "HashJoin") {
     replayer = std::make_unique<tool::trace::HashJoinReplayer>(
@@ -374,7 +376,7 @@ TraceReplayRunner::createReplayer() const {
         FLAGS_node_id,
         traceNodeName,
         FLAGS_driver_ids,
-        (1ULL * FLAGS_query_memory_capacity_gb) << 30,
+        queryCapacityBytes,
         cpuExecutor_.get());
   } else {
     VELOX_UNSUPPORTED("Unsupported operator type: {}", traceNodeName);
@@ -395,6 +397,6 @@ void TraceReplayRunner::run() {
     return;
   }
   VELOX_USER_CHECK(!FLAGS_task_id.empty(), "--task_id must be provided");
-  createReplayer()->run();
+  createReplayer()->run(FLAGS_copy_results);
 }
 } // namespace facebook::velox::tool::trace
