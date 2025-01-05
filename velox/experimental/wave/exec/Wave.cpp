@@ -999,7 +999,7 @@ void WaveStream::makeAggregate(
     auto* hashTable = reinterpret_cast<GpuHashTableBase*>(header + 1);
     HashPartitionAllocator* allocators =
         reinterpret_cast<HashPartitionAllocator*>(hashTable + 1);
-    int32_t numBuckets = 2048;
+    int32_t numBuckets = 2048 * 8;
     header->table = hashTable;
     WaveBufferPtr table =
         arena_.allocate<char>(sizeof(GpuBucketMembers) * numBuckets);
