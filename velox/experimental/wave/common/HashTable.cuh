@@ -290,9 +290,20 @@ class GpuHashTable : public GpuHashTableBase {
     }
   }
 
-  template <typename RowType, typename Ops, typename Compare, typename Init, typename Update>
-void __device__
-  updatingProbe(int32_t i, int32_t lane, bool isLaneActive, Ops& ops, Compare compare, Init init, Update update) {
+  template <
+      typename RowType,
+      typename Ops,
+      typename Compare,
+      typename Init,
+      typename Update>
+  void __device__ updatingProbe(
+      int32_t i,
+      int32_t lane,
+      bool isLaneActive,
+      Ops& ops,
+      Compare compare,
+      Init init,
+      Update update) {
     uint32_t laneMask = __ballot_sync(0xffffffff, isLaneActive);
     if (!isLaneActive) {
       return;
@@ -332,7 +343,15 @@ void __device__
       misses = __vcmpeq4(tags, 0);
       if (misses) {
         auto success = ops.insert(
-            this, partitionIdx(h), bucket, misses, tags, tagWord, i, toInsert, init);
+            this,
+            partitionIdx(h),
+            bucket,
+            misses,
+            tags,
+            tagWord,
+            i,
+            toInsert,
+            init);
         if (success == ProbeState::kRetry) {
           goto reprobe;
         }
@@ -354,13 +373,12 @@ void __device__
       if (lane == leader) {
         writable = ops.getExclusive(this, bucket, hit, hitIdx);
       }
-      update(this, hit, peers, leader,  lane); 
+      update(this, hit, peers, leader, lane);
       if (lane == leader) {
         ops.writeDone(writable);
       }
     }
   }
-
 
   template <typename RowType, typename Ops>
   void __device__

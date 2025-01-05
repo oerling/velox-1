@@ -199,10 +199,10 @@ TEST_F(CompileTest, reduce) {
   const char* text =
       "#include \"velox/experimental/wave/common/Scan.cuh\"\n"
       "namespace facebook::velox::wave {\n"
-    "template <typename T> __device__ __forceinline__ T add(T x, T y) {return x + y;}\n"
-    "__global__ void reduceKernel32(int32_t* ints, int32_t* result) {\n"
+      "template <typename T> __device__ __forceinline__ T add(T x, T y) {return x + y;}\n"
+      "__global__ void reduceKernel32(int32_t* ints, int32_t* result) {\n"
       "  using Reduce = WarpReduce<uint32_t>;\n"
-    "  result[threadIdx.x] = Reduce().reduce(ints[threadIdx.x], add<int32_t>);\n"
+      "  result[threadIdx.x] = Reduce().reduce(ints[threadIdx.x], add<int32_t>);\n"
       "__syncthreads();\n"
       "}\n"
       "}\n";
@@ -214,9 +214,7 @@ TEST_F(CompileTest, reduce) {
   WaveBufferPtr result = arena_->allocate<uint32_t>(32);
 
   KernelSpec spec = {
-      text,
-      {"facebook::velox::wave::reduceKernel32"},
-      "reduces.cu"};
+      text, {"facebook::velox::wave::reduceKernel32"}, "reduces.cu"};
   auto module = CompiledModule::create(spec);
   auto ptr1 = ints->as<int32_t>();
   auto ptr2 = result->as<int32_t>();

@@ -19,11 +19,10 @@
 #include <gflags/gflags.h>
 #include "velox/experimental/wave/common/Block.cuh"
 #include "velox/experimental/wave/common/CudaUtil.cuh"
+#include "velox/experimental/wave/exec/Accumulators.cuh"
 #include "velox/experimental/wave/exec/Aggregate.cuh"
 #include "velox/experimental/wave/exec/ExprKernelStream.h"
 #include "velox/experimental/wave/exec/WaveCore.cuh"
-#include "velox/experimental/wave/exec/ExprKernelStream.h"
-#include "velox/experimental/wave/exec/Accumulators.cuh"
 
 DEFINE_bool(kernel_gdb, false, "Run kernels sequentially for debugging");
 
@@ -216,7 +215,10 @@ void __global__ setupAggregationKernel(AggregationControl op) {
   memset(data->singleRow, 0, op.rowSize);
 }
 
-  void WaveKernelStream::setupAggregation(AggregationControl& op, int32_t entryPoint, CompiledKernel* kernel) {
+void WaveKernelStream::setupAggregation(
+    AggregationControl& op,
+    int32_t entryPoint,
+    CompiledKernel* kernel) {
   int32_t numBlocks = 1;
   int32_t numThreads = 1;
   if (op.oldBuckets) {
@@ -233,7 +235,7 @@ void __global__ setupAggregationKernel(AggregationControl op) {
     setupAggregationKernel<<<numBlocks, numThreads, 0, stream_->stream>>>(op);
   }
   wait();
-    std::cout << "Done rehash\n";
-  }
+  std::cout << "Done rehash\n";
+}
 
 } // namespace facebook::velox::wave

@@ -116,7 +116,7 @@ struct KernelStep {
     VELOX_NYI();
   }
 
-  virtual void generateContinue(CompileState& state){};
+  virtual void generateContinue(CompileState& state) {};
 
   virtual void visitReferences(
       std::function<void(AbstractOperand*)> visitor) const {};
@@ -124,8 +124,8 @@ struct KernelStep {
   virtual void visitResults(
       std::function<void(AbstractOperand*)> visitor) const {};
 
-  virtual void visitStates(
-      std::function<void(AbstractState*)> visitor) const {};
+  virtual void visitStates(std::function<void(AbstractState*)> visitor) const {
+  };
 
   bool references(AbstractOperand* op);
 

@@ -17,14 +17,12 @@
 
 #include "velox/experimental/wave/common/Scan.cuh"
 #include "velox/experimental/wave/exec/ExprKernel.h"
-#include "velox/experimental/wave/common/Scan.cuh"
 #include "velox/experimental/wave/vector/Operand.h"
 
 namespace facebook::velox::wave {
 
 template <typename T>
-inline T* __device__
-gridStatus(const WaveShared* shared, int32_t gridState) {
+inline T* __device__ gridStatus(const WaveShared* shared, int32_t gridState) {
   return reinterpret_cast<T*>(
       roundUp(
           reinterpret_cast<uintptr_t>(
@@ -39,8 +37,6 @@ inline T* __device__
 gridStatus(const WaveShared* shared, const InstructionStatus& status) {
   return gridStatus<T>(shared, status.gridState);
 }
-
-
 
 template <typename T>
 inline T* __device__ laneStatus(
@@ -137,11 +133,13 @@ void __device__ __forceinline__ loadValueOrNull(
     OperandIndex opIdx,
     int32_t blockBase,
     T& value,
-						uint32_t& nulls) {
+    uint32_t& nulls) {
   nulls = (nulls & ~(1U << (opIdx & 31))) |
-    (static_cast<uint32_t>(valueOrNull<kMayWrap>(operands, opIdx, blockBase, value)) << (opIdx & 31));
+      (static_cast<uint32_t>(
+           valueOrNull<kMayWrap>(operands, opIdx, blockBase, value))
+       << (opIdx & 31));
 }
-  
+
 template <bool kMayWrap, typename T>
 T __device__ __forceinline__
 nonNullOperand(Operand** operands, OperandIndex opIdx, int32_t blockBase) {
@@ -202,8 +200,11 @@ resultNull(Operand** operands, OperandIndex opIdx, int32_t blockBase) {
   op->nulls[blockBase + threadIdx.x] = kNull;
 }
 
-__device__ inline void
-setNull(Operand** operands, OperandIndex opIdx, int32_t blockBase, bool isNull) {
+__device__ inline void setNull(
+    Operand** operands,
+    OperandIndex opIdx,
+    int32_t blockBase,
+    bool isNull) {
   auto* op = operands[opIdx];
   op->nulls[blockBase + threadIdx.x] = isNull ? kNull : kNotNull;
 }
@@ -281,11 +282,11 @@ __device__ inline T& flatResult(Operand* op, int32_t blockBase) {
     shared->numRowsPerThread = params.numRowsPerThread;                        \
     shared->streamIdx = params.streamIdx;                                      \
     shared->isContinue = params.startPC != nullptr;                            \
-    if (shared->isContinue) {\
-      shared->startLabel = params.startPC[programIndex];\
-    }\
+    if (shared->isContinue) {                                                  \
+      shared->startLabel = params.startPC[programIndex];                       \
+    }                                                                          \
     shared->extraWraps = params.extraWraps;                                    \
-    shared->numExtraWraps = params.numExtraWraps;                               \
+    shared->numExtraWraps = params.numExtraWraps;                              \
     shared->hasContinue = false;                                               \
     shared->stop = false;                                                      \
   }                                                                            \
@@ -296,8 +297,8 @@ __device__ inline T& flatResult(Operand* op, int32_t blockBase) {
   if (!shared->isContinue) {                                                   \
     laneStatus =                                                               \
         threadIdx.x < shared->numRows ? ErrorCode::kOk : ErrorCode::kInactive; \
-  } else { \
-    laneStatus = shared->status->errors[threadIdx.x];	\
+  } else {                                                                     \
+    laneStatus = shared->status->errors[threadIdx.x];                          \
   }
 
 #define PROGRAM_EPILOGUE()                          \
