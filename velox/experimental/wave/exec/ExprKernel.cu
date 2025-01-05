@@ -19,7 +19,6 @@
 #include <gflags/gflags.h>
 #include "velox/experimental/wave/common/Block.cuh"
 #include "velox/experimental/wave/common/CudaUtil.cuh"
-#include "velox/experimental/wave/exec/Accumulators.cuh"
 #include "velox/experimental/wave/exec/Aggregate.cuh"
 #include "velox/experimental/wave/exec/ExprKernelStream.h"
 #include "velox/experimental/wave/exec/WaveCore.cuh"
@@ -227,7 +226,6 @@ void WaveKernelStream::setupAggregation(
     numBlocks = std::min<int64_t>(
         roundUp(op.numOldBuckets, kBlockSize) / kBlockSize, 640);
   }
-  std::cout << "Start rehash\n";
   if (kernel) {
     void* args = &op;
     kernel->launch(entryPoint, numBlocks, numThreads, 0, this, &args);
@@ -235,7 +233,6 @@ void WaveKernelStream::setupAggregation(
     setupAggregationKernel<<<numBlocks, numThreads, 0, stream_->stream>>>(op);
   }
   wait();
-  std::cout << "Done rehash\n";
 }
 
 } // namespace facebook::velox::wave

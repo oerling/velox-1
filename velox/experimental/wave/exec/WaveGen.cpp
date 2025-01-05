@@ -368,6 +368,7 @@ std::string CompileState::generateIsTrue(const AbstractOperand& op) {
     if (op.notNull || insideNullPropagating_) {
       generated_ << fmt::format(
           "bool flag{} = nonNullOperand<bool, {}>(operands, {}, blockBase)",
+          ord,
           mayWrap,
           ord);
     } else {
@@ -542,7 +543,6 @@ void CompileState::generateSkip() {
 }
 
 int32_t findLastWrap(const PipelineCandidate& candidate, int32_t kernelSeq) {
-  int32_t nthWrap = -1;
   for (int32_t k = kernelSeq - 1; k >= 0; --k) {
     if (candidate.steps[k].size() > 1) {
       continue;
@@ -777,7 +777,6 @@ void CompileState::makeLevel(std::vector<KernelBox>& level) {
     }
   }
 
-  int32_t sharedSize = 0;
   programs_.clear();
   KernelSpec spec;
   makeLevelText(pipelineIdx_, kernelSeq_, spec);

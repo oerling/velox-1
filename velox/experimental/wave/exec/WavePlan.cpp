@@ -455,9 +455,6 @@ bool CompileState::tryPlanOperator(
 
 bool CompileState::makeSegments(int32_t& operatorIndex) {
   auto operators = driver_.operators();
-  auto& nodes = driverFactory_.planNodes;
-
-  int32_t first = 0;
   int32_t nodeIndex = 0;
   RowTypePtr outputType;
   RowTypePtr inputType;
@@ -842,7 +839,6 @@ void PipelineCandidate::makeOperandSets(int32_t pipelineSeq) {
 void CompileState::markHostOutput() {
   VELOX_CHECK_NOT_NULL(resultOrder_);
   auto& candidate = selectedPipelines_.back();
-  auto& defined = segments_.back().topLevelDefined;
   CodePosition afterEnd(candidate.steps.size());
   for (auto i = 0; i < resultOrder_->size(); ++i) {
     auto* op = operandById((*resultOrder_)[i]);

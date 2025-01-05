@@ -274,6 +274,8 @@ class AggregateGenerator {
  public:
   AggregateGenerator(bool needSync) : updateNeedsSync_(needSync) {}
 
+  virtual ~AggregateGenerator() = default;
+  
   /// Adds includes that may be needed by 'probe' or 'update'. May be called
   /// several times and should add the uncludes only once.
   virtual void generateInclude(
