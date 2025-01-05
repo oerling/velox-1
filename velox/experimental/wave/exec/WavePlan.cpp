@@ -57,19 +57,22 @@ void TableScanStep::visitResults(
   }
 }
 
-void ValuesStep::visitResults(std::function<void(AbstractOperand*)> visitor) const {
+void ValuesStep::visitResults(
+    std::function<void(AbstractOperand*)> visitor) const {
   for (auto& out : results) {
     visitor(out);
   }
 }
 
-void Compute::visitReferences(std::function<void(AbstractOperand*)> visitor) const {
+void Compute::visitReferences(
+    std::function<void(AbstractOperand*)> visitor) const {
   for (auto& in : operand->inputs) {
     visitor(in);
   }
 }
 
-void Compute::visitResults(std::function<void(AbstractOperand*)> visitor) const {
+void Compute::visitResults(
+    std::function<void(AbstractOperand*)> visitor) const {
   visitor(operand);
 }
 
@@ -539,8 +542,8 @@ void recordReference(PipelineCandidate& candidate, AbstractOperand* op) {
 }
 
 void distinctLeavesInner(
-			 PipelineCandidate& candidate,
-			 AbstractOperand* op,
+    PipelineCandidate& candidate,
+    AbstractOperand* op,
     folly::F14FastSet<AbstractOperand*>& ops) {
   if (op->constant) {
     return;
@@ -554,7 +557,8 @@ void distinctLeavesInner(
   }
   auto flags = candidate.flags(op);
   if (!flags.definedIn.empty()) {
-    // If a subexpr is already placed, use the nullness of that instead of the nullness of its leaves.
+    // If a subexpr is already placed, use the nullness of that instead of the
+    // nullness of its leaves.
     ops.insert(op);
     return;
   }
@@ -564,8 +568,8 @@ void distinctLeavesInner(
 }
 
 std::vector<AbstractOperand*> distinctLeaves(
-					     PipelineCandidate& candidate,
-					     AbstractOperand* op) {
+    PipelineCandidate& candidate,
+    AbstractOperand* op) {
   std::vector<AbstractOperand*> result;
   folly::F14FastSet<AbstractOperand*> ops;
   distinctLeavesInner(candidate, op, ops);
@@ -576,8 +580,8 @@ std::vector<AbstractOperand*> distinctLeaves(
 }
 
 NullCheck* CompileState::addNullCheck(
-				      PipelineCandidate& candidate,
-				      AbstractOperand* op) {
+    PipelineCandidate& candidate,
+    AbstractOperand* op) {
   auto* check = makeStep<NullCheck>();
   check->operands = distinctLeaves(candidate, op);
   check->label = ++labelCounter_;

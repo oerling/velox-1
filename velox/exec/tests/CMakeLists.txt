@@ -74,6 +74,7 @@ add_executable(
   RoundRobinPartitionFunctionTest.cpp
   RowContainerTest.cpp
   RowNumberTest.cpp
+  ScaledScanControllerTest.cpp
   ScaleWriterLocalPartitionTest.cpp
   SortBufferTest.cpp
   SpillerTest.cpp
@@ -254,6 +255,21 @@ target_link_libraries(
   GTest::gtest
   GTest::gtest
   GTest::gtest_main)
+
+add_executable(velox_table_evolution_fuzzer_test TableEvolutionFuzzerTest.cpp)
+
+target_link_libraries(
+  velox_table_evolution_fuzzer_test
+  velox_exec_test_lib
+  velox_temp_path
+  velox_vector_fuzzer
+  GTest::gtest
+  GTest::gtest_main)
+
+add_test(
+  NAME velox_table_evolution_fuzzer_test
+  COMMAND velox_table_evolution_fuzzer_test
+  WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
 
 add_executable(velox_aggregation_runner_test AggregationRunnerTest.cpp)
 

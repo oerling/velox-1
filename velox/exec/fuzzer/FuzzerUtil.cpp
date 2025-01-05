@@ -22,6 +22,7 @@
 #include "velox/dwio/catalog/fbhive/FileUtils.h"
 #include "velox/dwio/dwrf/writer/Writer.h"
 #include "velox/expression/SignatureBinder.h"
+#include "velox/functions/prestosql/types/IPPrefixType.h"
 
 using namespace facebook::velox::dwio::catalog::fbhive;
 
@@ -145,6 +146,7 @@ std::shared_ptr<connector::ConnectorSplit> makeConnectorSplit(
       /*extraFileInfo=*/nullptr,
       /*serdeParameters=*/std::unordered_map<std::string, std::string>{},
       /*splitWeight=*/0,
+      /*cacheable=*/true,
       infoColumns);
 }
 
@@ -283,7 +285,7 @@ bool usesTypeName(
 // If 'type' is a RowType or contains RowTypes with empty field names, adds
 // default names to these fields in the RowTypes.
 TypePtr sanitize(const TypePtr& type) {
-  if (!type) {
+  if (!type || isIPPrefixType(type)) {
     return type;
   }
 

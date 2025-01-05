@@ -580,7 +580,7 @@ bool WaveStream::isNullable(const AbstractOperand& op) const {
   if (op.conditionalNonNull) {
     for (auto i : op.nullableIf) {
       if (operandNullable_[i]) {
-	return true;
+        return true;
       }
     }
     return false;

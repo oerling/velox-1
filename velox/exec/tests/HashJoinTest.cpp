@@ -532,7 +532,7 @@ class HashJoinBuilder {
     if (vectorSize != 0) {
       fuzzerOpts_.vectorSize = vectorSize;
       fuzzerOpts_.nullRatio = nullRatio;
-      VectorFuzzer fuzzer(fuzzerOpts_, &pool_);
+      VectorFuzzer fuzzer(fuzzerOpts_, &pool_, 42);
       for (int32_t i = 0; i < numVectors; ++i) {
         vectors.push_back(fuzzer.fuzzInputRow(rowType));
       }
@@ -6225,7 +6225,7 @@ DEBUG_ONLY_TEST_F(HashJoinTest, reclaimDuringOutputProcessing) {
           }
           testWaitFlag = false;
           testWait.notifyAll();
-          driverWait.await([&]() { return !testWaitFlag.load(); });
+          driverWait.await([&]() { return !driverWaitFlag.load(); });
         })));
 
     std::thread taskThread([&]() {

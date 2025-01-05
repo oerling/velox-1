@@ -369,6 +369,7 @@ std::shared_ptr<common::ScanSpec> makeScanSpec(
     const std::unordered_map<std::string, std::shared_ptr<HiveColumnHandle>>&
         infoColumns,
     const SpecialColumnNames& specialColumns,
+    bool disableStatsBasedFilterReorder,
     memory::MemoryPool* pool) {
   auto spec = std::make_shared<common::ScanSpec>("root");
   folly::F14FastMap<std::string, std::vector<const common::Subfield*>>
@@ -458,6 +459,9 @@ std::shared_ptr<common::ScanSpec> makeScanSpec(
     fieldSpec->addFilter(*pair.second);
   }
 
+  if (disableStatsBasedFilterReorder) {
+    spec->disableStatsBasedFilterReorder();
+  }
   return spec;
 }
 
@@ -534,30 +538,31 @@ std::unique_ptr<dwio::common::SerDeOptions> parseSerdeParameters(
 }
 
 void configureReaderOptions(
-    dwio::common::ReaderOptions& readerOptions,
     const std::shared_ptr<const HiveConfig>& hiveConfig,
     const ConnectorQueryCtx* connectorQueryCtx,
     const std::shared_ptr<const HiveTableHandle>& hiveTableHandle,
-    const std::shared_ptr<const HiveConnectorSplit>& hiveSplit) {
+    const std::shared_ptr<const HiveConnectorSplit>& hiveSplit,
+    dwio::common::ReaderOptions& readerOptions) {
   configureReaderOptions(
-      readerOptions,
       hiveConfig,
       connectorQueryCtx,
       hiveTableHandle->dataColumns(),
       hiveSplit,
-      hiveTableHandle->tableParameters());
+      hiveTableHandle->tableParameters(),
+      readerOptions);
 }
 
 void configureReaderOptions(
-    dwio::common::ReaderOptions& readerOptions,
     const std::shared_ptr<const HiveConfig>& hiveConfig,
     const ConnectorQueryCtx* connectorQueryCtx,
     const RowTypePtr& fileSchema,
     const std::shared_ptr<const HiveConnectorSplit>& hiveSplit,
-    const std::unordered_map<std::string, std::string>& tableParameters) {
+    const std::unordered_map<std::string, std::string>& tableParameters,
+    dwio::common::ReaderOptions& readerOptions) {
   auto sessionProperties = connectorQueryCtx->sessionProperties();
-  readerOptions.setLoadQuantum(hiveConfig->loadQuantum());
-  readerOptions.setMaxCoalesceBytes(hiveConfig->maxCoalescedBytes());
+  readerOptions.setLoadQuantum(hiveConfig->loadQuantum(sessionProperties));
+  readerOptions.setMaxCoalesceBytes(
+      hiveConfig->maxCoalescedBytes(sessionProperties));
   readerOptions.setMaxCoalesceDistance(
       hiveConfig->maxCoalescedDistanceBytes(sessionProperties));
   readerOptions.setFileColumnNamesReadAsLowerCase(
@@ -586,7 +591,7 @@ void configureReaderOptions(
   readerOptions.setFilePreloadThreshold(hiveConfig->filePreloadThreshold());
   readerOptions.setPrefetchRowGroups(hiveConfig->prefetchRowGroups());
   readerOptions.setNoCacheRetention(
-      hiveConfig->cacheNoRetention(sessionProperties));
+      hiveConfig->cacheNoRetention(sessionProperties) || !hiveSplit->cacheable);
   const auto& sessionTzName = connectorQueryCtx->sessionTimezone();
   if (!sessionTzName.empty()) {
     const auto timezone = tz::locateZone(sessionTzName);
@@ -975,7 +980,7 @@ void updateDWRFWriterOptions(
       std::dynamic_pointer_cast<dwrf::WriterOptions>(writerOptions);
   VELOX_CHECK_NOT_NULL(
       dwrfWriterOptions, "DWRF writer expected a DWRF WriterOptions object.");
-  std::map<std::string, std::string> configs;
+  std::map<std::string, std::string> configs = writerOptions->serdeParameters;
 
   if (writerOptions->compressionKind.has_value()) {
     configs.emplace(
@@ -1044,8 +1049,11 @@ void updateWriterOptionsFromHiveConfig(
     case dwio::common::FileFormat::NIMBLE:
       // No-op for now.
       break;
+    case dwio::common::FileFormat::TEXT:
+      // No-op for now.
+      break;
     default:
-      VELOX_UNSUPPORTED("{}", fileFormat);
+      VELOX_UNSUPPORTED("Unsupported file format: {}", fileFormat);
   }
 }
 
