@@ -17,8 +17,6 @@
 #include "velox/experimental/wave/exec/ToWave.h"
 
 namespace facebook::velox::wave {
-// static
-WaveRegistry CompileState::registry_;
 
 void WaveRegistry::registerFunction(
     const FunctionKey& key,

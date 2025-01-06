@@ -807,13 +807,6 @@ class CompileState {
   }
 
   AbstractOperand* fieldToOperand(common::Subfield& field, Scope* scope);
-  static WaveRegistry& registry() {
-    return registry_;
-  }
-
-  static AggregateRegistry& aggregateRegistry() {
-    return aggregateRegistry_;
-  }
 
   void functionReferenced(const AbstractOperand* op);
 
@@ -1097,8 +1090,8 @@ class CompileState {
   // All programs for the interpreted generation.
   std::vector<ProgramPtr> allPrograms_;
 
-  // Process wide counter for kernels.
-  static std::atomic<int32_t> kernelCounter_;
+  // Query wide counter for kernels.
+  int32_t kernelCounter_{0};
 
   Branches branches_;
   std::vector<Segment> segments_;
@@ -1159,9 +1152,6 @@ class CompileState {
   // Mutex serializing the background code generation after missing kernel
   // cache.
   std::mutex generateMutex_;
-
-  static WaveRegistry registry_;
-  static AggregateRegistry aggregateRegistry_;
 };
 
 void registerWaveFunctions();
@@ -1174,13 +1164,8 @@ int32_t cudaTypeAlign(const Type& type);
 
 int32_t cudaTypeSize(const Type& type);
 
-inline WaveRegistry& waveRegistry() {
-  return CompileState::registry();
-}
-
-inline AggregateRegistry& aggregateRegistry() {
-  return CompileState::aggregateRegistry();
-}
+WaveRegistry& waveRegistry();
+AggregateRegistry& aggregateRegistry();
 
 /// Registers adapter to add Wave operators to Drivers.
 void registerWave();

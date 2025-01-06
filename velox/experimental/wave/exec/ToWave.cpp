@@ -30,9 +30,16 @@ namespace facebook::velox::wave {
 
 using exec::Expr;
 
-//  static
-AggregateRegistry CompileState::aggregateRegistry_;
-
+  WaveRegistry& waveRegistry() {
+    static auto registry = std::make_unique<WaveRegistry>();
+    return *registry;
+  }
+  
+  AggregateRegistry& aggregateRegistry() {
+    static auto registry = std::make_unique<AggregateRegistry>();
+    return *registry;
+  }
+  
 CompileState::CompileState(
     const exec::DriverFactory& driverFactory,
     exec::Driver& driver)
@@ -44,9 +51,6 @@ CompileState::CompileState(
       operatorStates_(runtime_->states) {
   setDevice(getDevice());
 }
-
-//  static
-std::atomic<int32_t> CompileState::kernelCounter_{0};
 
 common::Subfield* CompileState::toSubfield(const Expr& expr) {
   std::string name = expr.toString();

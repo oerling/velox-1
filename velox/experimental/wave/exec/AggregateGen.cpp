@@ -276,7 +276,14 @@ void makeAggregateProbe(
          "    auto ret = gridStatus<AggregateReturn>(shared, "
       << probe.abstractAggregation->mutableInstructionStatus()->gridState
       << ");\n"
-         "    ret->numDistinct = table->numDistinct;\n"
+    // Must load 'state' and 'table' here because thread 0 might have
+    // been inactive on entry and have table uninited.
+      << fmt::format(
+		     "  state =\n"
+	 "    reinterpret_cast<DeviceAggregation*>(shared->states[{}]);\n",
+	 state.stateOrdinal(*probe.state))
+  <<   "  table = reinterpret_cast<GpuHashTable*>(state->table);\n"
+	 "    ret->numDistinct = table->numDistinct;\n"
          "  }\n"
          "  __syncthreads();\n"
          "  if (threadIdx.x == 0 && shared->isContinue) {\n"

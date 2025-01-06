@@ -413,7 +413,7 @@ void CompileState::functionReferenced(
     return;
   }
   functions_.insert(key);
-  auto definition = registry_.makeDefinition(key, resultType);
+  auto definition = waveRegistry().makeDefinition(key, resultType);
   if (!definition.includeLine.empty() &&
       includes_.find(definition.includeLine) == includes_.end()) {
     includes_.insert(definition.includeLine);

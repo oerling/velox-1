@@ -157,7 +157,7 @@ class SimpleAggregate : public AggregateGenerator {
 };
 
 namespace {
-bool temp = CompileState::aggregateRegistry().registerGenerator(
+bool temp = aggregateRegistry().registerGenerator(
     aggregate::kSum,
     std::make_unique<SimpleAggregate>("plus"));
 }
