@@ -25,8 +25,7 @@
 #include "velox/vector/BaseVector.h"
 
 namespace facebook::velox::wave {
-/// Abstract representation of Wave instructions. These translate to a device
-/// side ThreadBlockProgram right before execution.
+/// Abstract representation of Wave instructions. These translate to a kernel right before execution.
 
 template <typename T, typename U>
 T addBytes(U* p, int32_t bytes) {
@@ -272,106 +271,6 @@ struct AbstractInstruction {
   int32_t serial{-1};
 };
 
-struct AbstractReturn : public AbstractInstruction {
-  AbstractReturn() : AbstractInstruction(OpCode::kReturn) {}
-};
-
-struct AbstractFilter : public AbstractInstruction {
-  AbstractFilter(AbstractOperand* flags, AbstractOperand* indices)
-      : AbstractInstruction(OpCode::kFilter), flags(flags), indices(indices) {}
-
-  AbstractOperand* flags;
-  AbstractOperand* indices;
-
-  std::string toString() const override;
-};
-
-struct AbstractWrap : public AbstractInstruction {
-  AbstractWrap(AbstractOperand* indices, int32_t id)
-      : AbstractInstruction(OpCode::kWrap), indices(indices), id(id) {}
-  AbstractOperand* indices;
-  std::vector<AbstractOperand*> source;
-  std::vector<AbstractOperand*> target;
-
-  const int32_t id;
-  // Offset of array of affected operand indices in the literals section of the
-  // TB program. Filled in by first pass of making the TB program.
-  int32_t literalOffset{-1};
-
-  void addWrap(AbstractOperand* sourceOp, AbstractOperand* targetOp = nullptr) {
-    if (targetOp) {
-      targetOp->wrappedAt = id;
-    } else if (sourceOp->wrappedAt == AbstractOperand::kNoWrap) {
-      sourceOp->wrappedAt = id;
-    }
-
-    for (auto i = 0; i < source.size(); ++i) {
-      // If the operand has the same wrap as another one here, do nothing.
-      if (source[i]->wrappedAt == sourceOp->wrappedAt ||
-          (targetOp && target[i]->wrappedAt == targetOp->wrappedAt)) {
-        return;
-      }
-    }
-    source.push_back(sourceOp);
-    target.push_back(targetOp ? targetOp : sourceOp);
-  }
-
-  std::string toString() const override;
-};
-
-struct AbstractBinary : public AbstractInstruction {
-  AbstractBinary(
-      OpCode opCode,
-      AbstractOperand* left,
-      AbstractOperand* right,
-      AbstractOperand* result,
-      AbstractOperand* predicate = nullptr)
-      : AbstractInstruction(opCode),
-        left(left),
-        right(right),
-        result(result),
-        predicate(predicate) {}
-
-  AbstractOperand* left;
-  AbstractOperand* right;
-  AbstractOperand* result;
-  AbstractOperand* predicate;
-
-  bool isOutput(const AbstractOperand* op) const override {
-    return op == result;
-  }
-
-  std::string toString() const override;
-};
-
-struct AbstractLiteral : public AbstractInstruction {
-  AbstractLiteral(
-      const VectorPtr& constant,
-      AbstractOperand* result,
-      AbstractOperand* predicate)
-      : AbstractInstruction(OpCode::kLiteral),
-        constant(constant),
-        result(result),
-        predicate(predicate) {}
-  VectorPtr constant;
-  AbstractOperand* result;
-  AbstractOperand* predicate;
-};
-
-struct AbstractUnary : public AbstractInstruction {
-  AbstractUnary(
-      OpCode opcode,
-      AbstractOperand* input,
-      AbstractOperand* result,
-      AbstractOperand* predicate = nullptr)
-      : AbstractInstruction(opcode),
-        input(input),
-        result(result),
-        predicate(predicate) {}
-  AbstractOperand* input;
-  AbstractOperand* result;
-  AbstractOperand* predicate;
-};
 
 enum class StateKind : uint8_t { kGroupBy };
 
