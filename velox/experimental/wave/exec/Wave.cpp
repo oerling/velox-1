@@ -641,8 +641,7 @@ void WaveStream::exeLaunchInfo(
       VELOX_CHECK_NOT_NULL(indices);
     });
   }
-  info.numLocalOps =
-      exe.localOperands.size() + exe.outputOperands.size();
+  info.numLocalOps = exe.localOperands.size() + exe.outputOperands.size();
   info.totalBytes =
       // Pointer to Operand for input and local Operands and extra wraps.
       sizeof(void*) *
@@ -976,7 +975,7 @@ void WaveStream::makeAggregate(
     control.headSize = size;
     control.rowSize = inst.rowSize();
     reinterpret_cast<WaveKernelStream*>(stream.get())
-      ->setupAggregation(control, 0, nullptr);
+        ->setupAggregation(control, 0, nullptr);
   } else {
     const int32_t numPartitions = 1;
     int32_t size = sizeof(DeviceAggregation) + sizeof(GpuHashTableBase) +

@@ -24,9 +24,7 @@ class Project : public WaveOperator {
       CompileState& state,
       RowTypePtr outputType,
       std::vector<std::vector<ProgramPtr>> levels)
-      : WaveOperator(state, outputType, ""),
-        levels_(std::move(levels))
-         {}
+      : WaveOperator(state, outputType, ""), levels_(std::move(levels)) {}
 
   bool isStreaming() const override {
     if (!levels_.empty() && levels_[0].size() == 1 &&

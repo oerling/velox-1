@@ -25,7 +25,8 @@
 #include "velox/vector/BaseVector.h"
 
 namespace facebook::velox::wave {
-/// Abstract representation of Wave instructions. These translate to a kernel right before execution.
+/// Abstract representation of Wave instructions. These translate to a kernel
+/// right before execution.
 
 template <typename T, typename U>
 T addBytes(U* p, int32_t bytes) {
@@ -198,13 +199,10 @@ struct AdvanceResult {
   /// handle to a device hash table to rehash.
   void* reason{nullptr};
 };
-  /// Opcodes for abstract instructions that have a host side representation and status.
-enum class OpCode {
-  kAggregate,
-  kReadAggregate
-};
+/// Opcodes for abstract instructions that have a host side representation and
+/// status.
+enum class OpCode { kAggregate, kReadAggregate };
 
-  
 struct AbstractInstruction {
   AbstractInstruction(OpCode opCode, int32_t serial = -1)
       : opCode(opCode), serial(serial) {}

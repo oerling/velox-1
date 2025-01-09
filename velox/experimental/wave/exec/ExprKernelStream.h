@@ -30,7 +30,6 @@ class WaveKernelStream : public Stream {
       AggregationControl& op,
       int32_t entryPoint,
       CompiledKernel* kernel);
-
 };
 
 } // namespace facebook::velox::wave

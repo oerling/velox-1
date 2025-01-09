@@ -132,17 +132,17 @@ void Project::schedule(WaveStream& stream, int32_t maxRows) {
           {
             PrintTime c("expr");
             auto* kernel = exes[0]->programShared->kernel();
-	    VELOX_CHECK_NOT_NULL(kernel);
-	    auto numBranches = exes[0]->programShared->numBranches();
-              void* params = &control->params;
+            VELOX_CHECK_NOT_NULL(kernel);
+            auto numBranches = exes[0]->programShared->numBranches();
+            void* params = &control->params;
 
-              kernel->launch(
-                  0,
-                  blocksPerExe * numBranches,
-                  kBlockSize,
-                  control->sharedMemorySize,
-                  out,
-                  &params);
+            kernel->launch(
+                0,
+                blocksPerExe * numBranches,
+                kBlockSize,
+                control->sharedMemorySize,
+                out,
+                &params);
           }
           stream.checkExecutables();
         });

@@ -356,7 +356,7 @@ struct Executable {
 
   // Device memory if not owned by 'programShared_'.
   std::vector<WaveBufferPtr> deviceData;
-  
+
   // Operand ids for inputs.
   OperandSet inputOperands;
 

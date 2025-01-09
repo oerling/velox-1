@@ -38,7 +38,6 @@ AggregateRegistry& aggregateRegistry() {
   return *registry;
 }
 
-
 CompileState::CompileState(
     const exec::DriverFactory& driverFactory,
     exec::Driver& driver)
@@ -201,8 +200,8 @@ bool CompileState::compile() {
   std::vector<OperandId> resultOrder;
     outputType = makeOperators(operatorIndex, resultOrder);
     if (operators_.empty()) {
-    return false;
-  }
+      return false;
+    }
 
   for (auto& op : operators_) {
     op->finalize(*this);
