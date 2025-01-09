@@ -905,8 +905,7 @@ void CompileState::generatePrograms() {
     operators_.push_back(std::make_unique<Project>(
         *this,
         selectedPipelines_[pipelineIdx_].outputType,
-        std::move(levels),
-        nullptr));
+        std::move(levels)));
     currentCandidate_->setOutputIds(
         this, operators_.back().get(), start, currentCandidate_->steps.size());
   }

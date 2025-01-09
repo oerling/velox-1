@@ -131,8 +131,9 @@ void Project::schedule(WaveStream& stream, int32_t maxRows) {
           stream.checkExecutables();
           {
             PrintTime c("expr");
-            if (auto* kernel = exes[0]->programShared->kernel()) {
-              auto numBranches = exes[0]->programShared->numBranches();
+            auto* kernel = exes[0]->programShared->kernel();
+	    VELOX_CHECK_NOT_NULL(kernel);
+	    auto numBranches = exes[0]->programShared->numBranches();
               void* params = &control->params;
 
               kernel->launch(
@@ -142,13 +143,6 @@ void Project::schedule(WaveStream& stream, int32_t maxRows) {
                   control->sharedMemorySize,
                   out,
                   &params);
-            } else {
-              reinterpret_cast<WaveKernelStream*>(out)->call(
-                  out,
-                  exes.size() * blocksPerExe,
-                  control->sharedMemorySize,
-                  control->params);
-            }
           }
           stream.checkExecutables();
         });

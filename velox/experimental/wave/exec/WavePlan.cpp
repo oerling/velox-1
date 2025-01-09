@@ -15,7 +15,6 @@
  */
 
 #include "velox/exec/FilterProject.h"
-#include "velox/experimental/wave/exec/Aggregation.h"
 #include "velox/experimental/wave/exec/Project.h"
 #include "velox/experimental/wave/exec/TableScan.h"
 #include "velox/experimental/wave/exec/ToWave.h"

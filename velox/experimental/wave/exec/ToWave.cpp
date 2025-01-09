@@ -16,7 +16,6 @@
 
 #include "velox/experimental/wave/exec/ToWave.h"
 #include "velox/exec/FilterProject.h"
-#include "velox/experimental/wave/exec/Aggregation.h"
 #include "velox/experimental/wave/exec/Project.h"
 #include "velox/experimental/wave/exec/TableScan.h"
 #include "velox/experimental/wave/exec/Values.h"
@@ -186,12 +185,6 @@ bool CompileState::reserveMemory() {
   return true;
 }
 
-
-void CompileState::makeProject(int firstProgram, RowTypePtr outputType) {
-  auto levels = makeLevels(firstProgram);
-  operators_.push_back(
-      std::make_unique<Project>(*this, outputType, std::move(levels)));
-}
 
 
 bool CompileState::compile() {

@@ -224,46 +224,6 @@ __device__ inline T& flatResult(Operand* op, int32_t blockBase) {
   return flatResult<T>(&op, 0, blockBase);
 }
 
-#define PROGRAM_PREAMBLE(blockOffset)                                          \
-  extern __shared__ char sharedChar[];                                         \
-  WaveShared* shared = reinterpret_cast<WaveShared*>(sharedChar);              \
-  int programIndex = params.programIdx[blockIdx.x + blockOffset];              \
-  auto* program = params.programs[programIndex];                               \
-  if (threadIdx.x == 0) {                                                      \
-    shared->operands = params.operands[programIndex];                          \
-    shared->status = &params.status                                            \
-                          [blockIdx.x + blockOffset -                          \
-                           params.blockBase[blockIdx.x + blockOffset]];        \
-    shared->numRows = shared->status->numRows;                                 \
-    shared->blockBase = (blockIdx.x + blockOffset -                            \
-                         params.blockBase[blockIdx.x + blockOffset]) *         \
-        blockDim.x;                                                            \
-    shared->states = params.operatorStates[programIndex];                      \
-    shared->numBlocks = params.numBlocks;                                      \
-    shared->numRowsPerThread = params.numRowsPerThread;                        \
-    shared->streamIdx = params.streamIdx;                                      \
-    shared->isContinue = params.startPC != nullptr;                            \
-    shared->hasContinue = false;                                               \
-    shared->stop = false;                                                      \
-  }                                                                            \
-  __syncthreads();                                                             \
-  auto blockBase = shared->blockBase;                                          \
-  auto operands = shared->operands;                                            \
-  ErrorCode laneStatus;                                                        \
-  Instruction* instruction;                                                    \
-  if (!shared->isContinue) {                                                   \
-    instruction = program->instructions;                                       \
-    laneStatus =                                                               \
-        threadIdx.x < shared->numRows ? ErrorCode::kOk : ErrorCode::kInactive; \
-  } else {                                                                     \
-    auto start = params.startPC[programIndex];                                 \
-    if (start == ~0) {                                                         \
-      return; /* no continue in this program*/                                 \
-    }                                                                          \
-    instruction = program->instructions + start;                               \
-    laneStatus = shared->status->errors[threadIdx.x];                          \
-  }
-
 #define GENERATED_PREAMBLE(blockOffset)                                        \
   extern __shared__ char sharedChar[];                                         \
   WaveShared* shared = reinterpret_cast<WaveShared*>(sharedChar);              \

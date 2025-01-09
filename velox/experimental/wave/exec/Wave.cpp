@@ -641,9 +641,8 @@ void WaveStream::exeLaunchInfo(
       VELOX_CHECK_NOT_NULL(indices);
     });
   }
-  auto numLiteral = exe.literals ? exe.literals->size() : 0;
   info.numLocalOps =
-      exe.localOperands.size() + exe.outputOperands.size() + numLiteral;
+      exe.localOperands.size() + exe.outputOperands.size();
   info.totalBytes =
       // Pointer to Operand for input and local Operands and extra wraps.
       sizeof(void*) *
@@ -716,15 +715,6 @@ WaveStream::fillOperands(Executable& exe, char* start, ExeLaunchInfo& info) {
     ++operandBegin;
   });
 
-  auto numConstants = exe.literals ? exe.literals->size() : 0;
-  if (numConstants) {
-    memcpy(operandBegin, exe.literals->data(), numConstants * sizeof(Operand));
-    for (auto i = 0; i < numConstants; ++i) {
-      *operandPtrBegin = operandBegin;
-      ++operandPtrBegin;
-      ++operandBegin;
-    }
-  }
   info.firstExtraWrap = operandPtrBegin - initialOperandBegin;
   if (exe.programShared) {
     exe.programShared->extraWrap().forEach([&](int32_t id) {
@@ -844,7 +834,7 @@ LaunchControl* WaveStream::prepareProgramLaunch(
   control.params.blockBase = start;
   control.params.programIdx = start + numBlocks;
   control.params.operands = addBytes<Operand***>(
-      control.params.programs, exes.size() * sizeof(void*));
+      control.params.programIdx, numBlocks * sizeof(int32_t));
   control.params.startPC = isContinue
       ? addBytes<int32_t*>(control.params.operands, exes.size() * sizeof(void*))
       : nullptr;
@@ -871,7 +861,6 @@ LaunchControl* WaveStream::prepareProgramLaunch(
   VELOX_CHECK_EQ(0, reinterpret_cast<uintptr_t>(operandStart) & 7);
   int32_t fill = 0;
   for (auto i = 0; i < exes.size(); ++i) {
-    control.params.programs[i] = exes[i]->program;
     if (isContinue) {
       if (control.programInfo[i].advance.empty()) {
         control.params.startPC[i] = -1;
@@ -987,7 +976,7 @@ void WaveStream::makeAggregate(
     control.headSize = size;
     control.rowSize = inst.rowSize();
     reinterpret_cast<WaveKernelStream*>(stream.get())
-        ->setupAggregation(control);
+      ->setupAggregation(control, 0, nullptr);
   } else {
     const int32_t numPartitions = 1;
     int32_t size = sizeof(DeviceAggregation) + sizeof(GpuHashTableBase) +
@@ -1132,10 +1121,6 @@ void Program::getOperatorStates(WaveStream& stream, std::vector<void*>& ptrs) {
 
 bool Program::isSink() const {
   int32_t size = instructions_.size();
-  if (instructions_[size - 1]->opCode == OpCode::kReturn) {
-    VELOX_CHECK_GE(size, 2);
-    return instructions_[size - 2]->isSink();
-  }
   return instructions_[size - 1]->isSink();
 }
 
@@ -1182,7 +1167,6 @@ std::unique_ptr<Executable> Program::getExecutable(
   if (!exe) {
     exe = std::make_unique<Executable>();
     exe->programShared = shared_from_this();
-    exe->program = program_;
     for (auto& pair : input_) {
       exe->inputOperands.add(pair.first->id);
     }
@@ -1193,7 +1177,6 @@ std::unique_ptr<Executable> Program::getExecutable(
       exe->outputOperands.add(pair.first->id);
     }
 
-    exe->literals = &literalOperands_;
     exe->releaser = [](std::unique_ptr<Executable>& ptr) {
       auto program = ptr->programShared.get();
       ptr->reuse();
