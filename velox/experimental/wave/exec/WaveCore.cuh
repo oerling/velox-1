@@ -308,52 +308,6 @@ __device__ inline T& flatResult(Operand* op, int32_t blockBase) {
   shared->status->errors[threadIdx.x] = laneStatus; \
   __syncthreads();
 
-__device__ __forceinline__ void filterKernel(
-    const IFilter& filter,
-    Operand** operands,
-    int32_t blockBase,
-    WaveShared* shared,
-    ErrorCode& laneStatus) {
-  bool isPassed = laneActive(laneStatus);
-  if (isPassed) {
-    if (!operandOrNull(operands, filter.flags, blockBase, isPassed)) {
-      isPassed = false;
-    }
-  }
-  uint32_t bits = __ballot_sync(0xffffffff, isPassed);
-  if ((threadIdx.x & (kWarpThreads - 1)) == 0) {
-    reinterpret_cast<int32_t*>(&shared->data)[threadIdx.x / kWarpThreads] =
-        __popc(bits);
-  }
-  __syncthreads();
-  if (threadIdx.x < kWarpThreads) {
-    constexpr int32_t kNumWarps = kBlockSize / kWarpThreads;
-    uint32_t cnt = threadIdx.x < kNumWarps
-        ? reinterpret_cast<int32_t*>(&shared->data)[threadIdx.x]
-        : 0;
-    uint32_t sum;
-    using Scan = WarpScan<uint32_t, kBlockSize / kWarpThreads>;
-    Scan().exclusiveSum(cnt, sum);
-    if (threadIdx.x < kNumWarps) {
-      if (threadIdx.x == kNumWarps - 1) {
-        shared->numRows = cnt + sum;
-      }
-      reinterpret_cast<int32_t*>(&shared->data)[threadIdx.x] = sum;
-    }
-  }
-  __syncthreads();
-  if (bits & (1 << (threadIdx.x & (kWarpThreads - 1)))) {
-    auto* indices = reinterpret_cast<int32_t*>(operands[filter.indices]->base);
-    auto start = blockBase +
-        reinterpret_cast<int32_t*>(&shared->data)[threadIdx.x / kWarpThreads];
-    auto bit = start +
-        __popc(bits & lowMask<uint32_t>(threadIdx.x & (kWarpThreads - 1)));
-    indices[bit] = blockBase + threadIdx.x;
-  }
-  laneStatus =
-      threadIdx.x < shared->numRows ? ErrorCode::kOk : ErrorCode::kInactive;
-  __syncthreads();
-}
 
 __device__ __forceinline__ void filterKernel(
     bool flag,
@@ -395,56 +349,6 @@ __device__ __forceinline__ void filterKernel(
   }
   laneStatus =
       threadIdx.x < shared->numRows ? ErrorCode::kOk : ErrorCode::kInactive;
-  __syncthreads();
-}
-
-__device__ void __forceinline__ wrapKernel(
-    const IWrap& wrap,
-    Operand** operands,
-    int32_t blockBase,
-    int32_t numRows,
-    void* shared) {
-  Operand* op = operands[wrap.indices];
-  auto* filterIndices = reinterpret_cast<int32_t*>(op->base);
-  if (filterIndices[blockBase + numRows - 1] == numRows + blockBase - 1) {
-    // There is no cardinality change.
-    return;
-  }
-
-  struct WrapState {
-    int32_t* indices;
-  };
-
-  auto* state = reinterpret_cast<WrapState*>(shared);
-  bool rowActive = threadIdx.x < numRows;
-  for (auto column = 0; column < wrap.numColumns; ++column) {
-    if (threadIdx.x == 0) {
-      auto opIndex = wrap.columns[column];
-      auto* op = operands[opIndex];
-      int32_t** opIndices = &op->indices[blockBase / kBlockSize];
-      if (!*opIndices) {
-        *opIndices = filterIndices + blockBase;
-        state->indices = nullptr;
-      } else {
-        state->indices = *opIndices;
-      }
-    }
-    __syncthreads();
-    // Every thread sees the decision on thred 0 above.
-    if (!state->indices) {
-      continue;
-    }
-    int32_t newIndex;
-    if (rowActive) {
-      newIndex =
-          state->indices[filterIndices[blockBase + threadIdx.x] - blockBase];
-    }
-    // All threads hit this.
-    __syncthreads();
-    if (rowActive) {
-      state->indices[threadIdx.x] = newIndex;
-    }
-  }
   __syncthreads();
 }
 
@@ -500,33 +404,6 @@ __device__ void __forceinline__ wrapKernel(
     }
   }
   __syncthreads();
-}
-
-template <typename T>
-__device__ inline T opFunc_kPlus(T left, T right) {
-  return left + right;
-}
-
-template <typename T, typename OpFunc>
-__device__ __forceinline__ void binaryOpKernel(
-    OpFunc func,
-    IBinary& instr,
-    Operand** operands,
-    int32_t blockBase,
-    void* shared,
-    ErrorCode& laneStatus) {
-  if (!laneActive(laneStatus)) {
-    return;
-  }
-  T left;
-  T right;
-  if (operandOrNull(operands, instr.left, blockBase, left) &&
-      operandOrNull(operands, instr.right, blockBase, right)) {
-    flatResult<decltype(func(left, right))>(operands, instr.result, blockBase) =
-        func(left, right);
-  } else {
-    resultNull(operands, instr.result, blockBase);
-  }
 }
 
 template <typename T>

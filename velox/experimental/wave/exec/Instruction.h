@@ -198,7 +198,13 @@ struct AdvanceResult {
   /// handle to a device hash table to rehash.
   void* reason{nullptr};
 };
+  /// Opcodes for abstract instructions that have a host side representation and status.
+enum class OpCode {
+  kAggregate,
+  kReadAggregate
+};
 
+  
 struct AbstractInstruction {
   AbstractInstruction(OpCode opCode, int32_t serial = -1)
       : opCode(opCode), serial(serial) {}
@@ -333,12 +339,6 @@ struct AbstractField {
 };
 
 struct AbstractAggInstruction {
-  AggregateOp op;
-
-  // Offset of null indicator byte on accumulator row.
-  int32_t nullOffset;
-  // Offset of accumulator on accumulator row. Aligned at 8.
-  int32_t accumulatorOffset;
   std::vector<AbstractOperand*> args;
   AbstractOperand* result;
 };
@@ -383,12 +383,6 @@ struct AbstractAggregation : public AbstractOperator {
   std::vector<AbstractField> keyFields;
   std::vector<AbstractAggInstruction> aggregates;
   int32_t stateId;
-  int32_t literalOffset;
-
-  int32_t literalBytes{0};
-  // The data area of the physical instruction. Copied by the reading
-  // instruction.
-  IUpdateAgg* literal{nullptr};
 
   /// Prepare up to this many result reading streams.
   int16_t maxReadStreams{1};

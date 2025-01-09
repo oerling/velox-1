@@ -354,6 +354,9 @@ struct Executable {
   // transfer or column read.
   std::shared_ptr<Program> programShared;
 
+  // Device memory if not owned by 'programShared_'.
+  std::vector<WaveBufferPtr> deviceData;
+  
   // Operand ids for inputs.
   OperandSet inputOperands;
 

@@ -17,7 +17,6 @@
 #pragma once
 
 #include "velox/exec/Operator.h"
-#include "velox/experimental/wave/exec/AggregateFunctionRegistry.h"
 #include "velox/experimental/wave/exec/WaveDriver.h"
 #include "velox/experimental/wave/exec/WaveOperator.h"
 #include "velox/experimental/wave/exec/WaveRegistry.h"
@@ -891,29 +890,15 @@ class CompileState {
 
   bool reserveMemory();
 
-  // Adds 'instruction' to the suitable program and records the result
-  // of the instruction to the right program. The set of programs
-  // 'instruction's operands depend is in 'programs'. If 'instruction'
-  // depends on all immutable programs, start a new one. If all
-  // dependences are from the same open program, add the instruction
-  // to that. If Only one of the programs is mutable, ad the
-  // instruction to that.
-  void addInstruction(
-      std::unique_ptr<Instruction> instruction,
-      const AbstractOperand* result,
-      const std::vector<Program*>& inputs);
-
-  void setConditionalNullable(AbstractBinary& binary);
+  // If 'op' is an expression and its inputs may be non-null, then
+  // op's conditional nullability is set. If its inputs are known not
+  // null at launch time then 'op's vector will not need null flags.
+  void setConditionalNullable(AbstractOperand* op);
 
   // Adds 'op->id' to 'nullableIf' if not already there.
   void addNullableIf(
       const AbstractOperand* op,
       std::vector<OperandId>& nullableIf);
-
-  Program* programOf(AbstractOperand* op, bool create = true);
-
-  const std::shared_ptr<aggregation::AggregateFunctionRegistry>&
-  aggregateFunctionRegistry();
 
   template <typename T>
   T* makeStep() {
@@ -1057,8 +1042,6 @@ class CompileState {
   std::vector<InstructionStatus*> allStatuses_;
 
   int32_t nthContinuable_{0};
-  std::shared_ptr<aggregation::AggregateFunctionRegistry>
-      aggregateFunctionRegistry_;
   folly::F14FastMap<std::string, std::shared_ptr<exec::Expr>> fieldToExpr_;
 
   // Distinct includes pulled in by functions called from the generated kernel.

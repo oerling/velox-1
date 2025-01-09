@@ -24,10 +24,6 @@
 
 namespace facebook::velox::wave {
 
-AbstractWrap* Project::findWrap() const {
-  return filterWrap_;
-}
-
 std::vector<AdvanceResult> Project::canAdvance(WaveStream& stream) {
   auto& controls = stream.launchControls(id_);
   if (controls.empty()) {
@@ -163,7 +159,6 @@ void Project::schedule(WaveStream& stream, int32_t maxRows) {
 void Project::finalize(CompileState& state) {
   for (auto& level : levels_) {
     for (auto& program : level) {
-      program->prepareForDevice(state.arena());
       for (auto& pair : program->output()) {
         if (true /*isProjected(id)*/) {
           computedSet_.add(pair.first->id);

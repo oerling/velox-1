@@ -160,14 +160,21 @@ void CompileState::addNullableIf(
   }
 }
 
-void CompileState::setConditionalNullable(AbstractBinary& binary) {
-  if (maybeNotNull(binary.left) && maybeNotNull(binary.right)) {
-    binary.result->conditionalNonNull = true;
-    addNullableIf(binary.left, binary.result->nullableIf);
-    addNullableIf(binary.right, binary.result->nullableIf);
+void CompileState::setConditionalNullable(AbstractOperand* op) {
+  if (op->inputs.empty()) {
+    return;
+  }
+  bool allMaybeNonNull = false;
+  for (auto* input : op->inputs) {
+    if (!maybeNotNull(input)) {
+      return;
+    }
+  }
+  op->conditionalNonNull = true;
+  for (auto* input : op->inputs) {
+    addNullableIf(input, op->nullableIf);
   }
 }
-
 
 bool CompileState::reserveMemory() {
   if (arena_) {

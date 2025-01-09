@@ -127,7 +127,6 @@ struct KernelParams {
   // branch to follow for the TB at blockIdx.x.
   int32_t* programIdx{nullptr};
 
-
   /// The label where to start the execution. If nullptr,
   /// 0. Otherwise subscript is programIdx. The active lanes are given
   /// in 'blockStatus'. Used when restarting program at a specific

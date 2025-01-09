@@ -17,7 +17,6 @@
 #pragma once
 
 #include "velox/core/PlanNode.h"
-#include "velox/experimental/wave/exec/AggregateFunctionRegistry.h"
 #include "velox/experimental/wave/exec/AggregationInstructions.h"
 #include "velox/experimental/wave/exec/WaveOperator.h"
 

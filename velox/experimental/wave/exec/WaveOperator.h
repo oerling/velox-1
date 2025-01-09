@@ -67,14 +67,6 @@ class WaveOperator {
     VELOX_FAIL("Override for blocking operator");
   }
 
-  // If 'this' is a cardinality change (filter, join, unnest...),
-  // returns the instruction where the projected through columns get
-  // wrapped. Columns that need to be accessed through the change are
-  // added here.
-  virtual AbstractWrap* findWrap() const {
-    return nullptr;
-  }
-
   /// Returns how many rows of output are available from 'this'. Source
   /// operators and cardinality increasing operators must return a correct
   /// answer if they are ready to produce data. Others should return 0.

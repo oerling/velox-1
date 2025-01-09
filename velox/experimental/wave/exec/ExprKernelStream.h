@@ -21,9 +21,6 @@
 
 namespace facebook::velox::wave {
 
-/// Returns the shared memory size for instruction for kBlockSize.
-int32_t instructionSharedMemory(const Instruction& instruction);
-
 /// A stream for invoking ExprKernel.
 class WaveKernelStream : public Stream {
  public:
