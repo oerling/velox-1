@@ -353,19 +353,19 @@ TEST_P(TableScanTest, scanDictAgg) {
       ROW({"c0", "c1", "c2", "c3", "rn"},
           {BIGINT(), BIGINT(), BIGINT(), BIGINT(), BIGINT()});
   auto splits = makeData(type, numBatches_, batchSize_, false, [](RowVectorPtr row) {
-								 int32_t card = 50;
+								 int32_t card = 1200;
 								 for (auto i = 0; i < row->childrenSize(); ++i) {
 								   auto child = row->childAt(i);
 								   for (auto j = card; j < child->size(); ++j) {
 								     child->copy(child.get(), j, (j * 121) % card, 1);
 								   }
-								   card *= 2;
+								   card *= 1.3;
 								 }
 							       });
 
   auto plan =
       PlanBuilder(pool_.get())
-          .tableScan(type, {"c0 < 950000000"})
+    .tableScan(type, {"c0 < 950000000", "c1 < 900000000"})
           .project(
               {"c0",
                "c1 + 1 as c1",
