@@ -446,7 +446,23 @@ bool CompileState::tryPlanOperator(
           *toSubfield(output->nameOf(i + read->keys.size())), &topScope_);
     }
     segments_.back().steps.push_back(read);
-  } else {
+  } else if (name == "HashBuild") {
+    auto* node = dynamic_cast<const core::HashJoinNode*>(
+        driverFactory_.planNodes[nodeIndex].get());
+    VELOX_CHECK_NOT_NULL(node);
+    addSegment(BoundaryType::kAggregation, node, nullptr);
+    auto step = makeStep<AggregateProbe>();
+    auto* state = newState(StateKind::kGroupBy, node->id(), "");
+  } else if (name == "HashProbe") {
+    auto* node = dynamic_cast<const core::HashJoinNode*>(
+        driverFactory_.planNodes[nodeIndex].get());
+    VELOX_CHECK_NOT_NULL(node);
+    addSegment(BoundaryType::kAggregation, node, nullptr);
+    auto step = makeStep<AggregateProbe>();
+    auto* state = newState(StateKind::kGroupBy, node->id(), "");
+
+
+    {
     return false;
   }
   return true;
