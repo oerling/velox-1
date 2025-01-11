@@ -219,6 +219,10 @@ std::unique_ptr<Column> Encoder<T>::toColumn() {
       column->alphabet = dictStrings_.toColumn();
       return column;
     } else {
+      column->encoding = kDict;
+      column->values = encodeInts(
+				  indices_, 0, static_cast<int32_t>(distincts_.size() - 1), pool_);
+      column->bitWidth = bitWidth(distincts_.size() - 1);
       column->alphabet = directInts(dictInts_, min_, max_, pool_);
     }
   }

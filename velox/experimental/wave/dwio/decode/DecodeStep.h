@@ -37,7 +37,8 @@ enum class WaveFilterKind : uint8_t {
   kBigintRange,
   kDoubleRange,
   kFloatRange,
-  kBigintValues
+    kBigintValues,
+    kDictFilter
 };
 
 struct alignas(16) WaveFilterBase {
@@ -97,6 +98,17 @@ enum class DecodeStep {
   kUnsupported,
 };
 
+enum class DictMode {
+		     // Decoded values are returned as is
+		     kNone,
+		     // Decoded values are indices into a dictionary.
+		     kDict,
+		     // Decoded values are indices into a dictionary and into a bitmap where 1 means filter passed.
+		     kDictFilter,
+		     // Decoded values are raw values and the filter result is to be stored into a filter pass bitmap.
+		     kRecordFilter
+};
+ 
 class ColumnReader;
 
 /// Describes a decoding loop's input and result disposition.
@@ -118,6 +130,9 @@ struct alignas(16) GpuDecode {
 
   NullMode nullMode;
 
+  /// Specifies use of dictionary.
+  DictMode dictMode{DictMode::kNone};
+  
   /// Number of chunks (e.g. Parquet pages). If > 1, different rows row ranges
   /// have different encodings. The first chunk's encoding is in 'data'. The
   /// next chunk's encoding is in the next GpuDecode's 'data'. Each chunk has
@@ -197,6 +212,9 @@ struct alignas(16) GpuDecode {
   /// Result array. nullptr if filter only.
   void* result{nullptr};
 
+  // Bitmap of filter pass flags indexed by dictionary index. Filled in if 'dictMode' is kDictFilter or kRecordFilter.
+  uint32_t* filterBitmap{nullptr};
+  
   struct Trivial {
     // Type of the input and result data.
     WaveTypeKind dataType;

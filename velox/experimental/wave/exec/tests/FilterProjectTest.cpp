@@ -133,3 +133,20 @@ TEST_F(FilterProjectTest, filterProject) {
       std::vector<std::string>{"c0", "c1", "c1 + c0 as s", "c2", "c3"},
       vectors);
 }
+
+TEST_F(FilterProjectTest, ifs) {
+  std::vector<RowVectorPtr> vectors;
+  for (int32_t i = 0; i < 1; ++i) {
+    auto vector = std::dynamic_pointer_cast<RowVector>(
+        BatchMaker::createBatch(rowType_, 100, *pool_));
+    makeNotNull(vector, 1000000000);
+    vectors.push_back(vector);
+  }
+  createDuckDbTable(vectors);
+
+  assertFilterProject(
+      "if (c0 < 400000000, c0 < 100000000, if (c0 < 700000000, c0 + c0 < 900000000, c0 + -200000000 < 600000000))",
+      std::vector<std::string>{"c0", "if (c1 > 300000000, c0, c0 + 100000000)", "c1 + c0 as s", "c2", "c3"},
+      vectors);
+}
+

@@ -57,7 +57,8 @@ BufferId TestFormatData::stageNulls(
 }
 
 void TestFormatData::griddize(
-    int32_t blockSize,
+			      ColumnOp& op,
+			      int32_t blockSize,
     int32_t numBlocks,
     ResultStaging& deviceStaging,
     ResultStaging& resultStaging,
@@ -69,6 +70,17 @@ void TestFormatData::griddize(
     return;
   }
   griddized_ = true;
+  if (column->encoding == kDict) {
+    auto alphabet = column->alphabet.get();
+    VELOX_CHECK_NOT_NULL(alphabet);
+    VELOX_CHECK_NULL(alphabet->alphabet);
+    VELOX_CHECK_NULL(alphabet->nulls);
+    Staging staging(alphabet->values->as<char>(), alphabet->values->size());
+    auto rawAlphabetId =splitStaging->add(staging);
+    auto decodedId = deviceStaging->reserve(alphabet->numValues * kindSize(alphabet->kind));
+    auto filter = op.reader->scanSpec()->filter();
+    auto filterId = filter ? deviceStaging->reserve(bits::roundUp(alphabet->numValues, 32) / 32) 
+  }
   if (!column_->nulls) {
     return;
   }

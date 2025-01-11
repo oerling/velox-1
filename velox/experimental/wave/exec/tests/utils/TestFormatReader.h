@@ -47,7 +47,8 @@ class TestFormatData : public wave::FormatData {
   }
 
   void griddize(
-      int32_t blockSize,
+		ColumnOp& op,
+		int32_t blockSize,
       int32_t numBlocks,
       ResultStaging& deviceStaging,
       ResultStaging& resultStaging,
@@ -80,6 +81,9 @@ class TestFormatData : public wave::FormatData {
   int32_t numStaged_{0};
   // The device side data area start, set after the staged transfer is done.
   void* deviceBuffer_{nullptr};
+  void* alphabet_{nullptr};
+  void* decodedAlphabet_{nullptr};
+  uint32_t filterBitmap_;
 };
 
 class TestFormatParams : public wave::FormatParams {

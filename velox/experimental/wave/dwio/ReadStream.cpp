@@ -108,12 +108,16 @@ void ReadStream::makeGrid(Stream* stream) {
   auto blockSize = FLAGS_wave_reader_rows_per_tb;
   auto numBlocks = bits::roundUp(total, blockSize) / blockSize;
   auto& children = reader_->children();
+  int32_t nthFilter = 0;
+  int32_t nthNonFilter = 0;
   for (auto i = 0; i < children.size(); ++i) {
     auto* child = reader_->children()[i];
     // TODO:  Must  propagate the incoming nulls from outer to inner structs.
     // griddize must decode nulls if present.
+    auto* op = child->scanSpec()->filter() ? &filters_[nthFilter++] : &ops[nthNonFilter++];
     child->formatData()->griddize(
-        blockSize,
+				  *op,
+				  blockSize,
         numBlocks,
         deviceStaging_,
         resultStaging_,
@@ -362,9 +366,9 @@ void ReadStream::launch(
         bool needSync = false;
         bool griddizedHere = false;
         if (!readStream->inited_) {
+          readStream->makeOps();
           readStream->makeGrid(stream);
           griddizedHere = true;
-          readStream->makeOps();
           readStream->inited_ = true;
         }
         readStream->prepareRead();
