@@ -476,7 +476,15 @@ Segment& CompileState::addSegment(
     step->keys.push_back(
 			 fieldToOperand(*toSubfield(keys(i)), &topScope_));
   }
+  segments_.back().steps.push_back(step);
   addSegment(BoundaryType::kJoin, node, node->outputType());
+  auto filter = node->filter();
+  if (filter) {
+    auto expr =makeStep<JoinFilter>();
+    segments_.back().steps.push_back(expr);
+  }
+  auto expand = makeStep<joinExpand>();
+  
  } else {
     {
     return false;
