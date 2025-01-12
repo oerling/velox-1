@@ -276,7 +276,7 @@ struct AbstractInstruction {
 };
 
 
-enum class StateKind : uint8_t { kGroupBy };
+  enum class StateKind : uint8_t { kGroupBy, kHashBuild };
 
 /// Represents a shared state operated on by instructions. For example, a
 /// join/group by table, destination buffers for repartition etc. Device side
@@ -407,6 +407,34 @@ struct AbstractReadAggregation : public AbstractOperator {
   int32_t literalOffset{0};
 };
 
+struct AbstractHashBuild : public AbstractOperator {
+    AdvanceResult canAdvance(
+      WaveStream& stream,
+      LaunchControl* control,
+      OperatorState* state,
+      int32_t instructionIdx) const override;
+    
+  void reserveState(InstructionStatus& state) override;
+
+
+};
+  
+struct AbstractHashProe : public AbstractOperator {
+    AdvanceResult canAdvance(
+      WaveStream& stream,
+      LaunchControl* control,
+      OperatorState* state,
+      int32_t instructionIdx) const override;
+    
+  void reserveState(InstructionStatus& state) override;
+
+
+};
+
+
+};
+
+  
 /// Serializes 'row' to characters interpretable on device.
 std::string rowTypeString(const RowTypePtr& row);
 

@@ -80,6 +80,10 @@ class HashProbe : public Operator {
     return input_ != nullptr;
   }
 
+  const std::vector<IdentityProjection>& tableOutputProjections() const {
+    return tableOutputProjections_;
+  }
+  
  private:
   // Indicates if the join type includes misses from the left side in the
   // output.

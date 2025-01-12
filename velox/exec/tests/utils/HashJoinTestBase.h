@@ -515,6 +515,11 @@ class HashJoinBuilder {
     }
   }
 
+  HashJoinBuilder& dependentType(const TypePtr& type) {
+    dependentType_ = type;
+    return *this;
+  }
+  
  private:
   // NOTE: if 'vectorSize' is 0, then 'numVectors' is ignored and the function
   // returns a single empty batch.
@@ -565,7 +570,7 @@ class HashJoinBuilder {
     names.push_back(fmt::format("{}data", namePrefix));
 
     std::vector<TypePtr> types = keyTypes;
-    types.push_back(VARCHAR());
+    types.push_back(dependentType_);
 
     return ROW(std::move(names), std::move(types));
   }
@@ -774,6 +779,7 @@ class HashJoinBuilder {
   std::unordered_map<std::string, std::string> configs_;
 
   JoinResultsVerifier testVerifier_{};
+  TypePtr dependentType_{VARCHAR()};
 };
 
 class HashJoinTestBase : public HiveConnectorTestBase {
