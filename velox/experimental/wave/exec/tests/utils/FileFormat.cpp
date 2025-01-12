@@ -223,7 +223,14 @@ std::unique_ptr<Column> Encoder<T>::toColumn() {
       column->values = encodeInts(
 				  indices_, 0, static_cast<int32_t>(distincts_.size() - 1), pool_);
       column->bitWidth = bitWidth(distincts_.size() - 1);
-      column->alphabet = directInts(dictInts_, min_, max_, pool_);
+      auto alphabet = directInts(dictInts_, min_, max_, pool_);
+      alphabet->kind = kind_;
+      alphabet->bitWidth = rangeBitWidth(max_, min_);
+      alphabet->baseline = baseValue(min_);
+      column->baseline = 0;
+      column->alphabet = std::move(alphabet);
+      column->numValues = count_;
+      return column;
     }
   }
   column->values = encodeInts(direct_, min_, max_, pool_);

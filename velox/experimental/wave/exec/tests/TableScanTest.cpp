@@ -352,10 +352,13 @@ TEST_P(TableScanTest, scanDictAgg) {
   auto type =
       ROW({"c0", "c1", "c2", "c3", "rn"},
           {BIGINT(), BIGINT(), BIGINT(), BIGINT(), BIGINT()});
-  auto splits = makeData(type, numBatches_, batchSize_, false, [](RowVectorPtr row) {
-								 int32_t card = 1200;
+  auto splits = makeData(type, numBatches_, batchSize_, false, [&](RowVectorPtr row) {
+								 makeRange(row, 10000000000, false);
+									 int32_t card = 1200;
 								 for (auto i = 0; i < row->childrenSize(); ++i) {
 								   auto child = row->childAt(i);
+								   for (auto i = 0; i < card; ++i) {
+								   }
 								   for (auto j = card; j < child->size(); ++j) {
 								     child->copy(child.get(), j, (j * 121) % card, 1);
 								   }

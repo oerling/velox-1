@@ -54,25 +54,22 @@ struct alignas(16) GpuDecodeParams {
 
 void __global__ __launch_bounds__(1024)
     decodeKernel(GpuDecodeParams inlineParams) {
-  __shared__ int32_t numSteps;
+  __shared__ GpuDecodeParams* params;
+  __shared__ int32_t programStart;
+  __shared__ int32_t programEnd;
   __shared__ GpuDecode* ops;
   if (threadIdx.x == 0) {
-    auto* params = inlineParams.external ? inlineParams.external : &inlineParams;
-    auto programStart = blockIdx.x == 0 ? 0 : params->ends[blockIdx.x - 1];
-    auto programEnd = params->ends[blockIdx.x];
+    params = inlineParams.external ? inlineParams.external : &inlineParams;
+    programStart = blockIdx.x == 0 ? 0 : params->ends[blockIdx.x - 1];
+    programEnd = params->ends[blockIdx.x];
     ops =
-        reinterpret_cast<GpuDecode*>(&params->ends[0] + roundUp(gridDim.x, 4) + programStart);
-    numSteps = programEnd - programStart;
+        reinterpret_cast<GpuDecode*>(&params->ends[0] + roundUp(gridDim.x, 4));
   }
   __syncthreads();
-  do {
-    detail::decodeSwitch<kBlockSize>(*ops);
-      if (threadIdx.x == 0) {
-	++ops;
-	--numSteps;
-      }
-      __syncthreads();
-  } while (numSteps);
+  for (auto i = programStart; i < programEnd; ++i) {
+    detail::decodeSwitch<kBlockSize>(ops[i]);
+  }
+  __syncthreads();
 }
 
 void launchDecode(

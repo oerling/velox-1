@@ -322,6 +322,15 @@ class FormatData {
       WaveTypeKind columnKind,
       int32_t blockIdx);
 
+  std::unique_ptr<GpuDecode> makeAlphabetStep(
+							  ColumnOp& op,
+							  ResultStaging& deviceStaging,
+							  SplitStaging& splitStaging,
+							  ReadStream& stream,
+							  WaveTypeKind columnKind,
+							  int32_t blockIdx,
+							  int32_t numRows);
+  
   // Staging id for nulls.
   int32_t nullsStagingId_{SplitStaging::kNoStaging};
   // Id for nulls buffer. The nulls buffer has no address at time of scheduling

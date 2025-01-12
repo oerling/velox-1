@@ -73,7 +73,7 @@ BufferId TestFormatData::stageNulls(
     BufferId filterId = kNoBufferId;
     if (filter) {
       // bitmap made of uint32_t, one bit per dictionary entry.
-      filterId = deviceStaging.reserve(bits::roundUp(alphabet->numValues, 32) / 4);
+      filterId = deviceStaging.reserve(bits::roundUp(alphabet->numValues, 32) / 8);
       deviceStaging.registerPointer(filterId, &filterBitmap_, true);
     }
     BufferId resultId = kNoBufferId;
@@ -87,31 +87,31 @@ BufferId TestFormatData::stageNulls(
         rowsPerBlock, numRows - (blockIdx * rowsPerBlock));
     auto columnKind = static_cast<WaveTypeKind>(column_->kind);
     auto valueSize = waveTypeKindSize(columnKind);
-    auto step = makeStep(
+    auto step = makeAlphabetStep(
         op,
-        nullptr,
         deviceStaging,
         splitStaging,
         stream,
         static_cast<WaveTypeKind>(alphabet->kind),
-        blockIdx);
+        blockIdx,
+	numRows);
     step->resultNulls = nullptr;
     step->result = reinterpret_cast<void*>(valueSize * blockIdx * rowsPerBlock);
     if (blockIdx == 0) {
       decodedId = deviceStaging.reserve(valueSize * numRows);
       deviceStaging.registerPointer(decodedId, &decodedAlphabet_, true);
     }
-    resultStaging.registerPointer(decodedId, &step->result, false);
+    deviceStaging.registerPointer(decodedId, &step->result, false);
     step->dictMode = filter ? DictMode::kRecordFilter : DictMode::kNone;
     if (filter) {
       deviceStaging.registerPointer(filterId, &step->filterBitmap, true);
     }
-    if (column_->encoding == Encoding::kFlat) {
+    if (alphabet->encoding == Encoding::kFlat) {
       step->encoding = DecodeStep::kDictionaryOnBitpack;
       // Just bit pack, no dictionary.
       step->data.dictionaryOnBitpack.alphabet = nullptr;
-      step->data.dictionaryOnBitpack.baseline = column_->baseline;
-      step->data.dictionaryOnBitpack.bitWidth = column_->bitWidth;
+      step->data.dictionaryOnBitpack.baseline = alphabet->baseline;
+      step->data.dictionaryOnBitpack.bitWidth = alphabet->bitWidth;
       step->data.dictionaryOnBitpack.indices = nullptr;
       step->data.dictionaryOnBitpack.begin = 0;
       splitStaging.registerPointer(

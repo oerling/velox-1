@@ -1177,6 +1177,7 @@ __device__ void decodeSwitch(GpuDecode& op) {
 
 template <int kBlockSize>
 __global__ void decodeGlobal(GpuDecode* plan) {
+#if 0
   constexpr int32_t kOpSize = 1 + sizeof(GpuDecode) / 8;
   __shared__ int64_t shared[kOpSize + 8];
   if (threadIdx.x == 0) {
@@ -1187,7 +1188,10 @@ __global__ void decodeGlobal(GpuDecode* plan) {
     ((GpuDecode*)&shared)->temp = (int32_t*)&shared[kOpSize];
   }
   __syncthreads();
-  detail::decodeSwitch<kBlockSize>(*(GpuDecode*)&shared);
+#endif
+  if (plan[blockIdx.x].step == DecodeStep::kSelective64) {
+  detail::decodeSwitch<kBlockSize>(plan[blockIdx.x] /* *(GpuDecode*)&shared */);
+  }
   __syncthreads();
 }
 
