@@ -193,6 +193,7 @@ AbstractOperand* CompileState::switchOperand(
     clauseScope.operandMap.clear();
   }
   auto result = newOperand(switchExpr.type(), "r");
+  result->expr = &switchExpr;
   result->inputs = std::move(opInputs);
   scope->operandMap[Value(&switchExpr)] = result;
   return result;

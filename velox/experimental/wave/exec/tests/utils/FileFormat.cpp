@@ -205,6 +205,10 @@ std::unique_ptr<Column> Encoder<T>::toColumn() {
   auto column = std::make_unique<Column>();
   column->kind = kind_;
   if (!nulls_.empty()) {
+    auto n = bits::nwords(count_);
+    if (nulls_.size() < n) {
+      nulls_.resize(n, bits::kNotNull64);
+    }
     column->nulls = encodeBits(nulls_.data(), count_, pool_);
   }
   if (distincts_.size() <= 1) {

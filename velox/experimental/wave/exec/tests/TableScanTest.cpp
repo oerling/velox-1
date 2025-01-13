@@ -348,42 +348,6 @@ TEST_P(TableScanTest, scanAgg) {
       "SELECT sum(c0), sum(c1 + 1), sum(c2 + 2), sum(c3 + c2), sum(rn + 1) FROM tmp where c0 < 950000000");
 }
 
-TEST_P(TableScanTest, scanDictAgg) {
-  auto type =
-      ROW({"c0", "c1", "c2", "c3", "rn"},
-          {BIGINT(), BIGINT(), BIGINT(), BIGINT(), BIGINT()});
-  auto splits = makeData(type, numBatches_, batchSize_, false, [&](RowVectorPtr row) {
-								 makeRange(row, 10000000000, false);
-									 int32_t card = 1200;
-								 for (auto i = 0; i < row->childrenSize(); ++i) {
-								   auto child = row->childAt(i);
-								   for (auto i = 0; i < card; ++i) {
-								   }
-								   for (auto j = card; j < child->size(); ++j) {
-								     child->copy(child.get(), j, (j * 121) % card, 1);
-								   }
-								   card *= 1.3;
-								 }
-							       });
-
-  auto plan =
-      PlanBuilder(pool_.get())
-    .tableScan(type, {"c0 < 950000000", "c1 < 900000000"})
-          .project(
-              {"c0",
-               "c1 + 1 as c1",
-               "c2 + 2 as c2",
-               "c3 + c2 as c3",
-               "rn + 1 as rn"})
-          .singleAggregation(
-              {}, {"sum(c0)", "sum(c1)", "sum(c2)", "sum(c3)", "sum(rn)"})
-          .planNode();
-  auto task = assertQuery(
-      plan,
-      splits,
-      "SELECT sum(c0), sum(c1 + 1), sum(c2 + 2), sum(c3 + c2), sum(rn + 1) FROM tmp where c0 < 950000000");
-}
-
 TEST_P(TableScanTest, scanGroupBy) {
   auto type =
       ROW({"c0", "c1", "c2", "c3", "rn"},

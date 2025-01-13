@@ -49,7 +49,7 @@ BufferId TestFormatData::stageNulls(
   Staging staging(
       nulls->values->as<char>(),
       bits::nwords(column_->numValues) * sizeof(uint64_t),
-      column_->region);
+      nulls->region);
   nullsBufferId_ = splitStaging.add(staging);
   nullsStagingId_ = splitStaging.id();
   splitStaging.registerPointer(nullsBufferId_, &grid_.nulls, true);
@@ -104,7 +104,9 @@ BufferId TestFormatData::stageNulls(
     deviceStaging.registerPointer(decodedId, &step->result, false);
     step->dictMode = filter ? DictMode::kRecordFilter : DictMode::kNone;
     if (filter) {
-      deviceStaging.registerPointer(filterId, &step->filterBitmap, true);
+      // Init to byte where the bitmap for this block begins.
+      step->filterBitmap = reinterpret_cast<uint32_t*>(blockIdx * rowsPerBlock / 8);
+      deviceStaging.registerPointer(filterId, &step->filterBitmap, false);
     }
     if (alphabet->encoding == Encoding::kFlat) {
       step->encoding = DecodeStep::kDictionaryOnBitpack;
@@ -241,7 +243,7 @@ void TestFormatData::startOp(
               reinterpret_cast<uint64_t*>(deviceBuffer_);
         }
 	if (column_->encoding == kDict && op.reader->scanSpec().filter()) {
-	    step->filterKind = WaveFilterKind::kDictFilter; 
+	    step->dictMode = DictMode::kDictFilter; 
 	    step->filterBitmap = filterBitmap_;
 	  }
       
