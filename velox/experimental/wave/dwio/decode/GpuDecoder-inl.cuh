@@ -654,17 +654,20 @@ __device__ void makeResult(
     int32_t* temp) {
   auto base = nthLoop * kBlockSize;
   if (kHasFilter && op->dictMode == DictMode::kRecordFilter && warpInRange(op->baseRow + base + threadIdx.x, op->maxRow)  ) {
-      if (filterPass) {
-	reinterpret_cast<T*>(op->result)[base + threadIdx.x] = data;
-      }
+    if (op->filterBitmap == nullptr) {
+      // Never executes. But is needed for -O3 not to die by bad compilation.
+      printf("bad %d", __LINE__); //assert(false);
+    }
       uint32_t filters = __ballot_sync(0xffffffff, filterPass);
-      if ((threadIdx.x & 31) == 0) {
-	op->filterBitmap[(threadIdx.x + base) / 32] = filters;
+    if ((threadIdx.x & 31) == 0) {
+      op->filterBitmap[(threadIdx.x + base) / 32] = filters;
+    }
+    if (filterPass) {
+	reinterpret_cast<T*>(op->result)[base + threadIdx.x] = data;
       }
       return;
     }
 
-    auto* alphabet = reinterpret_cast<const T*>(op->data.dictionaryOnBitpack.alphabet);
     constexpr bool kAlwaysDict = !std::is_same_v<T, IndexT>;
     if (kHasFilter) {
     int32_t resultIdx = exclusiveSum<int16_t, kBlockSize>(
@@ -678,6 +681,7 @@ __device__ void makeResult(
       }
     }
     if (filterPass) {
+      auto* alphabet = reinterpret_cast<const T*>(op->data.dictionaryOnBitpack.alphabet);
       resultIdx += base;
       op->resultRows[resultIdx] = row;
       if (kHasResult) {
@@ -693,6 +697,7 @@ __device__ void makeResult(
       // last row.
       return;
     }
+    auto* alphabet = reinterpret_cast<const T*>(op->data.dictionaryOnBitpack.alphabet);
     auto resultIdx = base + threadIdx.x;
     reinterpret_cast<T*>(op->result)[resultIdx] = (kAlwaysDict || alphabet) ? alphabet[data] : data;
     if (kHasNulls && op->resultNulls) {
@@ -1182,6 +1187,8 @@ __device__ void decodeSwitch(GpuDecode& op) {
   }
 }
 
+#define PARAM_SMEM
+  
 template <int kBlockSize>
 __global__ void decodeGlobal(GpuDecode* plan) {
 #ifdef PARAM_SMEM
