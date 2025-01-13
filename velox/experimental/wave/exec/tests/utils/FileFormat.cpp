@@ -225,7 +225,7 @@ std::unique_ptr<Column> Encoder<T>::toColumn() {
     } else {
       column->encoding = kDict;
       column->values = encodeInts(
-				  indices_, 0, static_cast<int32_t>(distincts_.size() - 1), pool_);
+          indices_, 0, static_cast<int32_t>(distincts_.size() - 1), pool_);
       column->bitWidth = bitWidth(distincts_.size() - 1);
       auto alphabet = directInts(dictInts_, min_, max_, pool_);
       alphabet->kind = kind_;

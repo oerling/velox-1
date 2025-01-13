@@ -146,7 +146,11 @@ TEST_F(FilterProjectTest, ifs) {
 
   assertFilterProject(
       "if (c0 < 400000000, c0 < 100000000, if (c0 < 700000000, c0 + c0 < 900000000, c0 + -200000000 < 600000000))",
-      std::vector<std::string>{"c0", "if (c1 > 300000000, c0, c0 + 100000000)", "c1 + c0 as s", "c2", "c3"},
+      std::vector<std::string>{
+          "c0",
+          "if (c1 > 300000000, c0, c0 + 100000000)",
+          "c1 + c0 as s",
+          "c2",
+          "c3"},
       vectors);
 }
-

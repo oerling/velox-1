@@ -114,10 +114,11 @@ void ReadStream::makeGrid(Stream* stream) {
     auto* child = reader_->children()[i];
     // TODO:  Must  propagate the incoming nulls from outer to inner structs.
     // griddize must decode nulls if present.
-    auto* op = child->scanSpec().filter() ? &filters_[nthFilter++] : &ops_[nthNonFilter++];
+    auto* op = child->scanSpec().filter() ? &filters_[nthFilter++]
+                                          : &ops_[nthNonFilter++];
     child->formatData()->griddize(
-				  *op,
-				  blockSize,
+        *op,
+        blockSize,
         numBlocks,
         deviceStaging_,
         resultStaging_,

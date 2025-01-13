@@ -47,8 +47,8 @@ class TestFormatData : public wave::FormatData {
   }
 
   void griddize(
-		ColumnOp& op,
-		int32_t blockSize,
+      ColumnOp& op,
+      int32_t blockSize,
       int32_t numBlocks,
       ResultStaging& deviceStaging,
       ResultStaging& resultStaging,
@@ -71,14 +71,14 @@ class TestFormatData : public wave::FormatData {
   int32_t stageNulls(ResultStaging& deviceStaging, SplitStaging& splitStaging);
 
   void decodeAlphabet(
-			      ColumnOp& op,
-			      Column* alphabet,
-			      ResultStaging& deviceStaging,
-    ResultStaging& resultStaging,
-    SplitStaging& staging,
-    DecodePrograms& programs,
-			      ReadStream& stream);
-  
+      ColumnOp& op,
+      Column* alphabet,
+      ResultStaging& deviceStaging,
+      ResultStaging& resultStaging,
+      SplitStaging& staging,
+      DecodePrograms& programs,
+      ReadStream& stream);
+
   const OperandId operand_;
 
   int32_t totalRows_{0};

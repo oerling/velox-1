@@ -41,24 +41,28 @@ void registerWaveFunctions() {
   registerBinaryNumeric(
       "minus", FunctionMetadata(), "$R$ minus($1$ x, $2$ y) { return x - y; }");
   registerBinaryNumeric(
-      "multiply", FunctionMetadata(), "$R$ multiply($1$ x, $2$ y) { return x * y; }");
+      "multiply",
+      FunctionMetadata(),
+      "$R$ multiply($1$ x, $2$ y) { return x * y; }");
   registerBinaryNumeric(
-      "divide", FunctionMetadata(), "$R$ divide($1$ x, $2$ y) { return x / y; }");
+      "divide",
+      FunctionMetadata(),
+      "$R$ divide($1$ x, $2$ y) { return x / y; }");
   registerBinaryNumeric(
       "mod", FunctionMetadata(), "$R$ mod($1$ x, $2$ y) { return x % y; }");
 
   registerBinaryNumeric(
       "lt", FunctionMetadata(), "bool lt($1$ x, $2$ y) { return x < y; }");
   registerBinaryNumeric(
-			"lte", FunctionMetadata(), "bool lte($1$ x, $2$ y) { return x <= y; }");
+      "lte", FunctionMetadata(), "bool lte($1$ x, $2$ y) { return x <= y; }");
   registerBinaryNumeric(
-			"eq", FunctionMetadata(), "bool eq($1$ x, $2$ y) { return x == y; }");
+      "eq", FunctionMetadata(), "bool eq($1$ x, $2$ y) { return x == y; }");
   registerBinaryNumeric(
-			"neq", FunctionMetadata(), "bool neq($1$ x, $2$ y) { return x != y; }");
+      "neq", FunctionMetadata(), "bool neq($1$ x, $2$ y) { return x != y; }");
   registerBinaryNumeric(
-			"gt", FunctionMetadata(), "bool gt($1$ x, $2$ y) { return x > y; }");
+      "gt", FunctionMetadata(), "bool gt($1$ x, $2$ y) { return x > y; }");
   registerBinaryNumeric(
-			"gte", FunctionMetadata(), "bool gte($1$ x, $2$ y) { return x >= y; }");
+      "gte", FunctionMetadata(), "bool gte($1$ x, $2$ y) { return x >= y; }");
 }
 
 } // namespace facebook::velox::wave

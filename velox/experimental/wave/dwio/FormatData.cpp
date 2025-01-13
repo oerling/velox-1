@@ -307,11 +307,10 @@ std::unique_ptr<GpuDecode> FormatData::makeAlphabetStep(
     int32_t numRows) {
   auto rowsPerBlock = FLAGS_wave_reader_rows_per_tb;
   auto maxRowsPerThread = (rowsPerBlock / kBlockSize);
-  int32_t numBlocks =
-      bits::roundUp(numRows, rowsPerBlock) / rowsPerBlock;
+  int32_t numBlocks = bits::roundUp(numRows, rowsPerBlock) / rowsPerBlock;
 
-  auto rowsInBlock = std::min<int32_t>(
-      rowsPerBlock, numRows - (blockIdx * rowsPerBlock));
+  auto rowsInBlock =
+      std::min<int32_t>(rowsPerBlock, numRows - (blockIdx * rowsPerBlock));
 
   auto step = std::make_unique<GpuDecode>();
   step->numRowsPerThread = bits::roundUp(rowsInBlock, kBlockSize) / kBlockSize;
@@ -330,6 +329,4 @@ std::unique_ptr<GpuDecode> FormatData::makeAlphabetStep(
   return step;
 }
 
-
-  
 } // namespace facebook::velox::wave

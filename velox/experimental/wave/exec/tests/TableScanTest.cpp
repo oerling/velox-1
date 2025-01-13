@@ -137,7 +137,7 @@ class TableScanTest : public virtual HiveConnectorTestBase,
       bool notNull = true,
       int32_t begin = -1,
       int32_t end = -1,
-		 int64_t roundTo = 1) {
+      int64_t roundTo = 1) {
     if (begin == -1) {
       begin = 0;
     }
@@ -166,7 +166,7 @@ class TableScanTest : public virtual HiveConnectorTestBase,
       numbers->set(i, counter++);
     }
   }
-  
+
   wave::test::SplitVector makeTable(
       const std::string& name,
       std::vector<RowVectorPtr>& rows) {
@@ -365,23 +365,24 @@ TEST_P(TableScanTest, scanDictAgg) {
   auto type =
       ROW({"c0", "c1", "c2", "c3", "rn"},
           {BIGINT(), BIGINT(), BIGINT(), BIGINT(), BIGINT()});
-  auto splits = makeData(type, numBatches_, batchSize_, false, [&](RowVectorPtr row) {
-								 makeRange(row, 10000000000, true);
-									 int32_t card = 1200;
-								 for (auto i = 0; i < row->childrenSize(); ++i) {
-								   auto child = row->childAt(i);
-								   for (auto i = 0; i < card; ++i) {
-								   }
-								   for (auto j = card; j < child->size(); ++j) {
-								     child->copy(child.get(), j, (j * 121) % card, 1);
-								   }
-								   card *= 1.3;
-								 }
-							       });
+  auto splits =
+      makeData(type, numBatches_, batchSize_, false, [&](RowVectorPtr row) {
+        makeRange(row, 10000000000, true);
+        int32_t card = 1200;
+        for (auto i = 0; i < row->childrenSize(); ++i) {
+          auto child = row->childAt(i);
+          for (auto i = 0; i < card; ++i) {
+          }
+          for (auto j = card; j < child->size(); ++j) {
+            child->copy(child.get(), j, (j * 121) % card, 1);
+          }
+          card *= 1.3;
+        }
+      });
 
   auto plan =
       PlanBuilder(pool_.get())
-    .tableScan(type, {"c0 < 9500000000", "c1 < 9000000000"})
+          .tableScan(type, {"c0 < 9500000000", "c1 < 9000000000"})
           .project(
               {"c0",
                "c1 + 1 as c1",
@@ -402,25 +403,25 @@ TEST_P(TableScanTest, scanDict) {
       ROW({"c0", "c1", "c2", "c3", "rn"},
           {BIGINT(), BIGINT(), BIGINT(), BIGINT(), BIGINT()});
   int32_t counter = 0;
-  auto splits = makeData(type, numBatches_, batchSize_, false, [&](RowVectorPtr row) {
-								 makeRange(row, 10000000000, false);
-									 int32_t card = 1200;
-									 makeNumbers(row->childAt(row->childrenSize() - 1), counter);
-									 for (auto i = 0; i < row->childrenSize() - 1; ++i) {
-								   auto child = row->childAt(i);
-								   for (auto i = 0; i < card; ++i) {
-								   }
-								   for (auto j = card; j < child->size(); ++j) {
-								     child->copy(child.get(), j, (j * 121) % card, 1);
-								   }
-								   card *= 1.3;
-								 }
-							       });
+  auto splits =
+      makeData(type, numBatches_, batchSize_, false, [&](RowVectorPtr row) {
+        makeRange(row, 10000000000, false);
+        int32_t card = 1200;
+        makeNumbers(row->childAt(row->childrenSize() - 1), counter);
+        for (auto i = 0; i < row->childrenSize() - 1; ++i) {
+          auto child = row->childAt(i);
+          for (auto i = 0; i < card; ++i) {
+          }
+          for (auto j = card; j < child->size(); ++j) {
+            child->copy(child.get(), j, (j * 121) % card, 1);
+          }
+          card *= 1.3;
+        }
+      });
 
-  auto plan =
-      PlanBuilder(pool_.get())
-    .tableScan(type, {"c0 < 9500000000", "c1 < 9000000000"})
-    .planNode();
+  auto plan = PlanBuilder(pool_.get())
+                  .tableScan(type, {"c0 < 9500000000", "c1 < 9000000000"})
+                  .planNode();
   auto task = assertQuery(
       plan,
       splits,

@@ -291,8 +291,8 @@ class FormatData {
   /// access capable, e.g. non-null bit packings. this is a also a
   /// no-op if there are less than 'blockSize' rows left.
   virtual void griddize(
-			ColumnOp& op,
-			int32_t blockSize,
+      ColumnOp& op,
+      int32_t blockSize,
       int32_t numBlocks,
       ResultStaging& deviceStaging,
       ResultStaging& resultStaging,
@@ -323,14 +323,14 @@ class FormatData {
       int32_t blockIdx);
 
   std::unique_ptr<GpuDecode> makeAlphabetStep(
-							  ColumnOp& op,
-							  ResultStaging& deviceStaging,
-							  SplitStaging& splitStaging,
-							  ReadStream& stream,
-							  WaveTypeKind columnKind,
-							  int32_t blockIdx,
-							  int32_t numRows);
-  
+      ColumnOp& op,
+      ResultStaging& deviceStaging,
+      SplitStaging& splitStaging,
+      ReadStream& stream,
+      WaveTypeKind columnKind,
+      int32_t blockIdx,
+      int32_t numRows);
+
   // Staging id for nulls.
   int32_t nullsStagingId_{SplitStaging::kNoStaging};
   // Id for nulls buffer. The nulls buffer has no address at time of scheduling
