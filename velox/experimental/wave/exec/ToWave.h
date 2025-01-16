@@ -375,6 +375,8 @@ struct AggregateUpdate : public KernelStep {
 
   void generateMain(CompileState& state, int32_t syncLabel) override;
 
+  std::string toString() const override;
+
   std::string name;
   core::AggregationNode::Step step;
   /// The original argument types. Identifies the aggregate.
@@ -447,6 +449,8 @@ struct AggregateProbe : public KernelStep {
   std::unique_ptr<AbstractInstruction> addInstruction(
       CompileState& state) override;
 
+  std::string toString() const override;
+  
   AbstractState* state;
   std::vector<AbstractOperand*> keys;
 

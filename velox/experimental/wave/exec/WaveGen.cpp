@@ -355,7 +355,8 @@ std::string CompileState::generateIsTrue(const AbstractOperand& op) {
   auto ord = ordinal(op);
   if (op.inRegister) {
     if (op.notNull) {
-      generated_ << fmt::format("bool flag{} = r{}", ord, ord);
+      declareNamed(fmt::format("bool flag{};\n", ord));
+      generated_ << fmt::format("flag{} = r{}", ord, ord);
     } else {
       generated_ << fmt::format(
           "bool flag{} = r{} && !isRegisterNull(nulls{}, {});\n",
@@ -368,6 +369,7 @@ std::string CompileState::generateIsTrue(const AbstractOperand& op) {
     auto& flags = this->flags(op);
     bool mayWrap = this->mayWrap(!flags.wrappedAt);
     if (op.notNull || insideNullPropagating_) {
+      declareNamed(fmt::format("bool flag{};\n", ord));
       generated_ << fmt::format(
           "bool flag{} = nonNullOperand<bool, {}>(operands, {}, blockBase)",
           ord,
@@ -512,6 +514,27 @@ std::unique_ptr<AbstractInstruction> AggregateProbe::addInstruction(
   return agg;
 }
 
+std::string AggregateProbe::toString() const {
+  std::stringstream out;
+  out << "aggregateProbe {";
+  for (auto& key : keys) {
+    out << key->toString() << " ";
+  }
+  out << "}\n";
+  if (rows) {
+    out << "  row=" << rows->toString() << "\n";
+  }
+  if (!inlinedUpdates.empty()) {
+    out << "  inlined {\n";
+    for (auto& update : inlinedUpdates) {
+      out << update->toString();
+    }
+    out << "\n}\n";
+  }
+
+  return out.str();
+}
+  
 void AggregateUpdate::generateMain(CompileState& state, int32_t /*syncLabel*/) {
 }
 
@@ -521,6 +544,17 @@ void ReadAggregation::generateMain(CompileState& state, int32_t /*syncLabel*/) {
   makeReadAggregation(state, *this);
 }
 
+std::string AggregateUpdate::toString() const {
+  std::stringstream out;
+  out << name << "(";
+  for (auto& arg : args) {
+    out << arg->toString() << " ";
+  }
+  out << ")\n";
+  return out.str();
+}
+
+  
 std::unique_ptr<AbstractInstruction> ReadAggregation::addInstruction(
     CompileState& state) {
   return std::make_unique<AbstractReadAggregation>(
