@@ -38,7 +38,8 @@ PrintTime::PrintTime(const char* title)
 
 PrintTime::~PrintTime() {
   if (FLAGS_wave_print_time) {
-    std::cout << title_ << "=" << getCurrentTimeMicro() - start_ << std::endl;
+    std::cout << title_ << "=" << getCurrentTimeMicro() - start_ << " "
+	      << comment_ << std::endl;
   }
 }
 

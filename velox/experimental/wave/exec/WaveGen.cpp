@@ -20,8 +20,10 @@
 #include "velox/experimental/wave/exec/ToWave.h"
 #include "velox/experimental/wave/exec/Values.h"
 
-namespace facebook::velox::wave {
+  DECLARE_bool(wave_print_time);
 
+namespace facebook::velox::wave {
+  
 thread_local int32_t CompileState::pipelineIdx_;
 thread_local int32_t CompileState::kernelSeq_;
 thread_local int32_t CompileState::branchIdx_;
@@ -780,10 +782,16 @@ void CompileState::makeLevel(std::vector<KernelBox>& level) {
   programs_.clear();
   KernelSpec spec;
   makeLevelText(pipelineIdx_, kernelSeq_, spec);
-  auto kernel = CompiledKernel::getKernel(spec.code, [spec]() { return spec; });
-  // Sync with compilation to serialize compile order.
-  kernel->info(0);
-
+  std::unique_ptr<CompiledKernel> kernel;
+  {
+    PrintTime t("compile");
+    kernel = CompiledKernel::getKernel(spec.code, [spec]() { return spec; });
+    // Sync with compilation to serialize compile order.
+    auto info = kernel->info(0);
+    if (FLAGS_wave_print_time) {
+      t.setComment(info.toString());
+    }
+  }
   auto& params = currentCandidate_->levelParams[kernelSeq_];
   auto numBranches = currentCandidate_->steps[kernelSeq_].size();
   OperandSet extraWrap;

@@ -226,6 +226,7 @@ struct KernelInfo {
   int32_t numRegs{0};
   int32_t maxThreadsPerBlock;
   int32_t sharedMemory{0};
+  int32_t localMemory{0};
   int32_t maxOccupancy0{0};
   int32_t maxOccupancy32{0};
 
@@ -246,6 +247,9 @@ struct KernelSpec {
 /// CompiledKernel.
 struct CompiledModule {
   virtual ~CompiledModule() = default;
+
+  static void initialize();
+
   /// Compiles 'spec' and returns the result.
   static std::shared_ptr<CompiledModule> create(const KernelSpec& spec);
 
@@ -271,6 +275,9 @@ class CompiledKernel {
  public:
   virtual ~CompiledKernel() = default;
 
+  /// Initializes on demand compilation. Used for separating init time from measured compile times.
+  static void initialize();
+  
   /// Returns the compiled kernel for 'key'. Starts background compilation if
   /// 'key's kernel is not compiled. Returns lightweight reference to state
   /// owned by compiled kernel cache.

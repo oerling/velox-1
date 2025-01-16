@@ -173,25 +173,19 @@ class TableScanTest : public virtual HiveConnectorTestBase,
     wave::test::Table::dropTable(name);
     return wave::test::Table::defineTable(name, rows)->splits();
   }
-
-  std::shared_ptr<Task> assertQuery(
-      const PlanNodePtr& plan,
-      const wave::test::SplitVector& splits,
-      const std::string& duckDbSql) {
-    return OperatorTestBase::assertQuery(plan, splits, duckDbSql);
-  }
-
+  
   std::shared_ptr<Task> assertQuery(
       const PlanNodePtr& plan,
       const wave::test::SplitVector& splits,
       const std::string& duckDbSql,
-      const int32_t numPrefetchSplit) {
+      const int32_t numPrefetchSplit = 1) {
     return AssertQueryBuilder(plan, duckDbQueryRunner_)
         .config(
             core::QueryConfig::kMaxSplitPreloadPerDriver,
             std::to_string(numPrefetchSplit))
         .splits(splits)
-        .assertResults(duckDbSql);
+      .maxDrivers(2)
+      .assertResults(duckDbSql);
   }
 
   core::PlanNodePtr tableScanNode(const RowTypePtr& outputType) {

@@ -40,9 +40,14 @@ class PrintTime {
   PrintTime(const char* title);
   ~PrintTime();
 
+  void setComment(std::string comment) {
+    comment_ = std::move(comment);
+  }
+  
  private:
   const char* title_;
   uint64_t start_;
+  std::string comment_;
 };
 
 /// A host side time point for measuring wait and launch prepare latency. Counts

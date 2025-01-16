@@ -267,6 +267,11 @@ void ensureInit() {
 
 } // namespace
 
+//static
+void CompiledModule::initialize() {
+  ensureInit();
+}
+  
 std::shared_ptr<CompiledModule> CompiledModule::create(const KernelSpec& spec) {
   ensureInit();
   const char** headers = waveHeaderTextString.data();
@@ -382,6 +387,8 @@ KernelInfo CompiledModuleImpl::info(int32_t kernelIdx) {
   cuFuncGetAttribute(&info.numRegs, CU_FUNC_ATTRIBUTE_NUM_REGS, f);
   cuFuncGetAttribute(
       &info.sharedMemory, CU_FUNC_ATTRIBUTE_SHARED_SIZE_BYTES, f);
+  cuFuncGetAttribute(
+      &info.localMemory, CU_FUNC_ATTRIBUTE_LOCAL_SIZE_BYTES, f);
   cuFuncGetAttribute(
       &info.maxThreadsPerBlock, CU_FUNC_ATTRIBUTE_MAX_THREADS_PER_BLOCK, f);
   int32_t max;

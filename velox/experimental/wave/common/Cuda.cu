@@ -350,6 +350,7 @@ KernelInfo kernelInfo(const void* func) {
   info.numRegs = attrs.numRegs;
   info.maxThreadsPerBlock = attrs.maxThreadsPerBlock;
   info.sharedMemory = attrs.sharedSizeBytes;
+  info.localMemory = attrs.localSizeBytes;
   int max;
   cudaOccupancyMaxActiveBlocksPerMultiprocessor(&max, func, 256, 0);
   info.maxOccupancy0 = max;
@@ -363,6 +364,7 @@ std::string KernelInfo::toString() const {
   std::stringstream out;
   out << "NumRegs=" << numRegs << " maxThreadsPerBlock= " << maxThreadsPerBlock
       << " sharedMemory=" << sharedMemory
+      << " localMemory=" << localMemory
       << " occupancy 256,  0=" << maxOccupancy0
       << " occupancy 256,32=" << maxOccupancy32;
   return out.str();
