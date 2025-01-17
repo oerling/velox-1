@@ -230,6 +230,7 @@ __device__ inline T& flatResult(Operand* op, int32_t blockBase) {
   int programIndex = params.programIdx[blockIdx.x + blockOffset];              \
   if (threadIdx.x == 0) {                                                      \
     shared->operands = params.operands[programIndex];                          \
+    shared->numRowsPerThread = params.numRowsPerThread;                        \
     shared->status = &params.status                                            \
                           [blockIdx.x + blockOffset -                          \
                            params.blockBase[blockIdx.x + blockOffset]];        \
@@ -239,22 +240,24 @@ __device__ inline T& flatResult(Operand* op, int32_t blockBase) {
         blockDim.x;                                                            \
     shared->states = params.operatorStates[programIndex];                      \
     shared->numBlocks = params.numBlocks;                                      \
-    shared->numRowsPerThread = params.numRowsPerThread;                        \
+    shared->nthBlock = 0;
     shared->streamIdx = params.streamIdx;                                      \
     shared->isContinue = params.startPC != nullptr;                            \
     if (shared->isContinue) {                                                  \
       shared->startLabel = params.startPC[programIndex];                       \
     }                                                                          \
-    shared->extraWraps = params.extraWraps;                                    \
+  shared->extraWraps = params.extraWraps;				\
     shared->numExtraWraps = params.numExtraWraps;                              \
     shared->hasContinue = false;                                               \
     shared->stop = false;                                                      \
   }                                                                            \
   __syncthreads();                                                             \
-  auto blockBase = shared->blockBase;                                          \
+  int32_t blockBase; \
   auto operands = shared->operands;                                            \
   ErrorCode laneStatus;                                                        \
-  if (!shared->isContinue) {                                                   \
+ nextBlock: \
+  blockBase = shared->blockBase;\
+  if (!shared->isContinue) {						\
     laneStatus =                                                               \
         threadIdx.x < shared->numRows ? ErrorCode::kOk : ErrorCode::kInactive; \
   } else {                                                                     \
@@ -264,9 +267,20 @@ __device__ inline T& flatResult(Operand* op, int32_t blockBase) {
 #define PROGRAM_EPILOGUE()                          \
   if (threadIdx.x == 0) {                           \
     shared->status->numRows = shared->numRows;      \
-  }                                                 \
-  shared->status->errors[threadIdx.x] = laneStatus; \
-  __syncthreads();
+    if (++shared->nthBlock >= shared->numRowsPerThread) {\
+      shared->stop = true;				 \
+    } else {						 \
+      ++shared->status;					 \
+      shared->numRows = shared->status->numRows;	 \
+      shared->blockBase += kBlockSize;			 \
+    }							 \
+  } \
+  shared->status->errors[threadIdx.x] = laneStatus;	\
+  __syncthreads();					\
+  if (!shared->stop) {\
+    goto nextBlock;   \
+  }
+  
 
 
 __device__ __forceinline__ void filterKernel(

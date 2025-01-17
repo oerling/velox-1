@@ -535,7 +535,7 @@ void recordReference(PipelineCandidate& candidate, AbstractOperand* op) {
     }
   }
   flags.lastUse = CodePosition(
-      candidate.steps.size() - 1, candidate.boxIdx, box->steps.size());
+      candidate.steps.size() - 1, candidate.boxIdx, candidate.currentBox->steps.size());
 }
 
 void distinctLeavesInner(
@@ -585,8 +585,26 @@ NullCheck* CompileState::addNullCheck(
   check->result = op;
   return check;
 }
+  bool shouldDelay(const AbstractOperand* op, const OperandFlags& flags) {
+    auto* expr = op->expr;
+    if (!expr) {
+      return false;
+    }
+    if (functionRetriable(expr)) {
+      return false;
+    }
+    auto& fields = expr->distinctFields();
+    int32_t expensive = flags.inInlineGroupBy ? 5 : 20;
+    if (op->costWithChildren >= expensive) {
+      return false;
+    }
+    if (op->numUses > 1 && fields.size() > 1) {
+      return false;
+    }
+    return true;
+  }
 
-void CompileState::placeExpr(
+  void CompileState::placeExpr(
     PipelineCandidate& candidate,
     AbstractOperand* op,
     bool mayDelay) {
@@ -597,6 +615,9 @@ void CompileState::placeExpr(
   if (!flags.definedIn.empty()) {
     recordReference(candidate, op);
   } else {
+    if (mayDelay && shouldDelay(op, flags)) {
+      return;
+    }
     bool checkNulls = !insideNullPropagating_ && op->expr->propagatesNulls();
     ScopedVarSetter s(&insideNullPropagating_, true, checkNulls);
     NullCheck* check;

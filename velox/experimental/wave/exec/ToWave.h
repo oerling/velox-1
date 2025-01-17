@@ -592,6 +592,10 @@ struct OperandFlags {
   CodePosition lastUse;
   int32_t wrappedAt{AbstractOperand::kNoWrap};
   bool needStore{false};
+  // True if operand is input to an aggregate function in a group
+  // by. Should delay only if cost is trivial so no extra time holding
+  // a lock on the group.
+  bool inInlineGroupBy{false};
 
   std::string toString() const;
 };

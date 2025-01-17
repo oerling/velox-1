@@ -111,6 +111,9 @@ struct WaveShared {
   /// Number of items in blockStatus covered by each TB.
   int16_t numRowsPerThread;
 
+  
+  /// Iteration counter, =0; < numRowsPerThread.
+  int16_t nthBlock;
   int16_t streamIdx;
 
   // Scratch data area. Size depends on shared memory size for instructions.
