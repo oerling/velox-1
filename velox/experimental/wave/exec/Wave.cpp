@@ -18,6 +18,8 @@
 #include <iostream>
 #include "velox/experimental/wave/exec/Vectors.h"
 
+DEFINE_int32(wave_rows_per_thread, 4,
+	     "Number of rows per thread in generated kernels");
 DEFINE_bool(wave_timing, true, "Enable Wave perf timers");
 DEFINE_bool(
     wave_print_time,
@@ -747,10 +749,11 @@ LaunchControl* WaveStream::prepareProgramLaunch(
     int32_t nthLaunch,
     int32_t inputRows,
     folly::Range<Executable**> exes,
-    int32_t blocksPerExe,
+    int32_t inputBlocksPerExe,
     const LaunchControl* inputControl,
     Stream* stream) {
   static_assert(Operand::kPointersInOperand * sizeof(void*) == sizeof(Operand));
+  int32_t blocksPerExe = std::min(1, inputBlocksPerExe / FLAGS_wave_rows_per_thread);
   auto& controlVector = launchControl_[key];
   LaunchControl* controlPtr;
   if (controlVector.size() > nthLaunch) {
@@ -833,6 +836,7 @@ LaunchControl* WaveStream::prepareProgramLaunch(
   auto start = buffer->as<int32_t>();
   control.params.blockBase = start;
   control.params.programIdx = start + numBlocks;
+  control.params.numRowsPerThread = FLAGS_wave_rows_per_thread;
   control.params.operands = addBytes<Operand***>(
       control.params.programIdx, numBlocks * sizeof(int32_t));
   control.params.startPC = isContinue

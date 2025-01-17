@@ -224,33 +224,37 @@ __device__ inline T& flatResult(Operand* op, int32_t blockBase) {
   return flatResult<T>(&op, 0, blockBase);
 }
 
-#define GENERATED_PREAMBLE(blockOffset)                                        \
-  extern __shared__ char sharedChar[];                                         \
-  WaveShared* shared = reinterpret_cast<WaveShared*>(sharedChar);              \
-  int programIndex = params.programIdx[blockIdx.x + blockOffset];              \
-  if (threadIdx.x == 0) {                                                      \
-    shared->operands = params.operands[programIndex];                          \
-    shared->numRowsPerThread = params.numRowsPerThread;                        \
-    shared->status = &params.status                                            \
-                          [blockIdx.x + blockOffset -                          \
-                           params.blockBase[blockIdx.x + blockOffset]];        \
-    shared->numRows = shared->status->numRows;                                 \
-    shared->blockBase = (blockIdx.x + blockOffset -                            \
-                         params.blockBase[blockIdx.x + blockOffset]) *         \
-        blockDim.x;                                                            \
-    shared->states = params.operatorStates[programIndex];                      \
-    shared->numBlocks = params.numBlocks;                                      \
+#define GENERATED_PREAMBLE(blockOffset)                                      \
+  extern __shared__ char sharedChar[];                                       \
+  WaveShared* shared = reinterpret_cast<WaveShared*>(sharedChar);            \
+  if (threadIdx.x == 0) {                                                    \
+    shared->operands = params.operands[programIndex];                        \
+    shared->numBlocks = params.numBlocks;                                    \
+    shared->numRowsPerThread = params.numRowsPerThread;                      \
+    auto startBlock = blockIdx.x * shared->numRowsPerThread;                 \
+    auto branchIdx = startBlock / shared->numBlocks;                         \
+    startBlock = startBlock - (shared->numBlocks * branchIdx);               \
+    shared->programIdx = branchIdx;                                          \
+    startBlock = (startBlock / shared->rowsPerBlock) * shared->rowsPerBlock; \
+    int32_t numBlocksAbove = shared->numBlocks - startBlock;                 \
+    if (numBlocksAbove < shared->numRowsPerThread) {                         \
+      shared->numRowsPerThread = numBlocksAbove;                             \
+    }                                                                        \
+    shared->status = &params.status[startBlock];                             \
+    shared->numRows = shared->status->numRows;                               \
+    shared->blockBase = startBlock * kBlockSize;                             \
+    shared->states = params.operatorStates[0];                               \
     shared->nthBlock = 0;
-    shared->streamIdx = params.streamIdx;                                      \
-    shared->isContinue = params.startPC != nullptr;                            \
-    if (shared->isContinue) {                                                  \
-      shared->startLabel = params.startPC[programIndex];                       \
-    }                                                                          \
-  shared->extraWraps = params.extraWraps;				\
-    shared->numExtraWraps = params.numExtraWraps;                              \
-    shared->hasContinue = false;                                               \
-    shared->stop = false;                                                      \
-  }                                                                            \
+shared->streamIdx = params.streamIdx;
+shared->isContinue = params.startPC != nullptr;
+if (shared->isContinue) {
+  shared->startLabel = params.startPC[shared->programIdx];
+}
+shared->extraWraps = params.extraWraps;
+shared->numExtraWraps = params.numExtraWraps;
+shared->hasContinue = false;
+shared->stop = false;
+} // namespace facebook::velox::wave                                                                            \
   __syncthreads();                                                             \
   int32_t blockBase; \
   auto operands = shared->operands;                                            \
@@ -264,24 +268,22 @@ __device__ inline T& flatResult(Operand* op, int32_t blockBase) {
     laneStatus = shared->status->errors[threadIdx.x];                          \
   }
 
-#define PROGRAM_EPILOGUE()                          \
-  if (threadIdx.x == 0) {                           \
-    shared->status->numRows = shared->numRows;      \
-    if (++shared->nthBlock >= shared->numRowsPerThread) {\
-      shared->stop = true;				 \
-    } else {						 \
-      ++shared->status;					 \
-      shared->numRows = shared->status->numRows;	 \
-      shared->blockBase += kBlockSize;			 \
-    }							 \
-  } \
-  shared->status->errors[threadIdx.x] = laneStatus;	\
-  __syncthreads();					\
-  if (!shared->stop) {\
-    goto nextBlock;   \
+#define PROGRAM_EPILOGUE()                                \
+  if (threadIdx.x == 0) {                                 \
+    shared->status->numRows = shared->numRows;            \
+    if (++shared->nthBlock >= shared->numRowsPerThread) { \
+      shared->stop = true;                                \
+    } else {                                              \
+      ++shared->status;                                   \
+      shared->numRows = shared->status->numRows;          \
+      shared->blockBase += kBlockSize;                    \
+    }                                                     \
+  }                                                       \
+  shared->status->errors[threadIdx.x] = laneStatus;       \
+  __syncthreads();                                        \
+  if (!shared->stop) {                                    \
+    goto nextBlock;                                       \
   }
-  
-
 
 __device__ __forceinline__ void filterKernel(
     bool flag,

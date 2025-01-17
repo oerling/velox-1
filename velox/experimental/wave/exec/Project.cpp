@@ -138,7 +138,7 @@ void Project::schedule(WaveStream& stream, int32_t maxRows) {
 
             kernel->launch(
                 0,
-                blocksPerExe * numBranches,
+                control->params.numBlocks * numBranches,
                 kBlockSize,
                 control->sharedMemorySize,
                 out,
