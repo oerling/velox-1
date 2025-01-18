@@ -1007,6 +1007,8 @@ class WaveStream {
   /// statuses.
   void checkBlockStatuses() const;
 
+  void throwIfError();
+  
   /// Returns the Executable associated with 'this' whose Program contains
   /// 'instruction'. nullptr if not found.
   Executable* executableByInstruction(const AbstractInstruction* instruction);

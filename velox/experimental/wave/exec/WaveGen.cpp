@@ -273,8 +273,21 @@ void Compute::generateMain(CompileState& state, int32_t /*syncLable*/) {
   VELOX_CHECK_NOT_NULL(operand->expr);
   auto& flags = state.flags(*operand);
   auto ord = state.declareVariable(*operand);
-  state.functionReferenced(operand);
+  auto md = state.functionReferenced(operand);
   state.generated() << fmt::format("r{} = {}(", ord, operand->expr->name());
+  int32_t grid = 0;
+  int32_t block = 0;
+  auto tryLabel = state.tryErrorLabel();
+  if (continueInstruction) {
+    auto* status = continueInstruction->mutableInstructionStatus();
+    if (status) {
+      grid = status->gridState | (status->gridStateSize << 16);
+      block = status->blockState;
+    }
+  }
+  if (md.maySetShared || md.maySetStatus) {
+    state.generated() << fmt::format("shared, laneStatus, {}, {}, {}", tryLabel.has_value(), grid, block) << (!operand->inputs.empty() ? "," : "");
+  }
   for (auto i = 0; i < operand->inputs.size(); ++i) {
     state.generateOperand(*operand->inputs[i]);
     if (i < operand->inputs.size() - 1) {
@@ -283,6 +296,13 @@ void Compute::generateMain(CompileState& state, int32_t /*syncLable*/) {
   }
   state.generated() << ");\n";
   operand->inRegister = true;
+  if (md.maySetStatus) {
+    if (tryLabel.has_value()) {
+      state.generated() << fmt::format("  if (laneStatus != ErrorCode::kOk) { goto tryNull{};}\n", tryLabel.value());
+    } else {
+      state.generated() << fmt::format("  if (laneStatus != ErrorCode::kOk) { goto sync{};}\n", state.nextSyncLabel());
+    }
+  }
   if (flags.needStore) {
     operand->isStored = true;
     state.generated() << fmt::format(
@@ -388,14 +408,14 @@ std::string CompileState::generateIsTrue(const AbstractOperand& op) {
   return fmt::format("flag{}", ord);
 }
 
-void CompileState::functionReferenced(const AbstractOperand* op) {
+FunctionMetadata CompileState::functionReferenced(const AbstractOperand* op) {
   auto numInput = op->inputs.size();
   std::vector<TypePtr> types;
   types.reserve(numInput);
   for (auto i = 0; i < numInput; ++i) {
     types.push_back(op->expr->inputs()[i]->type());
   }
-  functionReferenced(op->expr->name(), types, op->type);
+  return functionReferenced(op->expr->name(), types, op->type);
 }
 
 void CompileState::addInclude(const std::string& path) {
@@ -407,14 +427,14 @@ void CompileState::addInclude(const std::string& path) {
   includeText_ << line << std::endl;
 }
 
-void CompileState::functionReferenced(
+FunctionMetadata CompileState::functionReferenced(
     const std::string& name,
     const std::vector<TypePtr>& types,
     const TypePtr& resultType) {
   FunctionKey key(name, types);
-
+  auto metadata = waveRegistry().metadata(key);
   if (functions_.count(key)) {
-    return;
+    return metadata;
   }
   functions_.insert(key);
   auto definition = waveRegistry().makeDefinition(key, resultType);
@@ -424,6 +444,7 @@ void CompileState::functionReferenced(
     includeText_ << definition.includeLine << std::endl;
   }
   inlines_ << "inline __device__ " << definition.definition << std::endl;
+  return metadata;
 }
 
 int32_t CompileState::nextWrapId() {
@@ -920,6 +941,9 @@ void CompileState::generatePrograms() {
           std::move(scanStep.defines)));
       start = 1;
     }
+    instructionStatus_ = InstructionStatus();
+    // The error status is first after the BlockStatus array.
+    instructionStatus_.gridState = sizeof(KernelError);
     if (firstStep->kind() == StepKind::kValues) {
       operators_.push_back(
           std::make_unique<Values>(*this, *firstStep->as<ValuesStep>().node));
@@ -936,6 +960,11 @@ void CompileState::generatePrograms() {
       }
       makeLevel(currentCandidate_->steps[kernelSeq_]);
     }
+    instructionStatus_.gridStateSize = instructionStatus_.gridState;
+    for (auto* status : allStatuses_) {
+      status->gridStateSize = instructionStatus_.gridState;
+    }
+
     std::vector<std::vector<ProgramPtr>> levels;
     for (auto& program : programs_) {
       levels.emplace_back();

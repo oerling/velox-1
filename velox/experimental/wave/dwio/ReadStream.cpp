@@ -89,8 +89,8 @@ void ReadStream::prefetchStatus(Stream* stream) {
     return;
   }
   char* data = control_->deviceData->as<char>();
-  auto size = control_->deviceData->size() - (statusBytes_ + gridStatusBytes_);
-  stream->prefetch(getDevice(), data + statusBytes_ + gridStatusBytes_, size);
+  auto size = control_->deviceData->size() - statusBytes_;
+  stream->prefetch(getDevice(), data + statusBytes_, size);
 }
 
 namespace {
@@ -455,9 +455,9 @@ void ReadStream::makeControl() {
   // The operand section must be cleared before written on host. The statuses
   // are cleared on device.
   memset(
-      control->deviceData->as<char>() + statusBytes_ + instructionBytes,
+      control->deviceData->as<char>() + statusBytes_,
       0,
-      info.totalBytes);
+      instructionBytes + info.totalBytes);
   control->params.status = control->deviceData->as<BlockStatus>();
   for (auto& reader : reader_->children()) {
     if (!reader->formatData()->hasNulls() || reader->hasNonNullFilter()) {

@@ -815,9 +815,9 @@ class CompileState {
 
   AbstractOperand* fieldToOperand(common::Subfield& field, Scope* scope);
 
-  void functionReferenced(const AbstractOperand* op);
+  FunctionMetadata functionReferenced(const AbstractOperand* op);
 
-  void functionReferenced(
+  FunctionMetadata functionReferenced(
       const std::string& name,
       const std::vector<TypePtr>& types,
       const TypePtr& resultType);
@@ -868,6 +868,14 @@ class CompileState {
     kernelEntryPoints_.push_back(name);
   }
 
+  int32_t nextSyncLabel() const {
+    return nextSyncLabel_;
+  }
+
+  std::optional<int32_t> tryErrorLabel() const {
+    return tryErrorLabel_;
+  }
+  
  private:
   bool
   addOperator(exec::Operator* op, int32_t& nodeIndex, RowTypePtr& outputType);
@@ -1066,6 +1074,7 @@ class CompileState {
   //  Text of the kernel being generated.
   std::stringstream generated_;
   bool insideNullPropagating_{false};
+  std::optional<int32_t> tryErrorLabel_;
   int32_t labelCounter_{0};
   int32_t nextSyncLabel_{0};
 

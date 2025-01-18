@@ -69,6 +69,11 @@ namespace facebook::velox::wave {
 
 /// Wave-specific function properties.
 struct FunctionMetadata {
+  FunctionMetadata() = default;
+
+  FunctionMetadata(bool maySetStatus, bool maySetShared)
+    :  maySetStatus(maySetStatus), maySetShared(maySetShared) {}
+
   /// True if may turn off the lane, e.g. for error.
   bool maySetStatus{false};
 

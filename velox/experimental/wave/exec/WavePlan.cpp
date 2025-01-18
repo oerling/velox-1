@@ -590,7 +590,7 @@ NullCheck* CompileState::addNullCheck(
     if (!expr) {
       return false;
     }
-    if (functionRetriable(expr)) {
+    if (functionRetriable(*expr)) {
       return false;
     }
     auto& fields = expr->distinctFields();

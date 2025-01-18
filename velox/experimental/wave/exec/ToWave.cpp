@@ -206,10 +206,6 @@ bool CompileState::compile() {
   for (auto& op : operators_) {
     op->finalize(*this);
   }
-  instructionStatus_.gridStateSize = instructionStatus_.gridState;
-  for (auto* status : allStatuses_) {
-    status->gridStateSize = instructionStatus_.gridState;
-  }
     if (!reserveMemory()) {
       VELOX_FAIL("Failed to reserve unified memory for Wave");
     }

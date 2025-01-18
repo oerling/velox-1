@@ -753,7 +753,8 @@ LaunchControl* WaveStream::prepareProgramLaunch(
     const LaunchControl* inputControl,
     Stream* stream) {
   static_assert(Operand::kPointersInOperand * sizeof(void*) == sizeof(Operand));
-  int32_t blocksPerExe = std::min(1, inputBlocksPerExe / FLAGS_wave_rows_per_thread);
+  auto rowsPerThread = FLAGS_wave_rows_per_thread;
+  int32_t blocksPerExe = bits::roundUp(inputBlocksPerExe, rowsPerThread) / rowsPerThread;
   auto& controlVector = launchControl_[key];
   LaunchControl* controlPtr;
   if (controlVector.size() > nthLaunch) {
@@ -1044,6 +1045,24 @@ void WaveStream::checkExecutables() const {
   }
 }
 
+  void WaveStream::throwIfError() {
+    auto numBlocks = bits::roundUp(numRows_, kBlockSize) / kBlockSize;
+    auto hostSide = hostBlockStatus();
+    int32_t errorOffset = bits::roundUp(numBlocks * sizeof(BlockStatus), 8);
+    auto error = addBytes<KernelError*>(hostSide, errorOffset);
+    if (error->messageAndTag) {
+      auto ptr = reinterpret_cast<uintptr_t>(error->messageAndTag);
+      auto tag = ptr >> 48;
+      ptr &= bits::lowMask(48);
+      std::string str;
+      str.resize(100);
+      streams_[0]->deviceToHostAsync(str.data(), reinterpret_cast<const char*>(ptr), str.size());
+      streams_[0]->wait();
+      str.resize(strlen(str.data()));
+      VELOX_USER_FAIL(str);
+    }
+  }
+  
 void WaveStream::checkBlockStatuses() const {
 #ifdef BLOCK_STATUS_CHECK
   auto numBlocks = bits::roundUp(numRows_, kBlockSize) / kBlockSize;

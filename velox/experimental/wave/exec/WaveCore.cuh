@@ -32,6 +32,15 @@ inline T* __device__ gridStatus(const WaveShared* shared, int32_t gridState) {
       gridState);
 }
 
+  inline __device__ void setError(WaveShared* shared, ErrorCode& laneStatus, bool insideTry, const char* message, int64_t n = 0) {
+  laneStatus = ErrorCode::kError;
+  if (insideTry) {
+    return;
+  }
+  auto* error = gridStatus<KernelError>(shared, 0);
+  error->messageAndTag = message;
+}
+
 template <typename T>
 inline T* __device__
 gridStatus(const WaveShared* shared, const InstructionStatus& status) {
@@ -224,44 +233,44 @@ __device__ inline T& flatResult(Operand* op, int32_t blockBase) {
   return flatResult<T>(&op, 0, blockBase);
 }
 
-#define GENERATED_PREAMBLE(blockOffset)                                      \
-  extern __shared__ char sharedChar[];                                       \
-  WaveShared* shared = reinterpret_cast<WaveShared*>(sharedChar);            \
-  if (threadIdx.x == 0) {                                                    \
-    shared->operands = params.operands[programIndex];                        \
-    shared->numBlocks = params.numBlocks;                                    \
-    shared->numRowsPerThread = params.numRowsPerThread;                      \
-    auto startBlock = blockIdx.x * shared->numRowsPerThread;                 \
-    auto branchIdx = startBlock / shared->numBlocks;                         \
-    startBlock = startBlock - (shared->numBlocks * branchIdx);               \
-    shared->programIdx = branchIdx;                                          \
-    startBlock = (startBlock / shared->rowsPerBlock) * shared->rowsPerBlock; \
-    int32_t numBlocksAbove = shared->numBlocks - startBlock;                 \
-    if (numBlocksAbove < shared->numRowsPerThread) {                         \
-      shared->numRowsPerThread = numBlocksAbove;                             \
-    }                                                                        \
-    shared->status = &params.status[startBlock];                             \
-    shared->numRows = shared->status->numRows;                               \
-    shared->blockBase = startBlock * kBlockSize;                             \
-    shared->states = params.operatorStates[0];                               \
-    shared->nthBlock = 0;
-shared->streamIdx = params.streamIdx;
-shared->isContinue = params.startPC != nullptr;
-if (shared->isContinue) {
-  shared->startLabel = params.startPC[shared->programIdx];
-}
-shared->extraWraps = params.extraWraps;
-shared->numExtraWraps = params.numExtraWraps;
-shared->hasContinue = false;
-shared->stop = false;
-} // namespace facebook::velox::wave                                                                            \
+#define GENERATED_PREAMBLE(blockOffset)                                        \
+  extern __shared__ char sharedChar[];                                         \
+  WaveShared* shared = reinterpret_cast<WaveShared*>(sharedChar);              \
+  if (threadIdx.x == 0) {                                                      \
+    shared->operands = params.operands[0];                          \
+    shared->numBlocks = params.numBlocks;                                      \
+    shared->numRowsPerThread = params.numRowsPerThread;                        \
+    auto startBlock = blockIdx.x * shared->numRowsPerThread;                   \
+    auto branchIdx = startBlock / shared->numBlocks;                           \
+    startBlock = startBlock - (shared->numBlocks * branchIdx);                 \
+    shared->programIdx = branchIdx;                                            \
+    startBlock = (startBlock / shared->numRowsPerThread) * shared->numRowsPerThread;   \
+    int32_t numBlocksAbove = shared->numBlocks - startBlock;                   \
+    if (numBlocksAbove < shared->numRowsPerThread) {                           \
+      shared->numRowsPerThread = numBlocksAbove;                               \
+    }                                                                          \
+  shared->status = &params.status[startBlock];				\
+    shared->numRows = shared->status->numRows;                                 \
+    shared->blockBase = startBlock * kBlockSize;                               \
+    shared->states = params.operatorStates[0];                                 \
+    shared->nthBlock = 0;                                                      \
+    shared->streamIdx = params.streamIdx;                                      \
+    shared->isContinue = params.startPC != nullptr;                            \
+    if (shared->isContinue) {                                                  \
+      shared->startLabel = params.startPC[shared->programIdx];                 \
+    }                                                                          \
+    shared->extraWraps = params.extraWraps;                                    \
+    shared->numExtraWraps = params.numExtraWraps;                              \
+    shared->hasContinue = false;                                               \
+    shared->stop = false;                                                      \
+  }                                                                            \
   __syncthreads();                                                             \
-  int32_t blockBase; \
+  int32_t blockBase;                                                           \
   auto operands = shared->operands;                                            \
   ErrorCode laneStatus;                                                        \
- nextBlock: \
-  blockBase = shared->blockBase;\
-  if (!shared->isContinue) {						\
+  nextBlock:                                                                   \
+  blockBase = shared->blockBase;                                               \
+  if (!shared->isContinue) {                                                   \
     laneStatus =                                                               \
         threadIdx.x < shared->numRows ? ErrorCode::kOk : ErrorCode::kInactive; \
   } else {                                                                     \
