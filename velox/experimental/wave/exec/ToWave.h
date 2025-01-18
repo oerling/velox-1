@@ -450,7 +450,7 @@ struct AggregateProbe : public KernelStep {
       CompileState& state) override;
 
   std::string toString() const override;
-  
+
   AbstractState* state;
   std::vector<AbstractOperand*> keys;
 
@@ -875,7 +875,7 @@ class CompileState {
   std::optional<int32_t> tryErrorLabel() const {
     return tryErrorLabel_;
   }
-  
+
  private:
   bool
   addOperator(exec::Operator* op, int32_t& nodeIndex, RowTypePtr& outputType);

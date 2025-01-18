@@ -60,7 +60,6 @@ DEFINE_int32(num_keys, 0, "Number of grouping keys");
 
 DEFINE_int32(key_mod, 10000, "Modulo for grouping keys");
 
-
 DEFINE_int64(filter_pass_pct, 100, "Passing % for one filter");
 
 DEFINE_int32(null_pct, 0, "Pct of null values in columns");
@@ -154,9 +153,7 @@ class WaveBenchmark : public QueryBenchmarkBase {
     return vectors;
   }
 
-  void makeRange(
-      RowVectorPtr row,
-      const std::vector<ColumnSpec> specs) {
+  void makeRange(RowVectorPtr row, const std::vector<ColumnSpec> specs) {
     for (auto i = 0; i < row->type()->size(); ++i) {
       auto& spec = specs[i];
       auto child = row->childAt(i);
@@ -165,7 +162,10 @@ class WaveBenchmark : public QueryBenchmarkBase {
           if (!spec.notNull && ints->isNullAt(i)) {
             continue;
           }
-          ints->set(i, spec.base + bits::roundUp(ints->valueAt(i) % spec.mod, spec.roundUp));
+          ints->set(
+              i,
+              spec.base +
+                  bits::roundUp(ints->valueAt(i) % spec.mod, spec.roundUp));
         }
       }
       if (spec.notNull) {
@@ -251,26 +251,36 @@ class WaveBenchmark : public QueryBenchmarkBase {
         float passRatio = FLAGS_filter_pass_pct / 100.0;
         std::vector<std::string> scanFilters;
         for (auto i = 0; i < FLAGS_num_column_filters; ++i) {
-          scanFilters.push_back(fmt::format("c{} < {}", i, static_cast<int64_t>(specs_[i].mod * passRatio)));
+          scanFilters.push_back(fmt::format(
+              "c{} < {}", i, static_cast<int64_t>(specs_[i].mod * passRatio)));
         }
         auto builder =
             PlanBuilder(leafPool_.get()).tableScan(type_, scanFilters);
 
-        for (auto i = FLAGS_num_column_filters; i < FLAGS_num_column_filters + FLAGS_num_expr_filters; ++i) {
-          builder = builder.filter(
-				   fmt::format("c{} + 1 < {}", i, static_cast<int64_t>(specs_[i].mod * passRatio)));
+        for (auto i = FLAGS_num_column_filters;
+             i < FLAGS_num_column_filters + FLAGS_num_expr_filters;
+             ++i) {
+          builder = builder.filter(fmt::format(
+              "c{} + 1 < {}",
+              i,
+              static_cast<int64_t>(specs_[i].mod * passRatio)));
         }
 
         std::vector<std::string> aggInputs;
         std::vector<std::string> keyProjections;
         std::vector<std::string> keys;
         for (auto i = 0; i < FLAGS_num_keys && i < aggInputs.size(); ++i) {
-          keyProjections.push_back(fmt::format("({} / {}) % {} as {}", aggInputs[i], specs_[i].roundUp, FLAGS_key_mod, aggInputs[i]));
-	  keys.push_back(fmt::format("{}", aggInputs[i]));
+          keyProjections.push_back(fmt::format(
+              "({} / {}) % {} as {}",
+              aggInputs[i],
+              specs_[i].roundUp,
+              FLAGS_key_mod,
+              aggInputs[i]));
+          keys.push_back(fmt::format("{}", aggInputs[i]));
         }
-	if (!keys.empty()) {
-	  builder.project(keyProjections);
-	}
+        if (!keys.empty()) {
+          builder.project(keyProjections);
+        }
 
         if (FLAGS_num_arithmetic > 0) {
           std::vector<std::string> projects;
@@ -289,7 +299,7 @@ class WaveBenchmark : public QueryBenchmarkBase {
             aggInputs.push_back(fmt::format("c{}", i));
           }
         }
-	
+
         std::vector<std::string> aggs;
         for (auto i = FLAGS_num_keys; i < aggInputs.size(); ++i) {
           aggs.push_back(fmt::format("sum({})", aggInputs[i]));
@@ -308,13 +318,13 @@ class WaveBenchmark : public QueryBenchmarkBase {
     switch (query) {
       case 1: {
         type_ = makeType();
-    auto range = FLAGS_max_card - FLAGS_min_card;
-    for (auto i = 0; i < type_->size(); ++i) {
-      ColumnSpec spec;
-      spec.mod = FLAGS_min_card + 10000 * (i + 1)  * (range / type_->size());
-      spec.roundUp = 10000;
-      specs_.push_back(spec);
-    }
+        auto range = FLAGS_max_card - FLAGS_min_card;
+        for (auto i = 0; i < type_->size(); ++i) {
+          ColumnSpec spec;
+          spec.mod = FLAGS_min_card + 10000 * (i + 1) * (range / type_->size());
+          spec.roundUp = 10000;
+          specs_.push_back(spec);
+        }
         auto numVectors =
             std::max<int64_t>(1, FLAGS_num_rows / FLAGS_rows_per_stripe);
         if (FLAGS_generate) {
@@ -409,7 +419,6 @@ class WaveBenchmark : public QueryBenchmarkBase {
   VectorFuzzer::Options options_;
   std::unique_ptr<VectorFuzzer> fuzzer_;
   std::vector<ColumnSpec> specs_;
-
 };
 
 void waveBenchmarkMain() {

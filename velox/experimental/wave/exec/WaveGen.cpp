@@ -20,10 +20,10 @@
 #include "velox/experimental/wave/exec/ToWave.h"
 #include "velox/experimental/wave/exec/Values.h"
 
-  DECLARE_bool(wave_print_time);
+DECLARE_bool(wave_print_time);
 
 namespace facebook::velox::wave {
-  
+
 thread_local int32_t CompileState::pipelineIdx_;
 thread_local int32_t CompileState::kernelSeq_;
 thread_local int32_t CompileState::branchIdx_;
@@ -286,7 +286,12 @@ void Compute::generateMain(CompileState& state, int32_t /*syncLable*/) {
     }
   }
   if (md.maySetShared || md.maySetStatus) {
-    state.generated() << fmt::format("shared, laneStatus, {}, {}, {}", tryLabel.has_value(), grid, block) << (!operand->inputs.empty() ? "," : "");
+    state.generated() << fmt::format(
+                             "shared, laneStatus, {}, {}, {}",
+                             tryLabel.has_value(),
+                             grid,
+                             block)
+                      << (!operand->inputs.empty() ? "," : "");
   }
   for (auto i = 0; i < operand->inputs.size(); ++i) {
     state.generateOperand(*operand->inputs[i]);
@@ -298,9 +303,13 @@ void Compute::generateMain(CompileState& state, int32_t /*syncLable*/) {
   operand->inRegister = true;
   if (md.maySetStatus) {
     if (tryLabel.has_value()) {
-      state.generated() << fmt::format("  if (laneStatus != ErrorCode::kOk) { goto tryNull{};}\n", tryLabel.value());
+      state.generated() << fmt::format(
+          "  if (laneStatus != ErrorCode::kOk) { goto tryNull{};}\n",
+          tryLabel.value());
     } else {
-      state.generated() << fmt::format("  if (laneStatus != ErrorCode::kOk) { goto sync{};}\n", state.nextSyncLabel());
+      state.generated() << fmt::format(
+          "  if (laneStatus != ErrorCode::kOk) { goto sync{};}\n",
+          state.nextSyncLabel());
     }
   }
   if (flags.needStore) {
@@ -555,7 +564,7 @@ std::string AggregateProbe::toString() const {
 
   return out.str();
 }
-  
+
 void AggregateUpdate::generateMain(CompileState& state, int32_t /*syncLabel*/) {
 }
 
@@ -575,7 +584,6 @@ std::string AggregateUpdate::toString() const {
   return out.str();
 }
 
-  
 std::unique_ptr<AbstractInstruction> ReadAggregation::addInstruction(
     CompileState& state) {
   return std::make_unique<AbstractReadAggregation>(

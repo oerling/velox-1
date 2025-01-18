@@ -37,18 +37,14 @@ bool registerBinaryNumeric(
 
 #define FULL_BINARY_ARGS
 
-#define CHECK_DIV0   "  if (y == 0) { setError(shared, insideTry, \"Divide by 0\"); return 0; }\n"
-  
+#define CHECK_DIV0 \
+  "  if (y == 0) { setError(shared, insideTry, \"Divide by 0\"); return 0; }\n"
+
 const char* divideText =
-      "$R$ divide" FULL_BINARY_ARGS "{\n"
-  CHECK_DIV0
-  " return x / y; }";
+    "$R$ divide" FULL_BINARY_ARGS "{\n" CHECK_DIV0 " return x / y; }";
 
 const char* modText =
-      "$R$ mod" FULL_BINARY_ARGS "{\n"
-  CHECK_DIV0
-  " return x % y; }";
-  
+    "$R$ mod" FULL_BINARY_ARGS "{\n" CHECK_DIV0 " return x % y; }";
 
 void registerWaveFunctions() {
   registerBinaryNumeric(
@@ -59,11 +55,8 @@ void registerWaveFunctions() {
       "multiply",
       FunctionMetadata(),
       "$R$ multiply($1$ x, $2$ y) { return x * y; }");
-  registerBinaryNumeric(
-      "divide",
-      FunctionMetadata(true, true), divideText);
-  registerBinaryNumeric(
-			"mod", FunctionMetadata(true, true), modText);
+  registerBinaryNumeric("divide", FunctionMetadata(true, true), divideText);
+  registerBinaryNumeric("mod", FunctionMetadata(true, true), modText);
 
   registerBinaryNumeric(
       "lt", FunctionMetadata(), "bool lt($1$ x, $2$ y) { return x < y; }");

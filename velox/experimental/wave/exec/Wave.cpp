@@ -18,8 +18,10 @@
 #include <iostream>
 #include "velox/experimental/wave/exec/Vectors.h"
 
-DEFINE_int32(wave_rows_per_thread, 4,
-	     "Number of rows per thread in generated kernels");
+DEFINE_int32(
+    wave_rows_per_thread,
+    4,
+    "Number of rows per thread in generated kernels");
 DEFINE_bool(wave_timing, true, "Enable Wave perf timers");
 DEFINE_bool(
     wave_print_time,
@@ -41,7 +43,7 @@ PrintTime::PrintTime(const char* title)
 PrintTime::~PrintTime() {
   if (FLAGS_wave_print_time) {
     std::cout << title_ << "=" << getCurrentTimeMicro() - start_ << " "
-	      << comment_ << std::endl;
+              << comment_ << std::endl;
   }
 }
 
@@ -754,7 +756,8 @@ LaunchControl* WaveStream::prepareProgramLaunch(
     Stream* stream) {
   static_assert(Operand::kPointersInOperand * sizeof(void*) == sizeof(Operand));
   auto rowsPerThread = FLAGS_wave_rows_per_thread;
-  int32_t blocksPerExe = bits::roundUp(inputBlocksPerExe, rowsPerThread) / rowsPerThread;
+  int32_t blocksPerExe =
+      bits::roundUp(inputBlocksPerExe, rowsPerThread) / rowsPerThread;
   auto& controlVector = launchControl_[key];
   LaunchControl* controlPtr;
   if (controlVector.size() > nthLaunch) {
@@ -1045,24 +1048,25 @@ void WaveStream::checkExecutables() const {
   }
 }
 
-  void WaveStream::throwIfError() {
-    auto numBlocks = bits::roundUp(numRows_, kBlockSize) / kBlockSize;
-    auto hostSide = hostBlockStatus();
-    int32_t errorOffset = bits::roundUp(numBlocks * sizeof(BlockStatus), 8);
-    auto error = addBytes<KernelError*>(hostSide, errorOffset);
-    if (error->messageAndTag) {
-      auto ptr = reinterpret_cast<uintptr_t>(error->messageAndTag);
-      auto tag = ptr >> 48;
-      ptr &= bits::lowMask(48);
-      std::string str;
-      str.resize(100);
-      streams_[0]->deviceToHostAsync(str.data(), reinterpret_cast<const char*>(ptr), str.size());
-      streams_[0]->wait();
-      str.resize(strlen(str.data()));
-      VELOX_USER_FAIL(str);
-    }
+void WaveStream::throwIfError() {
+  auto numBlocks = bits::roundUp(numRows_, kBlockSize) / kBlockSize;
+  auto hostSide = hostBlockStatus();
+  int32_t errorOffset = bits::roundUp(numBlocks * sizeof(BlockStatus), 8);
+  auto error = addBytes<KernelError*>(hostSide, errorOffset);
+  if (error->messageAndTag) {
+    auto ptr = reinterpret_cast<uintptr_t>(error->messageAndTag);
+    auto tag = ptr >> 48;
+    ptr &= bits::lowMask(48);
+    std::string str;
+    str.resize(100);
+    streams_[0]->deviceToHostAsync(
+        str.data(), reinterpret_cast<const char*>(ptr), str.size());
+    streams_[0]->wait();
+    str.resize(strlen(str.data()));
+    VELOX_USER_FAIL(str);
   }
-  
+}
+
 void WaveStream::checkBlockStatuses() const {
 #ifdef BLOCK_STATUS_CHECK
   auto numBlocks = bits::roundUp(numRows_, kBlockSize) / kBlockSize;

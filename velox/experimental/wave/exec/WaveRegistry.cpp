@@ -18,13 +18,12 @@
 
 namespace facebook::velox::wave {
 
-  FunctionMetadata WaveRegistry::metadata(const FunctionKey& key) const {
-    auto it = data_.find(key);
-    VELOX_CHECK(it != data_.end());
-    return it->second.metadata;
-  }
+FunctionMetadata WaveRegistry::metadata(const FunctionKey& key) const {
+  auto it = data_.find(key);
+  VELOX_CHECK(it != data_.end());
+  return it->second.metadata;
+}
 
-  
 void WaveRegistry::registerFunction(
     const FunctionKey& key,
     FunctionMetadata& metadata,

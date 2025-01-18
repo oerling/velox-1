@@ -43,7 +43,7 @@ class PrintTime {
   void setComment(std::string comment) {
     comment_ = std::move(comment);
   }
-  
+
  private:
   const char* title_;
   uint64_t start_;
@@ -1008,7 +1008,7 @@ class WaveStream {
   void checkBlockStatuses() const;
 
   void throwIfError();
-  
+
   /// Returns the Executable associated with 'this' whose Program contains
   /// 'instruction'. nullptr if not found.
   Executable* executableByInstruction(const AbstractInstruction* instruction);

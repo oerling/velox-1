@@ -275,9 +275,10 @@ class CompiledKernel {
  public:
   virtual ~CompiledKernel() = default;
 
-  /// Initializes on demand compilation. Used for separating init time from measured compile times.
+  /// Initializes on demand compilation. Used for separating init time from
+  /// measured compile times.
   static void initialize();
-  
+
   /// Returns the compiled kernel for 'key'. Starts background compilation if
   /// 'key's kernel is not compiled. Returns lightweight reference to state
   /// owned by compiled kernel cache.

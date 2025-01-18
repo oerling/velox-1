@@ -37,42 +37,35 @@ using namespace facebook::velox::core;
 using namespace facebook::velox::exec;
 using namespace facebook::velox::wave;
 
-
 class BarrierTest : public testing::Test {
  protected:
-
-
 };
-
-
 
 std::array<std::atomic<int32_t>, 100> acqSuccess = {};
 std::array<std::atomic<int32_t>, 100> acqFail = {};
 std::array<std::atomic<int32_t>, 10> numInside = {};
 
-
 void testFunc(int32_t threadIdx) {
   auto barrierIdx = threadIdx / 10;
   auto name = fmt::format("bar{}", barrierIdx);
-  auto barrier =  WaveBarrier::get(name, 0, 0);
+  auto barrier = WaveBarrier::get(name, 0, 0);
   for (auto action = 0; action < 100; ++action) {
     barrier->enter();
     ++numInside[barrierIdx];
     std::this_thread::sleep_for(std::chrono::milliseconds(1)); // NOLINT
     if (action % 10 == 0) {
       void* reason = reinterpret_cast<void*>(action + 1);
-	--numInside[barrierIdx];
+      --numInside[barrierIdx];
 
       bool success = barrier->acquire(reason);
       if (success) {
-	ASSERT_EQ(0, numInside[barrierIdx]);
-	std::this_thread::sleep_for(std::chrono::milliseconds(10)); // NOLINT
-	++acqSuccess[action];
-	barrier->release();
+        ASSERT_EQ(0, numInside[barrierIdx]);
+        std::this_thread::sleep_for(std::chrono::milliseconds(10)); // NOLINT
+        ++acqSuccess[action];
+        barrier->release();
       } else {
-	++acqFail[action];
-	continue;
-
+        ++acqFail[action];
+        continue;
       }
     } else {
       --numInside[barrierIdx];
@@ -80,23 +73,15 @@ void testFunc(int32_t threadIdx) {
     }
   }
 }
-      
- 
-
 
 TEST_F(BarrierTest, basic) {
   constexpr int32_t kNumThreads = 20;
-  std::vector<std::thread> threads; 
+  std::vector<std::thread> threads;
   threads.reserve(kNumThreads);
   for (int32_t threadIndex = 0; threadIndex < kNumThreads; ++threadIndex) {
-    threads.push_back(std::thread([threadIndex]() {
-				    testFunc(threadIndex);
-				  }));
+    threads.push_back(std::thread([threadIndex]() { testFunc(threadIndex); }));
   }
   for (auto& thr : threads) {
     thr.join();
   }
-
 }
-
-
