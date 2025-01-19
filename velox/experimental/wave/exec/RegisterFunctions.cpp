@@ -35,14 +35,14 @@ bool registerBinaryNumeric(
 
 } // namespace
 
-#define FULL_BINARY_ARGS \
-    "(WaveShared* shared, ErrorCode& laneStatus, bool insideTry, " \
-      "int32_t grid, int32_t block, $1$ x, $2$ y)"
+#define FULL_BINARY_ARGS                                         \
+  "(WaveShared* shared, ErrorCode& laneStatus, bool insideTry, " \
+  "int32_t grid, int32_t block, $1$ x, $2$ y)"
 
-#define CHECK_DIV0 \
+#define CHECK_DIV0                            \
   "  const char msg[] = \"Divideby zero\";\n" \
   "  if (y == 0) { setError(shared, laneStatus, insideTry, msg, sizeof(msg)); return 0; }\n"
-  
+
 const char* divideText =
     "$R$ divide" FULL_BINARY_ARGS "{\n" CHECK_DIV0 " return x / y; }";
 

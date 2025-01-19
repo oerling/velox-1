@@ -39,34 +39,33 @@ using namespace facebook::velox::wave;
 
 class BarrierTest : public testing::Test {
  protected:
-
   void testFunc(int32_t threadIdx) {
-  auto barrierIdx = threadIdx / 10;
-  auto name = fmt::format("bar{}", barrierIdx);
-  auto barrier = WaveBarrier::get(name, 0, 0);
-  message(threadIdx, "enter");
-  barrier->enter();
-  for (auto action = 0; action < 100; ++action) {
-    std::this_thread::sleep_for(std::chrono::milliseconds(1)); // NOLINT
-    if (action % 10 == 0 && threadIdx % 10 < 5) {
-      void* reason = reinterpret_cast<void*>(action + 1);
-      message(threadIdx, "acq");
-      barrier->acquire(reason);
-      message(threadIdx, "exc");
-      std::this_thread::sleep_for(std::chrono::milliseconds(10)); // NOLINT
-      ++numAcquired_;
-      message(threadIdx, "rel");
-      barrier->release();
-    } else {
-      message(threadIdx, "arrive");
-      barrier->arrive();
-      message(threadIdx, "cont");
+    auto barrierIdx = threadIdx / 10;
+    auto name = fmt::format("bar{}", barrierIdx);
+    auto barrier = WaveBarrier::get(name, 0, 0);
+    message(threadIdx, "enter");
+    barrier->enter();
+    for (auto action = 0; action < 100; ++action) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(1)); // NOLINT
+      if (action % 10 == 0 && threadIdx % 10 < 5) {
+        void* reason = reinterpret_cast<void*>(action + 1);
+        message(threadIdx, "acq");
+        barrier->acquire(reason);
+        message(threadIdx, "exc");
+        std::this_thread::sleep_for(std::chrono::milliseconds(10)); // NOLINT
+        ++numAcquired_;
+        message(threadIdx, "rel");
+        barrier->release();
+      } else {
+        message(threadIdx, "arrive");
+        barrier->arrive();
+        message(threadIdx, "cont");
+      }
     }
+    message(threadIdx, "leave");
+    barrier->leave();
   }
-  message(threadIdx, "leave");
-  barrier->leave();
-}
-  
+
   void message(int threadIdx, const char* s) {
     if (!verbose_) {
       return;
@@ -80,15 +79,13 @@ class BarrierTest : public testing::Test {
   std::mutex mtx_;
 };
 
-
-
-
 TEST_F(BarrierTest, basic) {
   constexpr int32_t kNumThreads = 20;
   std::vector<std::thread> threads;
   threads.reserve(kNumThreads);
   for (int32_t threadIndex = 0; threadIndex < kNumThreads; ++threadIndex) {
-    threads.push_back(std::thread([this, threadIndex]() { testFunc(threadIndex); }));
+    threads.push_back(
+        std::thread([this, threadIndex]() { testFunc(threadIndex); }));
   }
   for (auto& thr : threads) {
     thr.join();

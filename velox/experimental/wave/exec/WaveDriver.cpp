@@ -107,25 +107,25 @@ void WaveBarrier::leave() {
   maybeReleaseAcquireLocked();
 }
 
-  namespace {
-int32_t  getTid() {
-    #if !defined(__APPLE__)
-    // This is a debugging feature disabled on the Mac since syscall
-    // is deprecated on that platform.
-    return syscall(FOLLY_SYS_gettid);
+namespace {
+int32_t getTid() {
+#if !defined(__APPLE__)
+  // This is a debugging feature disabled on the Mac since syscall
+  // is deprecated on that platform.
+  return syscall(FOLLY_SYS_gettid);
 #else
-    return 0;
+  return 0;
 #endif
-  }
-  }
-  
+}
+} // namespace
+
 bool WaveBarrier::acquire(void* reason) {
   folly::SemiFuture<bool> future(false);
   {
     std::lock_guard<std::mutex> l(mutex_);
     if (numJoined_ == 1) {
       exclusiveToken_ = reason;
-    exclusiveTid_ = getTid();
+      exclusiveTid_ = getTid();
       return true;
     }
     auto promise = folly::Promise<bool>();
@@ -164,7 +164,7 @@ void WaveBarrier::release() {
     promises_.push_back(std::move(promise));
     waitFuture = std::move(future);
     exclusiveTid_ = 0;
-    exclusiveToken_ = nullptr; 
+    exclusiveToken_ = nullptr;
     maybeReleaseAcquireLocked();
   }
   waitFor(std::move(waitFuture));
@@ -376,7 +376,7 @@ void WaveDriver::prepareAdvance(
   }
   if (driversToken) {
     barrier_->acquire(driversToken);
-    auto guard = folly::makeGuard([&]() {     barrier_->release(); });
+    auto guard = folly::makeGuard([&]() { barrier_->release(); });
 
     waitForArrival(pipeline);
     pipeline.operators[from]->callUpdateStatus(

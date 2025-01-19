@@ -135,18 +135,16 @@ void Project::schedule(WaveStream& stream, int32_t maxRows) {
             VELOX_CHECK_NOT_NULL(kernel);
             auto numBranches = exes[0]->programShared->numBranches();
             void* params = &control->params;
-	    // The count of TBs is the BlockStatus count ceil
-	    // numRowsPerThread, i.e. 11 blocks with 4 rows per thread
-	    // is 3. The TBs in the launch is this times the number of
-	    // program branches.
-	    auto numTBs = numBranches * bits::roundUp(control->params.numBlocks, control->params.numRowsPerThread) / control->params.numRowsPerThread;
+            // The count of TBs is the BlockStatus count ceil
+            // numRowsPerThread, i.e. 11 blocks with 4 rows per thread
+            // is 3. The TBs in the launch is this times the number of
+            // program branches.
+            auto numTBs = numBranches *
+                bits::roundUp(control->params.numBlocks,
+                              control->params.numRowsPerThread) /
+                control->params.numRowsPerThread;
             kernel->launch(
-                0,
-                numTBs,
-                kBlockSize,
-                control->sharedMemorySize,
-                out,
-                &params);
+                0, numTBs, kBlockSize, control->sharedMemorySize, out, &params);
           }
           stream.checkExecutables();
         });

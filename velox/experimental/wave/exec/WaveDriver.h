@@ -79,7 +79,7 @@ class WaveBarrier {
 
   // Thread holding the barrier. For debugging.
   int32_t exclusiveTid_{0};
-  
+
   // Number of threads to coordinate.
   int32_t numJoined_{0};
 

@@ -141,8 +141,8 @@ TEST_F(FilterProjectTest, error) {
   CursorParameters params;
   params.maxDrivers = 3;
   params.planNode = exec::test::PlanBuilder()
-    .values({data, data, data}, true, 3)
-    .project({"5000000 / (c0 - 5000)"})
+                        .values({data, data, data}, true, 3)
+                        .project({"5000000 / (c0 - 5000)"})
                         .planNode();
 
   auto cursor = TaskCursor::create(params);

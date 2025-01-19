@@ -756,8 +756,7 @@ LaunchControl* WaveStream::prepareProgramLaunch(
     Stream* stream) {
   static_assert(Operand::kPointersInOperand * sizeof(void*) == sizeof(Operand));
   auto rowsPerThread = FLAGS_wave_rows_per_thread;
-  int32_t blocksPerExe =
-    bits::roundUp(inputBlocksPerExe, rowsPerThread);
+  int32_t blocksPerExe = bits::roundUp(inputBlocksPerExe, rowsPerThread);
   auto& controlVector = launchControl_[key];
   LaunchControl* controlPtr;
   if (controlVector.size() > nthLaunch) {
