@@ -1047,7 +1047,7 @@ void WaveStream::checkExecutables() const {
   }
 }
 
-void WaveStream::throwIfError(std::function<void (const KernelError*)> action) {
+void WaveStream::throwIfError(std::function<void(const KernelError*)> action) {
   auto numBlocks = bits::roundUp(numRows_, kBlockSize) / kBlockSize;
   auto hostSide = hostBlockStatus();
   int32_t errorOffset = bits::roundUp(numBlocks * sizeof(BlockStatus), 8);

@@ -20,8 +20,8 @@
 #include "velox/common/testutil/TestValue.h"
 #include "velox/exec/Task.h"
 #include "velox/experimental/wave/exec/Instruction.h"
-#include "velox/experimental/wave/exec/WaveOperator.h"
 #include "velox/experimental/wave/exec/ToWave.h"
+#include "velox/experimental/wave/exec/WaveOperator.h"
 
 DEFINE_int32(
     max_streams_per_driver,

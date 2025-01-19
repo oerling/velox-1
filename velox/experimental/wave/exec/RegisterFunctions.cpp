@@ -39,7 +39,7 @@ bool registerBinaryNumeric(
   "(WaveShared* shared, ErrorCode& laneStatus, bool insideTry, " \
   "int32_t grid, int32_t block, $1$ x, $2$ y)"
 
-#define CHECK_DIV0                            \
+#define CHECK_DIV0 \
   "  if (y == 0) { setError(shared, laneStatus, insideTry, 1); return 0; }\n"
 
 const char* divideText =

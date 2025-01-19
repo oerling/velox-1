@@ -81,10 +81,11 @@ class Stream {
   deviceToHostAsync(void* hostAddress, const void* deviceAddress, size_t size);
 
   // Enqueues a copy from device constant to host.
-  void
-  deviceConstantToHostAsync(void* hostAddress, const void* deviceAddress, size_t size);
+  void deviceConstantToHostAsync(
+      void* hostAddress,
+      const void* deviceAddress,
+      size_t size);
 
-  
   /// Adds a callback to be invoked after pending processing is done.
   void addCallback(std::function<void()> callback);
 

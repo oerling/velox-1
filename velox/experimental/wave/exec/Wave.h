@@ -1008,7 +1008,7 @@ class WaveStream {
   void checkBlockStatuses() const;
 
   /// calls 'action' on the error on 'this' if the error is non-empty.
-  void throwIfError(std::function<void (const KernelError*)> action);
+  void throwIfError(std::function<void(const KernelError*)> action);
 
   /// Returns the Executable associated with 'this' whose Program contains
   /// 'instruction'. nullptr if not found.
