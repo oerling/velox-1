@@ -308,7 +308,7 @@ void Compute::generateMain(CompileState& state, int32_t /*syncLable*/) {
           tryLabel.value());
     } else {
       state.generated() << fmt::format(
-          "  if (laneStatus != ErrorCode::kOk) { goto sync{};}\n",
+          "  if (laneStatus != ErrorCode::kOk) {{ goto sync{}; }}\n",
           state.nextSyncLabel());
     }
   }

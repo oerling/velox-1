@@ -32,13 +32,13 @@ inline T* __device__ gridStatus(const WaveShared* shared, int32_t gridState) {
       gridState);
 }
 
-  inline __device__ void setError(WaveShared* shared, ErrorCode& laneStatus, bool insideTry, const char* message, int64_t n = 0) {
+  inline __device__ void setError(WaveShared* shared, ErrorCode& laneStatus, bool insideTry, const char* message, int32_t size,int64_t n = 0) {
   laneStatus = ErrorCode::kError;
   if (insideTry) {
     return;
   }
   auto* error = gridStatus<KernelError>(shared, 0);
-  error->messageAndTag = message;
+  error->messageAndLength = reinterpret_cast<uint64_t>(message) | (static_cast<uint64_t>(size) << 48);;
 }
 
 template <typename T>
@@ -278,6 +278,8 @@ __device__ inline T& flatResult(Operand* op, int32_t blockBase) {
   }
 
 #define PROGRAM_EPILOGUE()                                \
+  shared->status->errors[threadIdx.x] = laneStatus;       \
+  __syncthreads(); \
   if (threadIdx.x == 0) {                                 \
     shared->status->numRows = shared->numRows;            \
     if (++shared->nthBlock >= shared->numRowsPerThread) { \
@@ -288,7 +290,6 @@ __device__ inline T& flatResult(Operand* op, int32_t blockBase) {
       shared->blockBase += kBlockSize;                    \
     }                                                     \
   }                                                       \
-  shared->status->errors[threadIdx.x] = laneStatus;       \
   __syncthreads();                                        \
   if (!shared->stop) {                                    \
     goto nextBlock;                                       \

@@ -66,7 +66,7 @@ void waitFor(ContinueFuture future) {
 bool waitForBool(folly::SemiFuture<bool> future) {
   return std::move(future)
       .via(&folly::QueuedImmediateExecutor::instance())
-      .value();
+      .get();
 }
 
 void WaveBarrier::enter() {
@@ -88,37 +88,55 @@ void WaveBarrier::enter() {
 }
 
 void WaveBarrier::maybeReleaseAcquireLocked() {
+  if (exclusiveToken_) {
+    return;
+  }
   if (numJoined_ - numInArrive_ == exclusivePromises_.size() &&
       !exclusivePromises_.empty()) {
     exclusiveToken_ = exclusiveTokens_.back();
-    exclusivePromises_.back().setValue(true);
+    auto promise = std::move(exclusivePromises_.back());
     exclusivePromises_.pop_back();
     exclusiveTokens_.pop_back();
+    promise.setValue(true);
   }
 }
 
 void WaveBarrier::leave() {
-  VELOX_CHECK_NULL(exclusiveToken_);
   std::lock_guard<std::mutex> l(mutex_);
   --numJoined_;
   maybeReleaseAcquireLocked();
 }
 
+  namespace {
+int32_t  getTid() {
+    #if !defined(__APPLE__)
+    // This is a debugging feature disabled on the Mac since syscall
+    // is deprecated on that platform.
+    return syscall(FOLLY_SYS_gettid);
+#else
+    return 0;
+#endif
+  }
+  }
+  
 bool WaveBarrier::acquire(void* reason) {
   folly::SemiFuture<bool> future(false);
   {
     std::lock_guard<std::mutex> l(mutex_);
     if (numJoined_ == 1) {
       exclusiveToken_ = reason;
+    exclusiveTid_ = getTid();
       return true;
     }
     auto promise = folly::Promise<bool>();
-    auto future = promise.getSemiFuture();
+    future = promise.getSemiFuture();
     exclusivePromises_.push_back(std::move(promise));
     exclusiveTokens_.push_back(reason);
     maybeReleaseAcquireLocked();
   }
-  return waitForBool(std::move(future));
+  waitForBool(std::move(future));
+  exclusiveTid_ = getTid();
+  return true;
 }
 
 void WaveBarrier::release() {
@@ -128,18 +146,25 @@ void WaveBarrier::release() {
     std::lock_guard<std::mutex> l(mutex_);
     if (numJoined_ == 1) {
       exclusiveToken_ = nullptr;
+      exclusiveTid_ = 0;
       return;
     }
     if (exclusivePromises_.empty()) {
+      exclusiveToken_ = nullptr;
+      exclusiveTid_ = 0;
+      numInArrive_ = 0;
       for (auto& promise : promises_) {
         promise.setValue();
       }
-      numInArrive_ = 0;
+      promises_.clear();
       return;
     }
     auto [promise, future] = makeVeloxContinuePromiseContract("WaveDriver");
+    ++numInArrive_;
     promises_.push_back(std::move(promise));
     waitFuture = std::move(future);
+    exclusiveTid_ = 0;
+    exclusiveToken_ = nullptr; 
     maybeReleaseAcquireLocked();
   }
   waitFor(std::move(waitFuture));
@@ -351,10 +376,11 @@ void WaveDriver::prepareAdvance(
   }
   if (driversToken) {
     barrier_->acquire(driversToken);
+    auto guard = folly::makeGuard([&]() {     barrier_->release(); });
+
     waitForArrival(pipeline);
     pipeline.operators[from]->callUpdateStatus(
         stream, advanceVector[exclusiveIndex]);
-    barrier_->release();
   }
 }
 
@@ -463,6 +489,7 @@ Advance WaveDriver::advance(int pipelineIdx) {
           waitUs += WaveTime::getMicro() - waitingSince;
           isWaiting = false;
         }
+        arrived->throwIfError();
         moveTo(pipeline.running, i, pipeline.arrived);
         if (pipeline.makesHostResult) {
           result_ = makeResult(*arrived, lastSet);

@@ -757,7 +757,7 @@ LaunchControl* WaveStream::prepareProgramLaunch(
   static_assert(Operand::kPointersInOperand * sizeof(void*) == sizeof(Operand));
   auto rowsPerThread = FLAGS_wave_rows_per_thread;
   int32_t blocksPerExe =
-      bits::roundUp(inputBlocksPerExe, rowsPerThread) / rowsPerThread;
+    bits::roundUp(inputBlocksPerExe, rowsPerThread);
   auto& controlVector = launchControl_[key];
   LaunchControl* controlPtr;
   if (controlVector.size() > nthLaunch) {
@@ -857,10 +857,10 @@ LaunchControl* WaveStream::prepareProgramLaunch(
     control.params.status = addBytes<BlockStatus*>(start, statusOffset);
     deviceBlockStatus_ = control.params.status;
     // Memory is already set to all 0.
-    for (auto i = 0; i < blocksPerExe; ++i) {
+    for (auto i = 0; i < inputBlocksPerExe; ++i) {
       auto status = &control.params.status[i];
       status->numRows =
-          i == blocksPerExe - 1 ? inputRows % kBlockSize : kBlockSize;
+          i == inputBlocksPerExe - 1 ? inputRows % kBlockSize : kBlockSize;
     }
   } else {
     control.params.status = inputControl->params.status;
@@ -906,7 +906,7 @@ LaunchControl* WaveStream::prepareProgramLaunch(
       ++stateFill;
     }
   }
-  control.params.numBlocks = blocksPerExe;
+  control.params.numBlocks = inputBlocksPerExe;
   control.params.streamIdx = streamIdx_;
   if (!exes.empty()) {
     ++stats_.numKernels;
@@ -1053,12 +1053,12 @@ void WaveStream::throwIfError() {
   auto hostSide = hostBlockStatus();
   int32_t errorOffset = bits::roundUp(numBlocks * sizeof(BlockStatus), 8);
   auto error = addBytes<KernelError*>(hostSide, errorOffset);
-  if (error->messageAndTag) {
-    auto ptr = reinterpret_cast<uintptr_t>(error->messageAndTag);
-    auto tag = ptr >> 48;
+  if (error->messageAndLength) {
+    auto ptr = error->messageAndLength;
+    auto bytes = ptr >> 48;
     ptr &= bits::lowMask(48);
     std::string str;
-    str.resize(100);
+    str.resize(bytes - 1);
     streams_[0]->deviceToHostAsync(
         str.data(), reinterpret_cast<const char*>(ptr), str.size());
     streams_[0]->wait();

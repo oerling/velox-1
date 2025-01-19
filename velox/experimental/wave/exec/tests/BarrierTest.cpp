@@ -39,49 +39,59 @@ using namespace facebook::velox::wave;
 
 class BarrierTest : public testing::Test {
  protected:
-};
 
-std::array<std::atomic<int32_t>, 100> acqSuccess = {};
-std::array<std::atomic<int32_t>, 100> acqFail = {};
-std::array<std::atomic<int32_t>, 10> numInside = {};
-
-void testFunc(int32_t threadIdx) {
+  void testFunc(int32_t threadIdx) {
   auto barrierIdx = threadIdx / 10;
   auto name = fmt::format("bar{}", barrierIdx);
   auto barrier = WaveBarrier::get(name, 0, 0);
+  message(threadIdx, "enter");
+  barrier->enter();
   for (auto action = 0; action < 100; ++action) {
-    barrier->enter();
-    ++numInside[barrierIdx];
     std::this_thread::sleep_for(std::chrono::milliseconds(1)); // NOLINT
-    if (action % 10 == 0) {
+    if (action % 10 == 0 && threadIdx % 10 < 5) {
       void* reason = reinterpret_cast<void*>(action + 1);
-      --numInside[barrierIdx];
-
-      bool success = barrier->acquire(reason);
-      if (success) {
-        ASSERT_EQ(0, numInside[barrierIdx]);
-        std::this_thread::sleep_for(std::chrono::milliseconds(10)); // NOLINT
-        ++acqSuccess[action];
-        barrier->release();
-      } else {
-        ++acqFail[action];
-        continue;
-      }
+      message(threadIdx, "acq");
+      barrier->acquire(reason);
+      message(threadIdx, "exc");
+      std::this_thread::sleep_for(std::chrono::milliseconds(10)); // NOLINT
+      ++numAcquired_;
+      message(threadIdx, "rel");
+      barrier->release();
     } else {
-      --numInside[barrierIdx];
+      message(threadIdx, "arrive");
       barrier->arrive();
+      message(threadIdx, "cont");
     }
   }
+  message(threadIdx, "leave");
+  barrier->leave();
 }
+  
+  void message(int threadIdx, const char* s) {
+    if (!verbose_) {
+      return;
+    }
+    std::lock_guard<std::mutex> l(mtx_);
+    std::cout << s << " " << threadIdx << std::endl;
+  }
+
+  bool verbose_{false};
+  std::atomic<int32_t> numAcquired_{0};
+  std::mutex mtx_;
+};
+
+
+
 
 TEST_F(BarrierTest, basic) {
   constexpr int32_t kNumThreads = 20;
   std::vector<std::thread> threads;
   threads.reserve(kNumThreads);
   for (int32_t threadIndex = 0; threadIndex < kNumThreads; ++threadIndex) {
-    threads.push_back(std::thread([threadIndex]() { testFunc(threadIndex); }));
+    threads.push_back(std::thread([this, threadIndex]() { testFunc(threadIndex); }));
   }
   for (auto& thr : threads) {
     thr.join();
   }
+  EXPECT_EQ(5 * kNumThreads, numAcquired_);
 }

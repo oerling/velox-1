@@ -134,6 +134,22 @@ TEST_F(FilterProjectTest, filterProject) {
       vectors);
 }
 
+TEST_F(FilterProjectTest, error) {
+  auto data = makeRowVector(
+      {makeFlatVector<int64_t>(12'000, [](auto row) { return row; })});
+
+  CursorParameters params;
+  params.maxDrivers = 3;
+  params.planNode = exec::test::PlanBuilder()
+    .values({data, data, data}, true, 3)
+    .project({"5000000 / (c0 - 5000)"})
+                        .planNode();
+
+  auto cursor = TaskCursor::create(params);
+
+  EXPECT_THROW(while (cursor->moveNext()){}, VeloxUserError);
+}
+
 TEST_F(FilterProjectTest, ifs) {
   GTEST_SKIP();
   std::vector<RowVectorPtr> vectors;

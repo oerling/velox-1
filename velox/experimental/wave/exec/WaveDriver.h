@@ -77,6 +77,9 @@ class WaveBarrier {
   // Concatenation of task id and pipeline and driver id.
   std::string idString_;
 
+  // Thread holding the barrier. For debugging.
+  int32_t exclusiveTid_{0};
+  
   // Number of threads to coordinate.
   int32_t numJoined_{0};
 

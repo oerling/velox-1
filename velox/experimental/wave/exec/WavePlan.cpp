@@ -669,7 +669,7 @@ bool isSink(const PipelineCandidate& candidate) {
   bool result;
   for (auto i = 0; i < level.size(); ++i) {
     auto& box = level[i];
-    bool sink = box.steps.back()->isSink();
+    bool sink = !box.steps.empty() && box.steps.back()->isSink();
     if (i == 0) {
       result = sink;
     } else {
@@ -774,8 +774,9 @@ void CompileState::planSegment(
       break;
     }
     case BoundaryType::kExpr: {
+      bool mayDelay = &segment != &segments_.back();
       for (auto i = 0; i < segment.topLevelDefined.size(); ++i) {
-        placeExpr(candidate, segment.topLevelDefined[i], true);
+        placeExpr(candidate, segment.topLevelDefined[i], mayDelay);
       }
       break;
     }
