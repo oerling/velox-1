@@ -40,8 +40,7 @@ bool registerBinaryNumeric(
   "int32_t grid, int32_t block, $1$ x, $2$ y)"
 
 #define CHECK_DIV0                            \
-  "  const char msg[] = \"Divideby zero\";\n" \
-  "  if (y == 0) { setError(shared, laneStatus, insideTry, msg, sizeof(msg)); return 0; }\n"
+  "  if (y == 0) { setError(shared, laneStatus, insideTry, 1); return 0; }\n"
 
 const char* divideText =
     "$R$ divide" FULL_BINARY_ARGS "{\n" CHECK_DIV0 " return x / y; }";
@@ -73,6 +72,8 @@ void registerWaveFunctions() {
       "gt", FunctionMetadata(), "bool gt($1$ x, $2$ y) { return x > y; }");
   registerBinaryNumeric(
       "gte", FunctionMetadata(), "bool gte($1$ x, $2$ y) { return x >= y; }");
+
+  waveRegistry().registerMessage(1, "Divide by 0");
 }
 
 } // namespace facebook::velox::wave

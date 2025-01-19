@@ -252,6 +252,20 @@ void Stream::deviceToHostAsync(
       stream_->stream));
 }
 
+void Stream::deviceConstantToHostAsync(
+    void* hostAddress,
+    const void* deviceAddress,
+    size_t size) {
+  CUDA_CHECK(cudaMemcpyFromSymbolAsync(
+      hostAddress,
+      *reinterpret_cast<const char*>(deviceAddress),
+      size,
+      0,
+      cudaMemcpyDeviceToHost,
+      stream_->stream));
+}
+
+
 namespace {
 struct CallbackData {
   CallbackData(std::function<void()> callback)

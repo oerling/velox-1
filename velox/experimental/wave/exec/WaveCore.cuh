@@ -32,13 +32,13 @@ inline T* __device__ gridStatus(const WaveShared* shared, int32_t gridState) {
       gridState);
 }
 
-  inline __device__ void setError(WaveShared* shared, ErrorCode& laneStatus, bool insideTry, const char* message, int32_t size,int64_t n = 0) {
+  inline __device__ void setError(WaveShared* shared, ErrorCode& laneStatus, bool insideTry, int32_t messageEnum, int64_t extra = 0) {
   laneStatus = ErrorCode::kError;
   if (insideTry) {
     return;
   }
   auto* error = gridStatus<KernelError>(shared, 0);
-  error->messageAndLength = reinterpret_cast<uint64_t>(message) | (static_cast<uint64_t>(size) << 48);;
+  error->messageEnum = messageEnum;
 }
 
 template <typename T>

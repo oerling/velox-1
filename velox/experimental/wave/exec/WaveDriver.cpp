@@ -21,6 +21,7 @@
 #include "velox/exec/Task.h"
 #include "velox/experimental/wave/exec/Instruction.h"
 #include "velox/experimental/wave/exec/WaveOperator.h"
+#include "velox/experimental/wave/exec/ToWave.h"
 
 DEFINE_int32(
     max_streams_per_driver,
@@ -316,6 +317,11 @@ void moveTo(
   to.push_back(std::move(from[i]));
   from.erase(from.begin() + i);
 }
+
+void interpretError(const KernelError* error) {
+  auto string = waveRegistry().message(error->messageEnum);
+  VELOX_USER_FAIL(string);
+}
 } // namespace
 
 exec::BlockingReason WaveDriver::processArrived(Pipeline& pipeline) {
@@ -415,7 +421,7 @@ void WaveDriver::waitForArrival(Pipeline& pipeline) {
         incStats((pipeline.running[i]->stats()));
         pipeline.running[i]->setState(WaveStream::State::kNotRunning);
         pipeline.running[i]->checkBlockStatuses();
-        pipeline.running[i]->throwIfError();
+        pipeline.running[i]->throwIfError(interpretError);
         moveTo(pipeline.running, i, pipeline.arrived);
       }
       ++waitLoops;
@@ -489,7 +495,7 @@ Advance WaveDriver::advance(int pipelineIdx) {
           waitUs += WaveTime::getMicro() - waitingSince;
           isWaiting = false;
         }
-        arrived->throwIfError();
+        arrived->throwIfError(interpretError);
         moveTo(pipeline.running, i, pipeline.arrived);
         if (pipeline.makesHostResult) {
           result_ = makeResult(*arrived, lastSet);

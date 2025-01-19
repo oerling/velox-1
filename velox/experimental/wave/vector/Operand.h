@@ -168,7 +168,7 @@ struct KernelError {
   /// message is compleemented by 'number' (kInt64Param) or
   /// 'ptr'kStringParam) (k. If kNoParam the string is the only error
   /// info.
-  uint64_t messageAndLength{0};
+  int32_t messageEnum{0};
   int64_t extra;
 };
 

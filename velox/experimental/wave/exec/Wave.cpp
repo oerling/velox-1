@@ -1047,22 +1047,13 @@ void WaveStream::checkExecutables() const {
   }
 }
 
-void WaveStream::throwIfError() {
+void WaveStream::throwIfError(std::function<void (const KernelError*)> action) {
   auto numBlocks = bits::roundUp(numRows_, kBlockSize) / kBlockSize;
   auto hostSide = hostBlockStatus();
   int32_t errorOffset = bits::roundUp(numBlocks * sizeof(BlockStatus), 8);
   auto error = addBytes<KernelError*>(hostSide, errorOffset);
-  if (error->messageAndLength) {
-    auto ptr = error->messageAndLength;
-    auto bytes = ptr >> 48;
-    ptr &= bits::lowMask(48);
-    std::string str;
-    str.resize(bytes - 1);
-    streams_[0]->deviceToHostAsync(
-        str.data(), reinterpret_cast<const char*>(ptr), str.size());
-    streams_[0]->wait();
-    str.resize(strlen(str.data()));
-    VELOX_USER_FAIL(str);
+  if (error->messageEnum) {
+    action(error);
   }
 }
 

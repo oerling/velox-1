@@ -64,5 +64,22 @@ FunctionDefinition WaveRegistry::makeDefinition(
   }
   return {replaced, entry.includeLine};
 }
+  bool WaveRegistry::registerMessage(int32_t key, std::string message) {
+    if (messages_.count(key)) {
+      VELOX_FAIL("Duplicate message registration for key {}", key);
+    }
+    messages_[key] = std::move(message);
+    return true;
+  }
 
+  
+std::string WaveRegistry::message(int32_t key) {
+  auto it = messages_.find(key);
+  if (it == messages_.end()) {
+    return fmt::format("No message for code {}", key);
+  }
+  return it->second;
+}
+
+  
 } // namespace facebook::velox::wave
