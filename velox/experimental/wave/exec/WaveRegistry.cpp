@@ -65,7 +65,8 @@ FunctionDefinition WaveRegistry::makeDefinition(
   return {replaced, entry.includeLine};
 }
 bool WaveRegistry::registerMessage(int32_t key, std::string message) {
-  if (messages_.count(key)) {
+  auto previous = messages_[key];
+  if (!previous.empty() && previous != message) {
     VELOX_FAIL("Duplicate message registration for key {}", key);
   }
   messages_[key] = std::move(message);

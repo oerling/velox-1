@@ -184,7 +184,7 @@ class TableScanTest : public virtual HiveConnectorTestBase,
             core::QueryConfig::kMaxSplitPreloadPerDriver,
             std::to_string(numPrefetchSplit))
         .splits(splits)
-        .maxDrivers(2)
+        .maxDrivers(numDrivers_)
         .assertResults(duckDbSql);
   }
 
@@ -237,6 +237,7 @@ class TableScanTest : public virtual HiveConnectorTestBase,
   std::unique_ptr<VectorFuzzer> fuzzer_;
   int32_t numBatches_ = 3;
   int32_t batchSize_ = 20'000;
+  int32_t numDrivers_{1};
   std::vector<RowVectorPtr> vectors_;
   bool dumpData_{false};
   int64_t roundTo_{1};

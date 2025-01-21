@@ -654,6 +654,13 @@ ProgramKey CompileState::makeLevelText(
   auto kernelName = fmt::format("wavegen{}", ++kernelCounter_);
   kernelEntryPoints_ = {fmt::format("facebook::velox::wave::{}", kernelName)};
   generated_ << "  GENERATED_PREAMBLE(0);\n";
+  auto& params = currentCandidate_->levelParams[kernelSeq_];
+  int32_t numRegs =
+      params.input.size() + params.local.size() + params.output.size();
+  for (auto i = 0; i < numRegs; i += 32) {
+    generated_ << fmt::format("  nulls{} = ~0;\n", i / 32);
+  }
+
   for (branchIdx_ = 0; branchIdx_ < level.size(); ++branchIdx_) {
     auto& box = level[branchIdx_];
     currentBox_ = &box;
@@ -720,11 +727,8 @@ ProgramKey CompileState::makeLevelText(
              "void __global__ __launch_bounds__(1024) {}(KernelParams params) {{\n",
              kernelName);
 
-  auto& params = currentCandidate_->levelParams[kernelSeq_];
-  int32_t numRegs =
-      params.input.size() + params.local.size() + params.output.size();
   for (auto i = 0; i < numRegs; i += 32) {
-    head << fmt::format(" uint32_t nulls{} = ~0;\n", i / 32);
+    head << fmt::format(" uint32_t nulls{};\n", i / 32);
   }
   head << declarations_.str();
   head << generated_.str();

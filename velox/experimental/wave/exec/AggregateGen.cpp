@@ -18,6 +18,31 @@
 
 namespace facebook::velox::wave {
 
+  void AggregateGenerator::loadArgs(
+      CompileState& state,
+      const AggregateProbe& probe,
+      const AggregateUpdate& update) const {
+    // See if there are arg computations in inlinedUpdates
+    int32_t beginArgs = 0;
+    int32_t endArgs = 0;
+    for (auto i = 0; i < probe.inlinedUpdates.size(); ++i) {
+      if (probe.inlinedUpdates[i] == &update) {
+	endArgs = i;
+	break;
+      }
+      if (probe.inlinedUpdates[i]->kind() == StepKind::kAggregateUpdate) {
+	beginArgs = i + 1;
+      }
+    }
+    auto syncLabel = state.nextSyncLabel();
+    state.newSyncLabel();
+    for (auto i = beginArgs; i < endArgs; ++i) {
+      const_cast<KernelStep*>(probe.inlinedUpdates[i])->generateMain(state, syncLabel);
+    }
+    state.ensureOperand(update.args[0]);
+    state.generated() << fmt::format("  sync{}: ;\n", syncLabel);
+  }
+  
 std::string makeAggregateRow(CompileState& state, const AggregateProbe& probe) {
   std::stringstream out;
   out << "struct HashRow {\n"
@@ -166,7 +191,6 @@ void makeUpdateLambda(
   for (auto lastIdx = 0; lastIdx < updates.size(); ++lastIdx) {
     auto* step = updates[lastIdx];
     if (step->kind() != StepKind::kAggregateUpdate) {
-      const_cast<KernelStep*>(step)->generateMain(state, -1);
       continue;
     }
     auto& update = step->as<AggregateUpdate>();
@@ -222,14 +246,8 @@ void makeNonGroupedAggregation(
         deferred.clear();
       }
     };
-    for (auto lastIdx = i;
-         lastIdx < probe.inlinedUpdates.size() && lastIdx < i + 32;
-         ++lastIdx) {
-      auto* step = probe.inlinedUpdates[lastIdx];
-      if (step->kind() != StepKind::kAggregateUpdate) {
-        const_cast<KernelStep*>(step)->generateMain(state, -1);
-        continue;
-      }
+    for (auto i = 0; i < probe.updates.size(); ++i) {
+      auto* step = probe.updates[i];
       auto& update = step->as<AggregateUpdate>();
       update.generator->loadArgs(state, probe, update);
       deferred.push_back(&update);

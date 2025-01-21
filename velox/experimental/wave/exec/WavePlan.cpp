@@ -80,9 +80,6 @@ void AggregateProbe::visitReferences(
   for (auto& key : keys) {
     visitor(key);
   }
-  for (auto& update : inlinedUpdates) {
-    update->visitReferences(visitor);
-  }
 }
 
 void AggregateUpdate::visitReferences(
@@ -732,7 +729,16 @@ void CompileState::placeAggregation(
     }
   }
 }
-
+  bool CompileState::hasSink(int32_t idx) {
+    for (auto i = idx; i < segments_.size(); ++i) {
+      auto bound = segments_[i].boundary;
+      if (bound == BoundaryType::kAggregation) {
+	return true;
+      }
+    }
+    return false;
+  }
+  
 void CompileState::planSegment(
     PipelineCandidate& candidate,
     float inputBatch,
@@ -774,9 +780,10 @@ void CompileState::planSegment(
       break;
     }
     case BoundaryType::kExpr: {
-      bool mayDelay = &segment != &segments_.back();
-      for (auto i = 0; i < segment.topLevelDefined.size(); ++i) {
-        placeExpr(candidate, segment.topLevelDefined[i], mayDelay);
+      bool mayDelay = hasSink(segmentIdx);
+	for (auto i = 0; i < segment.topLevelDefined.size(); ++i) {
+	auto* op = segment.topLevelDefined[i];
+        placeExpr(candidate, op, mayDelay);
       }
       break;
     }
@@ -784,8 +791,9 @@ void CompileState::planSegment(
       auto& filter = segment.steps[0]->as<Filter>();
       placeExpr(candidate, filter.flag, false);
       candidate.currentBox->steps.push_back(&filter);
+      bool mayDelay = hasSink(segmentIdx);
       for (auto i = 0; i < segment.topLevelDefined.size(); ++i) {
-        placeExpr(candidate, segment.topLevelDefined[i], true);
+        placeExpr(candidate, segment.topLevelDefined[i], mayDelay);
       }
       break;
     }
@@ -823,7 +831,7 @@ void PipelineCandidate::markParams(
     int32_t branchIdx,
     std::vector<LevelParams>& params) {
   for (auto stepIdx = 0; stepIdx < box.steps.size(); ++stepIdx) {
-    box.steps[stepIdx]->visitReferences([&](AbstractOperand* op) {
+    auto referenceVisitor = [&](AbstractOperand* op) {
       if (op->constant) {
         return;
       }
@@ -831,8 +839,8 @@ void PipelineCandidate::markParams(
       if (flags.definedIn.kernelSeq < kernelSeq) {
         levelParams[kernelSeq].input.add(op->id);
       }
-    });
-    box.steps[stepIdx]->visitResults([&](AbstractOperand* op) {
+			    };
+    auto resultVisitor = [&](AbstractOperand* op) {
       auto& flags = this->flags(op);
       if (flags.definedIn.empty()) {
         flags.definedIn = CodePosition(kernelSeq, branchIdx, stepIdx);
@@ -844,7 +852,17 @@ void PipelineCandidate::markParams(
       } else {
         levelParams[kernelSeq].local.add(op->id);
       }
-    });
+};
+    auto step = box.steps[stepIdx];
+    step->visitReferences(referenceVisitor);
+    step->visitResults(resultVisitor);
+    if (step->kind() == StepKind::kAggregateProbe) {
+      auto probe = step->as<AggregateProbe>();
+      for (auto j = 0; j < probe.inlinedUpdates.size(); ++j) {
+	probe.inlinedUpdates[j]->visitReferences(referenceVisitor);
+	probe.inlinedUpdates[j]->visitResults(resultVisitor);
+      }
+    }
     box.steps[stepIdx]->visitStates([&](AbstractState* state) {
       levelParams[kernelSeq].states.add(state->id);
     });

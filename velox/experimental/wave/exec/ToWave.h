@@ -200,6 +200,10 @@ struct EndNullCheck : public KernelStep {
 
   void generateMain(CompileState& state, int32_t syncLabel) override;
 
+  std::string toString() const override {
+    return "end null check";
+  }
+  
   AbstractOperand* result;
   int32_t label;
 };
@@ -311,7 +315,7 @@ class AggregateGenerator {
   virtual void loadArgs(
       CompileState& state,
       const AggregateProbe& probe,
-      const AggregateUpdate& update) const = 0;
+      const AggregateUpdate& update) const;
 
   /// Emits the code to update the accumulator. 'peer' in the scope is the lane
   /// from which to load the operands with shfl_sync. 'row' is the row to
@@ -872,6 +876,10 @@ class CompileState {
     return nextSyncLabel_;
   }
 
+  void newSyncLabel() {
+    ++nextSyncLabel_;
+  }
+
   std::optional<int32_t> tryErrorLabel() const {
     return tryErrorLabel_;
   }
@@ -970,6 +978,9 @@ class CompileState {
   void
   placeExpr(PipelineCandidate& candidate, AbstractOperand* op, bool mayDelay);
 
+  // True if there is a sink after 'segmentIdx'.
+  bool hasSink(int32_t sigmentIdx);
+  
   void placeAggregation(PipelineCandidate& candidate, Segment& segment);
 
   NullCheck* addNullCheck(PipelineCandidate& candidate, AbstractOperand* op);

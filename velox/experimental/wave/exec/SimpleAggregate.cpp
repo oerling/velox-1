@@ -66,13 +66,6 @@ class SimpleAggregate : public AggregateGenerator {
     return true;
   }
 
-  void loadArgs(
-      CompileState& state,
-      const AggregateProbe& probe,
-      const AggregateUpdate& update) const {
-    state.ensureOperand(update.args[0]);
-  }
-
   virtual void makeDeduppedUpdate(
       CompileState& state,
       const AggregateProbe& probe,
