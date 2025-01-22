@@ -217,8 +217,7 @@ bool CompileState::compile() {
       std::move(arena_),
       std::move(operators_),
       std::move(resultOrder),
-      runtime_,
-      instructionStatus_);
+      runtime_);
   auto waveOp = waveOpUnique.get();
   waveOp->initialize();
   std::vector<std::unique_ptr<exec::Operator>> added;

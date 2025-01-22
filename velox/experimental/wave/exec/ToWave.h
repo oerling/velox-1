@@ -545,9 +545,14 @@ struct KernelBox {
   std::string toString() const;
 
   std::vector<KernelStep*> steps;
+
   // Number of consecutive wraps (filter, join, unnest...).
   int32_t numWraps{0};
+
   std::vector<std::unique_ptr<AbstractInstruction>> instructions;
+
+  // Only set for the first box in if the kernle has more boxes.
+  std::unordered_map<int32_t, int32_t> kernelEntryPoints_;
 };
 
 // Position of a definition or use of data in a pipeline grid.
@@ -1012,6 +1017,9 @@ class CompileState {
 
   void makeLevel(std::vector<KernelBox>& level);
 
+  void  makeLevelKernel(std::vector<KernelBox>& level);
+
+  
   // Return true if 'nthWrap' is the wrappedAt of any of 'params'.
   bool isWrapInParams(int32_t nthWrap, const LevelParams& params);
 

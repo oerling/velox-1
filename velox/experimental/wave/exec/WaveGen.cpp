@@ -818,17 +818,15 @@ void CompileState::fillExtraWrap(OperandSet& extraWrap) {
 
 void CompileState::makeLevel(std::vector<KernelBox>& level) {
   VELOX_CHECK_EQ(1, level.size(), "Only one program per level supported");
-  std::vector<std::unique_ptr<AbstractInstruction>> instructions;
   int32_t kernelEntryPointCounter = 1;
-  std::unordered_map<int32_t, int32_t> kernelEntryPoints;
   for (branchIdx_ = 0; branchIdx_ < level.size(); ++branchIdx_) {
     currentBox_ = &level[branchIdx_];
     for (stepIdx_ = 0; stepIdx_ < currentBox_->steps.size(); ++stepIdx_) {
       auto instructionUnique =
           currentBox_->steps[stepIdx_]->addInstruction(*this);
       if (instructionUnique) {
-        instructions.push_back(std::move(instructionUnique));
-        auto* instruction = instructions.back().get();
+        currentBox_->instructions.push_back(std::move(instructionUnique));
+        auto* instruction = currentBox_->instructions.back().get();
         instruction->reserveState(instructionStatus_);
         auto* status = instruction->mutableInstructionStatus();
         if (status) {
@@ -838,7 +836,7 @@ void CompileState::makeLevel(std::vector<KernelBox>& level) {
         auto opInst = dynamic_cast<AbstractOperator*>(instruction);
         if (opInst) {
           if (auto* agg = dynamic_cast<AbstractAggregation*>(opInst)) {
-            kernelEntryPoints[agg->continueIdx()] = kernelEntryPointCounter++;
+            currentBox_->kernelEntryPoints_[agg->continueIdx()] = kernelEntryPointCounter++;
           }
           AbstractState* state = opInst->state;
           state->instruction = instruction;
@@ -849,8 +847,8 @@ void CompileState::makeLevel(std::vector<KernelBox>& level) {
 }
 
 void  CompileState::makeLevelKernel(std::vector<KernelBox>& level) {
-
   KernelSpec spec;
+  auto& firstBox = level[0];
   makeLevelText(pipelineIdx_, kernelSeq_, spec);
   std::unique_ptr<CompiledKernel> kernel;
   {
@@ -895,7 +893,7 @@ void  CompileState::makeLevelKernel(std::vector<KernelBox>& level) {
       operands_,
       std::move(states),
       std::move(kernel));
-  for (auto& pair : kernelEntryPoints) {
+  for (auto& pair : firstBox.kernelEntryPoints_) {
     program->addEntryPointForSerial(pair.first, pair.second);
   }
   for (auto& box : level) {
@@ -906,7 +904,7 @@ void  CompileState::makeLevelKernel(std::vector<KernelBox>& level) {
     programs_.push_back(std::move(program));
 }
 
-bool emptyLevel(std::vector<KernelBox> level) {
+bool emptyLevel(const std::vector<KernelBox>& level) {
   return level.empty() || level[0].steps.empty();
 }
 

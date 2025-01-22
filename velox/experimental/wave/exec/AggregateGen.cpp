@@ -292,7 +292,7 @@ void makeAggregateProbe(
   out << checkReturnBlockStatus();
   out << "  if (threadIdx.x == 0 && shared->hasContinue) {\n"
          "    auto ret = gridStatus<AggregateReturn>(shared, "
-      << probe.abstractAggregation->mutableInstructionStatus()->gridState
+      << probe.abstractAggregation ->mutableInstructionStatus()->gridState
       << ");\n"
       // Must load 'state' and 'table' here because thread 0 might have
       // been inactive on entry and have 'table' uninited.
@@ -303,11 +303,7 @@ void makeAggregateProbe(
       << "  table = reinterpret_cast<GpuHashTable*>(state->table);\n"
          "    ret->numDistinct = table->numDistinct;\n"
          "  }\n"
-         "  __syncthreads();\n"
-         "  if (threadIdx.x == 0 && shared->isContinue) {\n"
-         "    shared->isContinue = false;\n"
-         "  }\n"
-         "  __syncthreads();\n";
+    "  __syncthreads();\n";
 }
 
 std::string readAggRow(CompileState& state, const ReadAggregation& read) {

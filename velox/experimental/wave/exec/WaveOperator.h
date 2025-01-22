@@ -100,7 +100,7 @@ class WaveOperator {
   /// InstructionStatus that describes the extra statuses returned
   /// from device for the pipeline that begins with 'this'. Must be
   /// set for the head of each pipeline.
-  InstructionStatus& instructionStatus() const {
+  const InstructionStatus& instructionStatus() const {
     VELOX_CHECK_NE(instructionStatus_.gridStateSize, 0);
     return instructionStatus_;
   }
@@ -225,6 +225,9 @@ class WaveOperator {
   // operands etc. referenced from these.  This does not include buffers for
   // intermediate results.
   std::vector<WaveBufferPtr> executableMemory_;
+
+  // The total size of grid and block level statuses for the pipeline. This must be set for the first operator of any pipeline.
+  InstructionStatus instructionStatus_;
 };
 
 class WaveSourceOperator : public WaveOperator {
