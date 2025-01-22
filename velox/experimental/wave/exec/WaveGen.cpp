@@ -832,6 +832,7 @@ void CompileState::makeLevel(std::vector<KernelBox>& level) {
         instruction->reserveState(instructionStatus_);
         auto* status = instruction->mutableInstructionStatus();
         if (status) {
+	  allStatuses_.push_back(status);
           currentBox_->steps[stepIdx_]->status = *status;
         }
         auto opInst = dynamic_cast<AbstractOperator*>(instruction);
@@ -845,8 +846,10 @@ void CompileState::makeLevel(std::vector<KernelBox>& level) {
       }
     }
   }
+}
 
-  programs_.clear();
+void  CompileState::makeLevelKernel(std::vector<KernelBox>& level) {
+
   KernelSpec spec;
   makeLevelText(pipelineIdx_, kernelSeq_, spec);
   std::unique_ptr<CompiledKernel> kernel;
@@ -895,10 +898,12 @@ void CompileState::makeLevel(std::vector<KernelBox>& level) {
   for (auto& pair : kernelEntryPoints) {
     program->addEntryPointForSerial(pair.first, pair.second);
   }
-  for (auto& i : instructions) {
-    program->add(std::move(i));
+  for (auto& box : level) {
+    for (auto& i : box.instructions) {
+      program->add(std::move(i));
+    }
   }
-  programs_.push_back(std::move(program));
+    programs_.push_back(std::move(program));
 }
 
 bool emptyLevel(std::vector<KernelBox> level) {
@@ -944,6 +949,7 @@ void CompileState::generatePrograms() {
     currentCandidate_ = &selectedPipelines_[pipelineIdx_];
     auto& firstStep = currentCandidate_->steps[0][0].steps.front();
     int32_t start = 0;
+    auto firstOperatorIdx = operators_.size();
     if (firstStep->kind() == StepKind::kTableScan) {
       auto& scanStep = firstStep->as<TableScanStep>();
       operators_.push_back(std::make_unique<TableScan>(
@@ -972,24 +978,34 @@ void CompileState::generatePrograms() {
       }
       makeLevel(currentCandidate_->steps[kernelSeq_]);
     }
+
     instructionStatus_.gridStateSize = instructionStatus_.gridState;
     for (auto* status : allStatuses_) {
       status->gridStateSize = instructionStatus_.gridState;
     }
+    programs_.clear();
+    for (kernelSeq_ = start; kernelSeq_ < currentCandidate_->steps.size();
+         ++kernelSeq_) {
+      if (emptyLevel(currentCandidate_->steps[kernelSeq_])) {
+        continue;
+      }
+      makeLevelKernel(currentCandidate_->steps[kernelSeq_]);
+    }
+
 
     std::vector<std::vector<ProgramPtr>> levels;
     for (auto& program : programs_) {
       levels.emplace_back();
       levels.back().push_back(std::move(program));
     }
-    if (levels.empty()) {
-      return;
+    if (!levels.empty()) {
+      operators_.push_back(std::make_unique<Project>(
+						     *this, selectedPipelines_[pipelineIdx_].outputType, std::move(levels)));
+      currentCandidate_->setOutputIds(
+				      this, operators_.back().get(), start, currentCandidate_->steps.size());
     }
-    operators_.push_back(std::make_unique<Project>(
-        *this, selectedPipelines_[pipelineIdx_].outputType, std::move(levels)));
-    currentCandidate_->setOutputIds(
-        this, operators_.back().get(), start, currentCandidate_->steps.size());
+    operators_.at(firstOperatorIdx)->setInstructionStatus(instructionStatus_);
   }
-}
+  }
 
 } // namespace facebook::velox::wave

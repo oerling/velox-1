@@ -97,6 +97,18 @@ class WaveOperator {
     VELOX_FAIL("Only Project supports callUpdateStatus()");
   }
 
+  /// InstructionStatus that describes the extra statuses returned
+  /// from device for the pipeline that begins with 'this'. Must be
+  /// set for the head of each pipeline.
+  InstructionStatus& instructionStatus() const {
+    VELOX_CHECK_NE(instructionStatus_.gridStateSize, 0);
+    return instructionStatus_;
+  }
+
+  void setInstructionStatus(InstructionStatus status) {
+    instructionStatus_ = status;
+  }
+  
   virtual std::string toString() const;
 
   AbstractOperand* definesSubfield(

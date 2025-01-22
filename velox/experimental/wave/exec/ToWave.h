@@ -547,6 +547,7 @@ struct KernelBox {
   std::vector<KernelStep*> steps;
   // Number of consecutive wraps (filter, join, unnest...).
   int32_t numWraps{0};
+  std::vector<std::unique_ptr<AbstractInstruction>> instructions;
 };
 
 // Position of a definition or use of data in a pipeline grid.

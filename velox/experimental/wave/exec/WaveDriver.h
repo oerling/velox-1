@@ -117,8 +117,7 @@ class WaveDriver : public exec::SourceOperator {
       std::unique_ptr<GpuArena> arena,
       std::vector<std::unique_ptr<WaveOperator>> waveOperators,
       std::vector<OperandId> resultOrder_,
-      std::shared_ptr<WaveRuntimeObjects> runtime,
-      InstructionStatus instructionStatus);
+      std::shared_ptr<WaveRuntimeObjects> runtime);
 
   RowVectorPtr getOutput() override;
 
@@ -286,9 +285,6 @@ class WaveDriver : public exec::SourceOperator {
   // States shared between WaveStreams and WaveDrivers, for example join/group
   // by tables.
   OperatorStateMap stateMap_;
-
-  // Space reserved in BlockStatus array for instruction level return state.
-  InstructionStatus instructionStatus_;
 
   RowVectorPtr result_;
 };

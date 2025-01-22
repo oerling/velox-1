@@ -239,6 +239,11 @@ AdvanceResult AbstractReadAggregation::canAdvance(
   int32_t rowSize = aggState->instruction->rowSize();
   std::lock_guard<std::mutex> l(aggState->mutex);
   if (!aggState->instruction->keys.empty()) {
+    auto maxReadStreams = aggState->instruction->maxReadStreams;
+    auto streamIdx = stream.streamIdx();
+    if (streamIdx >= maxReadStreams) {
+      return {};
+    }
     auto deviceStream = WaveStream::streamFromReserve();
     auto deviceAgg = aggState->alignedHead;
     // On first continue set up the device side row ranges.
@@ -261,7 +266,6 @@ AdvanceResult AbstractReadAggregation::canAdvance(
       auto [r, b] = countResultRows(aggState->ranges, rowSize);
       aggState->numRows = r;
       aggState->bytes = b;
-      auto maxReadStreams = aggState->instruction->maxReadStreams;
       aggState->resultRowPointers =
           stream.arena().allocate<int64_t*>(maxReadStreams);
       deviceAgg->numReadStreams = maxReadStreams;
@@ -280,7 +284,6 @@ AdvanceResult AbstractReadAggregation::canAdvance(
           getSmallTransferArena().allocate<int64_t*>(batchSize + 1);
     }
     int64_t* tempPtr;
-    auto streamIdx = stream.streamIdx();
     if (!aggState->resultRows[streamIdx]) {
       aggState->resultRows[streamIdx] =
           stream.arena().allocate<int64_t*>(batchSize + 1);

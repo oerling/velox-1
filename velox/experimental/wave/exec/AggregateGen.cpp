@@ -344,7 +344,7 @@ void makeReadAggregation(CompileState& state, const ReadAggregation& read) {
   state.declareNamed("int32_t rowIdx;");
   state.declareNamed("int32_t numRows;");
   state.declareNamed("HashRow* row;");
-  out << "  rowIdx = blockIdx.x * kBlockSize + threadIdx.x + 1;\n"
+  out << "  rowIdx = blockBase + threadIdx.x + 1;\n"
          "  numRows = state->resultRowPointers[shared->streamIdx][0];\n"
          "  if (rowIdx <= numRows) {\n"
          "  auto state = reinterpret_cast<DeviceAggregation*>(shared->states["
@@ -363,9 +363,9 @@ void makeReadAggregation(CompileState& state, const ReadAggregation& read) {
   }
   out << readAggRow(state, read);
   out << "  if (threadIdx.x == 0) {\n"
-      << "    shared->numRows = rowIdx + kBlockSize <= numRows \n"
+      << "    shared->numRows = blockBase + kBlockSize <= numRows \n"
       << "   ? kBlockSize \n"
-      << "    : numRows - blockIdx.x * kBlockSize;\n"
+      << "    : numRows - blockBase;\n"
       << "  }\n"
       << "    }\n";
 }

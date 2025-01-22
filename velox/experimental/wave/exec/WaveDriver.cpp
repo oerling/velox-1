@@ -195,8 +195,7 @@ WaveDriver::WaveDriver(
     std::unique_ptr<GpuArena> arena,
     std::vector<std::unique_ptr<WaveOperator>> waveOperators,
     std::vector<OperandId> resultOrder,
-    std::shared_ptr<WaveRuntimeObjects> runtime,
-    InstructionStatus instructionStatus)
+    std::shared_ptr<WaveRuntimeObjects> runtime)
     : exec::SourceOperator(
           driverCtx,
           outputType,
@@ -212,8 +211,7 @@ WaveDriver::WaveDriver(
       runtime_(std::move(runtime)),
       subfields_(runtime_->subfields),
       operands_(runtime_->operands),
-      states_(runtime_->states),
-      instructionStatus_(instructionStatus) {
+      states_(runtime_->states) {
   VELOX_CHECK(!waveOperators.empty());
   deviceArena_ = std::make_unique<GpuArena>(
       100000000, getDeviceAllocator(getDevice()), 400000000);
@@ -533,7 +531,7 @@ Advance WaveDriver::advance(int pipelineIdx) {
           *deviceArena_,
           &operands(),
           &stateMap_,
-          instructionStatus_,
+          pipeline.operators[0]->instructionStatus(),
           streamId);
       stream->setState(WaveStream::State::kHost);
       pipeline.arrived.push_back(std::move(stream));
