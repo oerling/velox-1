@@ -224,6 +224,10 @@ class Program;
 /// repartition output. Can be scoped to a Task pipeline (all Drivers),
 /// WaveStream or to a Program.
 struct OperatorState {
+  OperatorState() = default;
+  OperatorState(std::shared_ptr<GpuArena> arena)
+    : arena(std::move(arena)) {}
+
   virtual ~OperatorState() = default;
 
   template <typename T>
@@ -244,6 +248,9 @@ struct OperatorState {
 
   int32_t id;
 
+  // Arena holding all memory for the resource if the resource is shared between WaveDrivers.
+  std::shared_ptr<GpuArena> arena;
+  
   /// Owns the device side data. Starting address of first is passed to the
   /// kernel. Layout depends on operator.
   std::vector<WaveBufferPtr> buffers;
@@ -252,6 +259,9 @@ struct OperatorState {
 };
 
 struct AggregateOperatorState : public OperatorState {
+  AggregateOperatorState(std::shared_ptr<GpuArena> arena)
+    : OperatorState(std::move(arena)) {}
+
   void allocateAggregateHeader(int32_t size, GpuArena& arena);
 
   /// Sets the sizes in allocators so that the rows run out before the
@@ -308,6 +318,7 @@ struct AggregateOperatorState : public OperatorState {
 };
 
 struct OperatorStateMap {
+  std::mutex mutex;
   folly::F14FastMap<int32_t, std::shared_ptr<OperatorState>> states;
 };
 
@@ -692,13 +703,13 @@ class WaveStream {
   };
 
   WaveStream(
-      GpuArena& arena,
+	     std::shared_ptr<GpuArena> arena,
       GpuArena& deviceArena,
       const std::vector<std::unique_ptr<AbstractOperand>>* operands,
       OperatorStateMap* stateMap,
       InstructionStatus state,
       int16_t streamIdx)
-      : arena_(arena),
+    : arena_(std::move(arena)),
         deviceArena_(deviceArena),
         operands_(operands),
         taskStateMap_(stateMap),
@@ -717,7 +728,7 @@ class WaveStream {
       folly::Range<int32_t*> sizes);
 
   GpuArena& arena() {
-    return arena_;
+    return *arena_;
   }
 
   GpuArena& deviceArena() {
@@ -1014,6 +1025,14 @@ class WaveStream {
   /// 'instruction'. nullptr if not found.
   Executable* executableByInstruction(const AbstractInstruction* instruction);
 
+  OperatorStateMap* taskStateMap() const {
+    return taskStateMap_;
+  }
+
+  const std::shared_ptr<GpuArena>& arenaShared() const {
+    return arena_;
+  }
+  
  private:
   // true if 'op' is nullable in the context of 'this'.
   bool isNullable(const AbstractOperand& op) const;
@@ -1039,7 +1058,7 @@ class WaveStream {
       std::unique_ptr<folly::CPUThreadPoolExecutor>& ptr);
 
   // Unified memory.
-  GpuArena& arena_;
+  std::shared_ptr<GpuArena> arena_;
 
   // Device memory.
   GpuArena& deviceArena_;

@@ -120,7 +120,7 @@ int32_t getTid() {
 }
 } // namespace
 
-bool WaveBarrier::acquire(void* reason) {
+bool WaveBarrier::acquire(void* reason, std::function<void()> preWait) {
   folly::SemiFuture<bool> future(false);
   {
     std::lock_guard<std::mutex> l(mutex_);
@@ -134,6 +134,9 @@ bool WaveBarrier::acquire(void* reason) {
     exclusivePromises_.push_back(std::move(promise));
     exclusiveTokens_.push_back(reason);
     maybeReleaseAcquireLocked();
+  }
+  if (preWait) {
+    preWait();
   }
   waitForBool(std::move(future));
   exclusiveTid_ = getTid();
@@ -171,7 +174,7 @@ void WaveBarrier::release() {
   waitFor(std::move(waitFuture));
 }
 
-void WaveBarrier::arrive() {
+void WaveBarrier::arrive(std::function<void()> preWait) {
   ContinueFuture waitFuture;
   {
     std::lock_guard<std::mutex> l(mutex_);
@@ -184,6 +187,9 @@ void WaveBarrier::arrive() {
     waitFuture = std::move(future);
     maybeReleaseAcquireLocked();
   }
+  if (preWait) {
+    preWait();
+  }
   waitFor(std::move(waitFuture));
 }
 
@@ -192,7 +198,7 @@ WaveDriver::WaveDriver(
     RowTypePtr outputType,
     core::PlanNodeId planNodeId,
     int32_t operatorId,
-    std::unique_ptr<GpuArena> arena,
+    std::shared_ptr<GpuArena> arena,
     std::vector<std::unique_ptr<WaveOperator>> waveOperators,
     std::vector<OperandId> resultOrder,
     std::shared_ptr<WaveRuntimeObjects> runtime)
@@ -204,7 +210,7 @@ WaveDriver::WaveDriver(
           "Wave"),
       barrier_(WaveBarrier::get(
           driverCtx->task->taskId(),
-          driverCtx->driverId,
+          0,
           operatorId)),
       arena_(std::move(arena)),
       resultOrder_(std::move(resultOrder)),
@@ -379,7 +385,7 @@ void WaveDriver::prepareAdvance(
     }
   }
   if (driversToken) {
-    barrier_->acquire(driversToken);
+    barrier_->acquire(driversToken, [&]() { waitForArrival(pipeline);});
     auto guard = folly::makeGuard([&]() { barrier_->release(); });
 
     waitForArrival(pipeline);
@@ -394,7 +400,7 @@ void WaveDriver::runOperators(
     int32_t from,
     int32_t numRows) {
   // Pause here if other WaveDrivers need exclusive access.
-  barrier_->arrive();
+  barrier_->arrive([&](){ waitForArrival(pipeline); });
   // The stream is in 'host' state for any host to device data
   // transfer, then in parallel state after first kernel launch.
   ++stream.stats().numWaves;
@@ -527,10 +533,10 @@ Advance WaveDriver::advance(int pipelineIdx) {
               (FLAGS_max_streams_per_driver *
                operatorCtx_->driverCtx()->driverId);
       auto stream = std::make_unique<WaveStream>(
-          *arena_,
+          arena_,
           *deviceArena_,
           &operands(),
-          &stateMap_,
+          &barrier_->stateMap(),
           pipeline.operators[0]->instructionStatus(),
           streamId);
       stream->setState(WaveStream::State::kHost);

@@ -50,7 +50,7 @@ class BarrierTest : public testing::Test {
       if (action % 10 == 0 && threadIdx % 10 < 5) {
         void* reason = reinterpret_cast<void*>(action + 1);
         message(threadIdx, "acq");
-        barrier->acquire(reason);
+        barrier->acquire(reason, nullptr);
         message(threadIdx, "exc");
         std::this_thread::sleep_for(std::chrono::milliseconds(10)); // NOLINT
         ++numAcquired_;
@@ -58,7 +58,7 @@ class BarrierTest : public testing::Test {
         barrier->release();
       } else {
         message(threadIdx, "arrive");
-        barrier->arrive();
+        barrier->arrive(nullptr);
         message(threadIdx, "cont");
       }
     }

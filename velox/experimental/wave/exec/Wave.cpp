@@ -825,7 +825,7 @@ LaunchControl* WaveStream::prepareProgramLaunch(
   // 1 pointer per exe and an exe-dependent data area.
   int32_t operatorStateOffset = size;
   size += exes.size() * sizeof(void*) + operatorStateBytes;
-  auto buffer = arena_.allocate<char>(size);
+  auto buffer = arena_->allocate<char>(size);
   if (stream) {
     stream->prefetch(nullptr, buffer->as<char>(), buffer->size());
   }
@@ -978,7 +978,7 @@ void WaveStream::makeAggregate(
   auto stream = streamFromReserve();
   if (inst.keys.empty()) {
     int32_t size = inst.rowSize() + sizeof(DeviceAggregation);
-    state.allocateAggregateHeader(size, arena_);
+    state.allocateAggregateHeader(size, *arena_);
     control.head = state.alignedHead;
     control.headSize = size;
     control.rowSize = inst.rowSize();
@@ -988,7 +988,7 @@ void WaveStream::makeAggregate(
     const int32_t numPartitions = 1;
     int32_t size = sizeof(DeviceAggregation) + sizeof(GpuHashTableBase) +
         sizeof(HashPartitionAllocator) * numPartitions;
-    state.allocateAggregateHeader(size, arena_);
+    state.allocateAggregateHeader(size, *arena_);
     auto* header = state.alignedHead;
     auto* hashTable = reinterpret_cast<GpuHashTableBase*>(header + 1);
     HashPartitionAllocator* allocators =
@@ -996,7 +996,7 @@ void WaveStream::makeAggregate(
     int32_t numBuckets = 2048;
     header->table = hashTable;
     WaveBufferPtr table =
-        arena_.allocate<char>(sizeof(GpuBucketMembers) * numBuckets);
+        arena_->allocate<char>(sizeof(GpuBucketMembers) * numBuckets);
     state.buffers.push_back(table);
 
     new (hashTable) GpuHashTableBase(
@@ -1006,7 +1006,7 @@ void WaveStream::makeAggregate(
         reinterpret_cast<RowAllocator*>(allocators));
     auto rowSize = inst.rowSize();
     auto numRows = numBuckets * GpuBucketMembers::kNumSlots;
-    WaveBufferPtr rows = arena_.allocate<char>(rowSize * numRows);
+    WaveBufferPtr rows = arena_->allocate<char>(rowSize * numRows);
     state.buffers.push_back(rows);
     new (allocators) HashPartitionAllocator(
         rows->as<char>(), rows->size(), rows->size(), rowSize);
@@ -1127,13 +1127,24 @@ void Program::getOperatorStates(WaveStream& stream, std::vector<void*>& ptrs) {
   ptrs.resize(operatorStates_.size());
   for (auto i = 0; i < operatorStates_.size(); ++i) {
     auto& operatorState = *operatorStates_[i];
-    auto* state = stream.operatorState(operatorState.stateId);
-    if (!state) {
-      VELOX_CHECK_NOT_NULL(operatorState.create);
-      state = stream.newState(operatorState);
+    if (operatorState.isGlobal) {
+      auto* taskStates = stream.taskStateMap();
+      std::lock_guard<std::mutex> l(taskStates->mutex);
+      auto* state = stream.operatorState(operatorState.stateId);
+      if (!state) {
+	VELOX_CHECK_NOT_NULL(operatorState.create);
+	state = stream.newState(operatorState);
+      }
+      ptrs[i] = state->devicePtr();
+    } else {
+      auto* state = stream.operatorState(operatorState.stateId);
+      if (!state) {
+	VELOX_CHECK_NOT_NULL(operatorState.create);
+	state = stream.newState(operatorState);
+      }
+      ptrs[i] = state->devicePtr();
     }
-    ptrs[i] = state->devicePtr();
-  }
+    }
 }
 
 bool Program::isSink() const {

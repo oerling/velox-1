@@ -1037,7 +1037,8 @@ class CompileState {
   // Generates a check for lane active.
   void generateSkip();
 
-  std::unique_ptr<GpuArena> arena_;
+  std::shared_ptr<GpuArena> arena_;
+
   // The operator and output operand where the Value is first defined.
   DefinesMap definedBy_;
 

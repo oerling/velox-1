@@ -875,7 +875,7 @@ void  CompileState::makeLevelKernel(std::vector<KernelBox>& level) {
     programState->create =
         [inst = abstractInst](
             WaveStream& stream) -> std::shared_ptr<OperatorState> {
-      auto newState = std::make_shared<AggregateOperatorState>();
+								   auto newState = std::make_shared<AggregateOperatorState>(stream.arenaShared());
       newState->instruction = inst;
       stream.makeAggregate(*inst, *newState);
       return newState;

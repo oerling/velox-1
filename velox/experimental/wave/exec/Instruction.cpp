@@ -54,7 +54,6 @@ int32_t countErrors(BlockStatus* status, int32_t numBlocks, ErrorCode error) {
 
 void restockAllocator(
     AggregateOperatorState& state,
-    GpuArena& arena,
     int32_t size,
     HashPartitionAllocator* allocator) {
   // If we can get rows by raising the row limit we do this first.
@@ -66,7 +65,7 @@ void restockAllocator(
     state.ranges.push_back(std::move(allocator->ranges[0]));
     allocator->ranges[0] = std::move(allocator->ranges[1]);
   }
-  auto buffer = arena.allocate<char>(size);
+  auto buffer = state.arena->allocate<char>(size);
   state.buffers.push_back(buffer);
   AllocationRange newRange(
       reinterpret_cast<uintptr_t>(buffer->as<char>()),
@@ -121,7 +120,7 @@ void resupplyHashTable(WaveStream& stream, AbstractInstruction& inst) {
     // limit. Reset fills to limits if over limit.
     allocator->clearOverflows();
     if (allocator->availableFixed() < increment) {
-      restockAllocator(*state, stream.arena(), increment, allocator);
+      restockAllocator(*state, increment, allocator);
     }
   }
   bool rehash = false;
@@ -132,7 +131,7 @@ void resupplyHashTable(WaveStream& stream, AbstractInstruction& inst) {
   if (gridState->numDistinct >= hashTable->maxEntries / 10 * 9) {
     oldBuckets = state->buffers[1];
     numOldBuckets = hashTable->sizeMask + 1;
-    state->buffers[1] = stream.arena().allocate<GpuBucketMembers>(
+    state->buffers[1] = state->arena->allocate<GpuBucketMembers>(
         newSize / GpuBucketMembers::kNumSlots);
     deviceStream->memset(
         state->buffers[1]->as<char>(), 0, state->buffers[1]->size());
@@ -267,7 +266,7 @@ AdvanceResult AbstractReadAggregation::canAdvance(
       aggState->numRows = r;
       aggState->bytes = b;
       aggState->resultRowPointers =
-          stream.arena().allocate<int64_t*>(maxReadStreams);
+	aggState->arena->allocate<int64_t*>(maxReadStreams);
       deviceAgg->numReadStreams = maxReadStreams;
       deviceAgg->resultRowPointers =
           aggState->resultRowPointers->as<uintptr_t*>();
@@ -286,7 +285,7 @@ AdvanceResult AbstractReadAggregation::canAdvance(
     int64_t* tempPtr;
     if (!aggState->resultRows[streamIdx]) {
       aggState->resultRows[streamIdx] =
-          stream.arena().allocate<int64_t*>(batchSize + 1);
+          aggState->arena->allocate<int64_t*>(batchSize + 1);
 
       // Put the new array in the per-stream array in device side state.
       tempPtr = aggState->resultRows[streamIdx]->as<int64_t>();

@@ -50,10 +50,9 @@ class WaveBarrier {
   /// Gets exclusive access. All other threads in the coordinated set are
   /// stopped wen this returns true. If this returns false, another thread
   /// already acquired and released the barrier for 'reason'.
-  bool acquire(void* reason);
+  bool acquire(void* reason, std::function<void()> preWait);
 
-  /// Releases exclusive. The calling thread must have called acquire() first
-  /// and received a true return value.
+  /// Releases exclusive. The calling thread must have called acquire() first.
   void release();
 
   /// Calling thread arrives. If there is no acquire() pending,
@@ -61,11 +60,16 @@ class WaveBarrier {
   /// until all threads with acquire() have called
   /// release(). Acquires are continued one by one after all threads
   /// are either blocked in arrive() or acquire().
-  void arrive();
+  void arrive(std::function<void()> preWait);
 
   static std::shared_ptr<WaveBarrier>
   get(const std::string& taskId, int32_t driverId, int32_t operatorId);
 
+  /// Returns a map of states shared between WaveDrivers of a Velox pipeline.
+  OperatorStateMap& stateMap() {
+    return stateMap_;
+  }
+  
  private:
   // Releases an exclusive waiting caller if non-exclusives are in
   // arrive or have left.
@@ -89,7 +93,9 @@ class WaveBarrier {
   std::vector<folly::Promise<bool>> exclusivePromises_;
   std::vector<void*> exclusiveTokens_;
   void* exclusiveToken_{nullptr};
+  OperatorStateMap stateMap_;
 
+  
   static std::mutex barriersMutex_;
   static std::unordered_map<std::string, std::weak_ptr<WaveBarrier>> barriers_;
 };
@@ -114,7 +120,7 @@ class WaveDriver : public exec::SourceOperator {
       RowTypePtr outputType,
       core::PlanNodeId planNodeId,
       int32_t operatorId,
-      std::unique_ptr<GpuArena> arena,
+      std::shared_ptr<GpuArena> arena,
       std::vector<std::unique_ptr<WaveOperator>> waveOperators,
       std::vector<OperandId> resultOrder_,
       std::shared_ptr<WaveRuntimeObjects> runtime);
@@ -247,7 +253,7 @@ class WaveDriver : public exec::SourceOperator {
   // Supports Task-wide sync between WaveDrivers on different exec::Drivers.
   std::shared_ptr<WaveBarrier> barrier_;
 
-  std::unique_ptr<GpuArena> arena_;
+  std::shared_ptr<GpuArena> arena_;
   std::unique_ptr<GpuArena> deviceArena_;
 
   ContinueFuture blockingFuture_{ContinueFuture::makeEmpty()};
@@ -284,7 +290,6 @@ class WaveDriver : public exec::SourceOperator {
 
   // States shared between WaveStreams and WaveDrivers, for example join/group
   // by tables.
-  OperatorStateMap stateMap_;
 
   RowVectorPtr result_;
 };

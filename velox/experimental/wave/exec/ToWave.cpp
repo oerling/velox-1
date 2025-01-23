@@ -180,11 +180,9 @@ bool CompileState::reserveMemory() {
   }
   auto* allocator = getAllocator(getDevice());
   arena_ =
-      std::make_unique<GpuArena>(FLAGS_velox_wave_arena_unit_size, allocator);
+      std::make_shared<GpuArena>(FLAGS_velox_wave_arena_unit_size, allocator);
   return true;
 }
-
-
 
 bool CompileState::compile() {
   auto operators = driver_.operators();
