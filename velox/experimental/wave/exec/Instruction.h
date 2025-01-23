@@ -380,7 +380,6 @@ struct AbstractAggregation : public AbstractOperator {
   std::vector<AbstractOperand*> keys;
   std::vector<AbstractField> keyFields;
   std::vector<AbstractAggInstruction> aggregates;
-  int32_t stateId;
 
   /// Prepare up to this many result reading streams.
   int16_t maxReadStreams{1};

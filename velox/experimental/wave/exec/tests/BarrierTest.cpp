@@ -57,8 +57,8 @@ class BarrierTest : public testing::Test {
         message(threadIdx, "rel");
         barrier->release();
       } else {
-        message(threadIdx, "arrive");
-        barrier->arrive(nullptr);
+        message(threadIdx, "mayYield");
+        barrier->mayYield(nullptr);
         message(threadIdx, "cont");
       }
     }

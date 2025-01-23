@@ -174,7 +174,7 @@ void WaveBarrier::release() {
   waitFor(std::move(waitFuture));
 }
 
-void WaveBarrier::arrive(std::function<void()> preWait) {
+void WaveBarrier::mayYield(std::function<void()> preWait) {
   ContinueFuture waitFuture;
   {
     std::lock_guard<std::mutex> l(mutex_);
@@ -400,7 +400,7 @@ void WaveDriver::runOperators(
     int32_t from,
     int32_t numRows) {
   // Pause here if other WaveDrivers need exclusive access.
-  barrier_->arrive([&](){ waitForArrival(pipeline); });
+  barrier_->mayYield([&](){ waitForArrival(pipeline); });
   // The stream is in 'host' state for any host to device data
   // transfer, then in parallel state after first kernel launch.
   ++stream.stats().numWaves;

@@ -28,12 +28,12 @@ enum class Advance { kBlocked, kResult, kFinished };
 /// Synchronizes between WaveDrivers on different Drivers of a Task
 /// pipeline. All threads inside WaveDriver::getOutput are the
 /// coordinated set. One or more of these cn acquire the barrier in
-/// exclusive mode. When all threads have arrived, the exclusive
-/// requesting thread returns from acquire with true. After it calls
+/// exclusive mode. When all threads are either at mayYield(), acquire() or arrive(), the exclusive
+/// requesting thread returns from acquire(). After it calls
 /// release(), the next exclusive thread, if any returns from its
-/// acquire(). If no more exclusive requesting threads, all arrive()
-/// calls return. arrive() returns immediately if no exclusive is
-/// requested by any thread.
+/// acquire(). If no more exclusive requesting threads, all mayYield()
+/// calls return. mayYield() returns immediately if no exclusive is
+/// requested by any thread. The arrive() call blocks until all threads have called arrive().
 class WaveBarrier {
  public:
   WaveBarrier(std::string idString);
@@ -60,8 +60,11 @@ class WaveBarrier {
   /// until all threads with acquire() have called
   /// release(). Acquires are continued one by one after all threads
   /// are either blocked in arrive() or acquire().
-  void arrive(std::function<void()> preWait);
+  void mayYield(std::function<void()> preWait);
 
+  /// Blocks until all threads that have called enter() have called arrive().
+  void arrive();
+  
   static std::shared_ptr<WaveBarrier>
   get(const std::string& taskId, int32_t driverId, int32_t operatorId);
 
