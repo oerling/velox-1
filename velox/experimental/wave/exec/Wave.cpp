@@ -1132,15 +1132,15 @@ void Program::getOperatorStates(WaveStream& stream, std::vector<void*>& ptrs) {
       std::lock_guard<std::mutex> l(taskStates->mutex);
       auto* state = stream.operatorState(operatorState.stateId);
       if (!state) {
-	VELOX_CHECK_NOT_NULL(operatorState.create);
-	state = stream.newState(operatorState);
+        VELOX_CHECK_NOT_NULL(operatorState.create);
+        state = stream.newState(operatorState);
       }
       ptrs[i] = state->devicePtr();
     } else {
       auto* state = stream.operatorState(operatorState.stateId);
       if (!state) {
-	VELOX_CHECK_NOT_NULL(operatorState.create);
-	state = stream.newState(operatorState);
+        VELOX_CHECK_NOT_NULL(operatorState.create);
+        state = stream.newState(operatorState);
       }
       ptrs[i] = state->devicePtr();
     }

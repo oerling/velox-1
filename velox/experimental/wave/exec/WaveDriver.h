@@ -28,12 +28,13 @@ enum class Advance { kBlocked, kResult, kFinished };
 /// Synchronizes between WaveDrivers on different Drivers of a Task
 /// pipeline. All threads inside WaveDriver::getOutput are the
 /// coordinated set. One or more of these cn acquire the barrier in
-/// exclusive mode. When all threads are either at mayYield(), acquire() or arrive(), the exclusive
-/// requesting thread returns from acquire(). After it calls
-/// release(), the next exclusive thread, if any returns from its
+/// exclusive mode. When all threads are either at mayYield(), acquire() or
+/// arrive(), the exclusive requesting thread returns from acquire(). After it
+/// calls release(), the next exclusive thread, if any returns from its
 /// acquire(). If no more exclusive requesting threads, all mayYield()
 /// calls return. mayYield() returns immediately if no exclusive is
-/// requested by any thread. The arrive() call blocks until all threads have called arrive().
+/// requested by any thread. The arrive() call blocks until all threads have
+/// called arrive().
 class WaveBarrier {
  public:
   WaveBarrier(std::string idString);
@@ -48,7 +49,8 @@ class WaveBarrier {
   void leave();
 
   /// Gets exclusive access. All other threads in the coordinated set are
-  /// stopped wen this returns. If the calling thread will block, 'preWait' is called first.
+  /// stopped wen this returns. If the calling thread will block, 'preWait' is
+  /// called first.
   void acquire(void* reason, std::function<void()> preWait);
 
   /// Releases exclusive. The calling thread must have called acquire() first.
@@ -58,9 +60,10 @@ class WaveBarrier {
   /// returns immediately. If there is an acquire() pending, blocks
   /// until all threads with acquire() have called
   /// release(). Acquires are continued one by one after all threads
-  /// are either blocked in arrive() or acquire(). If the calling thread waits, 'preWait' is called before the wait.
+  /// are either blocked in arrive() or acquire(). If the calling thread waits,
+  /// 'preWait' is called before the wait.
   void mayYield(std::function<void()> preWait);
-  
+
   static std::shared_ptr<WaveBarrier>
   get(const std::string& taskId, int32_t driverId, int32_t operatorId);
 
@@ -68,7 +71,7 @@ class WaveBarrier {
   OperatorStateMap& stateMap() {
     return stateMap_;
   }
-  
+
  private:
   // Releases an exclusive waiting caller if non-exclusives are in
   // arrive or have left.
@@ -94,7 +97,6 @@ class WaveBarrier {
   void* exclusiveToken_{nullptr};
   OperatorStateMap stateMap_;
 
-  
   static std::mutex barriersMutex_;
   static std::unordered_map<std::string, std::weak_ptr<WaveBarrier>> barriers_;
 };
@@ -234,7 +236,6 @@ class WaveDriver : public exec::SourceOperator {
   /// have to be at end before the aggregation is read.
   bool maybeWaitForPeers();
 
-  
   // Carries out advance actions like rehashing tables or getting more memory.
   // Synchronizes with 'barrier_' if needed.
   void prepareAdvance(

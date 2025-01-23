@@ -50,7 +50,11 @@ std::vector<WaveScanTestParam> waveScanTestParams() {
       WaveScanTestParam{},
       WaveScanTestParam{.numStreams = 4, .rowsPerTB = 4096, .makeDict = true},
       WaveScanTestParam{.numStreams = 4, .batchSize = 1111, .numDrivers = 2},
-      WaveScanTestParam{.numStreams = 9, .batchSize = 16500, .makeDict = true, .numDrivers = 2 },
+      WaveScanTestParam{
+          .numStreams = 9,
+          .batchSize = 16500,
+          .makeDict = true,
+          .numDrivers = 2},
       WaveScanTestParam{
           .numStreams = 2, .batchSize = 20000, .rowsPerTB = 20480}};
 }

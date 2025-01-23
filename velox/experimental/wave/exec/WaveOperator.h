@@ -108,7 +108,7 @@ class WaveOperator {
   void setInstructionStatus(InstructionStatus status) {
     instructionStatus_ = status;
   }
-  
+
   virtual std::string toString() const;
 
   AbstractOperand* definesSubfield(
@@ -226,7 +226,8 @@ class WaveOperator {
   // intermediate results.
   std::vector<WaveBufferPtr> executableMemory_;
 
-  // The total size of grid and block level statuses for the pipeline. This must be set for the first operator of any pipeline.
+  // The total size of grid and block level statuses for the pipeline. This must
+  // be set for the first operator of any pipeline.
   InstructionStatus instructionStatus_;
 };
 

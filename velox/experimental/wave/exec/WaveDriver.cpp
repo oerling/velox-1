@@ -208,10 +208,7 @@ WaveDriver::WaveDriver(
           operatorId,
           planNodeId,
           "Wave"),
-      barrier_(WaveBarrier::get(
-          driverCtx->task->taskId(),
-          0,
-          operatorId)),
+      barrier_(WaveBarrier::get(driverCtx->task->taskId(), 0, operatorId)),
       arena_(std::move(arena)),
       resultOrder_(std::move(resultOrder)),
       runtime_(std::move(runtime)),
@@ -283,9 +280,9 @@ RowVectorPtr WaveDriver::getOutput() {
               pipelines_[i + 1].noMoreInput = true;
               pipelines_[i + 1].canAdvance = true;
               i += 2;
-	      if (maybeWaitForPeers()) {
-		return nullptr;
-	      }
+              if (maybeWaitForPeers()) {
+                return nullptr;
+              }
               break;
             } else {
               // Last finished.
@@ -307,33 +304,36 @@ RowVectorPtr WaveDriver::getOutput() {
   return nullptr;
 }
 
-  bool WaveDriver::maybeWaitForPeers() {
-    if (operatorCtx_->task()->numDrivers(operatorCtx_->driver()) == 1) {
-      return false;
-    }
-    if (barrier_->stateMap().states.empty()) {
-      return false;
-    }
-    std::vector<ContinuePromise> promises;
-    std::vector<std::shared_ptr<exec::Driver>> peers;
-
-    if (!operatorCtx_->task()->allPeersFinished(
-          planNodeId(), operatorCtx_->driver(), &blockingFuture_, promises, peers)) {
-      blockingReason_ = exec::BlockingReason::kYield;
-      return true;
-  }
-
-    // Realize the promises so that the other Drivers (which were not
-    // the last to finish) can continue from the barrier.
-    peers.clear();
-    for (auto& promise : promises) {
-      promise.setValue();
-    }
-
+bool WaveDriver::maybeWaitForPeers() {
+  if (operatorCtx_->task()->numDrivers(operatorCtx_->driver()) == 1) {
     return false;
   }
+  if (barrier_->stateMap().states.empty()) {
+    return false;
+  }
+  std::vector<ContinuePromise> promises;
+  std::vector<std::shared_ptr<exec::Driver>> peers;
 
-  
+  if (!operatorCtx_->task()->allPeersFinished(
+          planNodeId(),
+          operatorCtx_->driver(),
+          &blockingFuture_,
+          promises,
+          peers)) {
+    blockingReason_ = exec::BlockingReason::kYield;
+    return true;
+  }
+
+  // Realize the promises so that the other Drivers (which were not
+  // the last to finish) can continue from the barrier.
+  peers.clear();
+  for (auto& promise : promises) {
+    promise.setValue();
+  }
+
+  return false;
+}
+
 void WaveDriver::flush(int32_t pipelineIdx) {
   //
   ;
@@ -415,7 +415,7 @@ void WaveDriver::prepareAdvance(
     }
   }
   if (driversToken) {
-    barrier_->acquire(driversToken, [&]() { waitForArrival(pipeline);});
+    barrier_->acquire(driversToken, [&]() { waitForArrival(pipeline); });
     auto guard = folly::makeGuard([&]() { barrier_->release(); });
 
     waitForArrival(pipeline);
@@ -430,7 +430,7 @@ void WaveDriver::runOperators(
     int32_t from,
     int32_t numRows) {
   // Pause here if other WaveDrivers need exclusive access.
-  barrier_->mayYield([&](){ waitForArrival(pipeline); });
+  barrier_->mayYield([&]() { waitForArrival(pipeline); });
   // The stream is in 'host' state for any host to device data
   // transfer, then in parallel state after first kernel launch.
   ++stream.stats().numWaves;

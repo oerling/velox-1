@@ -729,16 +729,16 @@ void CompileState::placeAggregation(
     }
   }
 }
-  bool CompileState::hasSink(int32_t idx) {
-    for (auto i = idx; i < segments_.size(); ++i) {
-      auto bound = segments_[i].boundary;
-      if (bound == BoundaryType::kAggregation) {
-	return true;
-      }
+bool CompileState::hasSink(int32_t idx) {
+  for (auto i = idx; i < segments_.size(); ++i) {
+    auto bound = segments_[i].boundary;
+    if (bound == BoundaryType::kAggregation) {
+      return true;
     }
-    return false;
   }
-  
+  return false;
+}
+
 void CompileState::planSegment(
     PipelineCandidate& candidate,
     float inputBatch,
@@ -781,8 +781,8 @@ void CompileState::planSegment(
     }
     case BoundaryType::kExpr: {
       bool mayDelay = hasSink(segmentIdx);
-	for (auto i = 0; i < segment.topLevelDefined.size(); ++i) {
-	auto* op = segment.topLevelDefined[i];
+      for (auto i = 0; i < segment.topLevelDefined.size(); ++i) {
+        auto* op = segment.topLevelDefined[i];
         placeExpr(candidate, op, mayDelay);
       }
       break;
@@ -839,7 +839,7 @@ void PipelineCandidate::markParams(
       if (flags.definedIn.kernelSeq < kernelSeq) {
         levelParams[kernelSeq].input.add(op->id);
       }
-			    };
+    };
     auto resultVisitor = [&](AbstractOperand* op) {
       auto& flags = this->flags(op);
       if (flags.definedIn.empty()) {
@@ -852,15 +852,15 @@ void PipelineCandidate::markParams(
       } else {
         levelParams[kernelSeq].local.add(op->id);
       }
-};
+    };
     auto step = box.steps[stepIdx];
     step->visitReferences(referenceVisitor);
     step->visitResults(resultVisitor);
     if (step->kind() == StepKind::kAggregateProbe) {
       auto probe = step->as<AggregateProbe>();
       for (auto j = 0; j < probe.inlinedUpdates.size(); ++j) {
-	probe.inlinedUpdates[j]->visitReferences(referenceVisitor);
-	probe.inlinedUpdates[j]->visitResults(resultVisitor);
+        probe.inlinedUpdates[j]->visitReferences(referenceVisitor);
+        probe.inlinedUpdates[j]->visitResults(resultVisitor);
       }
     }
     box.steps[stepIdx]->visitStates([&](AbstractState* state) {

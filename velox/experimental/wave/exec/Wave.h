@@ -225,8 +225,7 @@ class Program;
 /// WaveStream or to a Program.
 struct OperatorState {
   OperatorState() = default;
-  OperatorState(std::shared_ptr<GpuArena> arena)
-    : arena(std::move(arena)) {}
+  OperatorState(std::shared_ptr<GpuArena> arena) : arena(std::move(arena)) {}
 
   virtual ~OperatorState() = default;
 
@@ -248,9 +247,10 @@ struct OperatorState {
 
   int32_t id;
 
-  // Arena holding all memory for the resource if the resource is shared between WaveDrivers.
+  // Arena holding all memory for the resource if the resource is shared between
+  // WaveDrivers.
   std::shared_ptr<GpuArena> arena;
-  
+
   /// Owns the device side data. Starting address of first is passed to the
   /// kernel. Layout depends on operator.
   std::vector<WaveBufferPtr> buffers;
@@ -260,7 +260,7 @@ struct OperatorState {
 
 struct AggregateOperatorState : public OperatorState {
   AggregateOperatorState(std::shared_ptr<GpuArena> arena)
-    : OperatorState(std::move(arena)) {}
+      : OperatorState(std::move(arena)) {}
 
   void allocateAggregateHeader(int32_t size, GpuArena& arena);
 
@@ -703,13 +703,13 @@ class WaveStream {
   };
 
   WaveStream(
-	     std::shared_ptr<GpuArena> arena,
+      std::shared_ptr<GpuArena> arena,
       GpuArena& deviceArena,
       const std::vector<std::unique_ptr<AbstractOperand>>* operands,
       OperatorStateMap* stateMap,
       InstructionStatus state,
       int16_t streamIdx)
-    : arena_(std::move(arena)),
+      : arena_(std::move(arena)),
         deviceArena_(deviceArena),
         operands_(operands),
         taskStateMap_(stateMap),
@@ -1032,7 +1032,7 @@ class WaveStream {
   const std::shared_ptr<GpuArena>& arenaShared() const {
     return arena_;
   }
-  
+
  private:
   // true if 'op' is nullable in the context of 'this'.
   bool isNullable(const AbstractOperand& op) const;

@@ -207,23 +207,23 @@ bool CompileState::compile() {
     if (!reserveMemory()) {
       VELOX_FAIL("Failed to reserve unified memory for Wave");
     }
-  auto waveOpUnique = std::make_unique<WaveDriver>(
-      driver_.driverCtx(),
-      outputType,
-      operators[first]->planNodeId(),
-      operators[first]->operatorId(),
-      std::move(arena_),
-      std::move(operators_),
-      std::move(resultOrder),
-      runtime_);
-  auto waveOp = waveOpUnique.get();
-  waveOp->initialize();
-  std::vector<std::unique_ptr<exec::Operator>> added;
-  added.push_back(std::move(waveOpUnique));
-  auto replaced = driverFactory_.replaceOperators(
-      driver_, first, operatorIndex, std::move(added));
-  waveOp->setReplaced(std::move(replaced));
-  return true;
+    auto waveOpUnique = std::make_unique<WaveDriver>(
+        driver_.driverCtx(),
+        outputType,
+        operators[first]->planNodeId(),
+        operators[first]->operatorId(),
+        std::move(arena_),
+        std::move(operators_),
+        std::move(resultOrder),
+        runtime_);
+    auto waveOp = waveOpUnique.get();
+    waveOp->initialize();
+    std::vector<std::unique_ptr<exec::Operator>> added;
+    added.push_back(std::move(waveOpUnique));
+    auto replaced = driverFactory_.replaceOperators(
+        driver_, first, operatorIndex, std::move(added));
+    waveOp->setReplaced(std::move(replaced));
+    return true;
 }
 
 bool waveDriverAdapter(

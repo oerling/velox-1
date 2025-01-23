@@ -18,31 +18,32 @@
 
 namespace facebook::velox::wave {
 
-  void AggregateGenerator::loadArgs(
-      CompileState& state,
-      const AggregateProbe& probe,
-      const AggregateUpdate& update) const {
-    // See if there are arg computations in inlinedUpdates
-    int32_t beginArgs = 0;
-    int32_t endArgs = 0;
-    for (auto i = 0; i < probe.inlinedUpdates.size(); ++i) {
-      if (probe.inlinedUpdates[i] == &update) {
-	endArgs = i;
-	break;
-      }
-      if (probe.inlinedUpdates[i]->kind() == StepKind::kAggregateUpdate) {
-	beginArgs = i + 1;
-      }
+void AggregateGenerator::loadArgs(
+    CompileState& state,
+    const AggregateProbe& probe,
+    const AggregateUpdate& update) const {
+  // See if there are arg computations in inlinedUpdates
+  int32_t beginArgs = 0;
+  int32_t endArgs = 0;
+  for (auto i = 0; i < probe.inlinedUpdates.size(); ++i) {
+    if (probe.inlinedUpdates[i] == &update) {
+      endArgs = i;
+      break;
     }
-    auto syncLabel = state.nextSyncLabel();
-    state.newSyncLabel();
-    for (auto i = beginArgs; i < endArgs; ++i) {
-      const_cast<KernelStep*>(probe.inlinedUpdates[i])->generateMain(state, syncLabel);
+    if (probe.inlinedUpdates[i]->kind() == StepKind::kAggregateUpdate) {
+      beginArgs = i + 1;
     }
-    state.ensureOperand(update.args[0]);
-    state.generated() << fmt::format("  sync{}: ;\n", syncLabel);
   }
-  
+  auto syncLabel = state.nextSyncLabel();
+  state.newSyncLabel();
+  for (auto i = beginArgs; i < endArgs; ++i) {
+    const_cast<KernelStep*>(probe.inlinedUpdates[i])
+        ->generateMain(state, syncLabel);
+  }
+  state.ensureOperand(update.args[0]);
+  state.generated() << fmt::format("  sync{}: ;\n", syncLabel);
+}
+
 std::string makeAggregateRow(CompileState& state, const AggregateProbe& probe) {
   std::stringstream out;
   out << "struct HashRow {\n"
@@ -292,7 +293,7 @@ void makeAggregateProbe(
   out << checkReturnBlockStatus();
   out << "  if (threadIdx.x == 0 && shared->hasContinue) {\n"
          "    auto ret = gridStatus<AggregateReturn>(shared, "
-      << probe.abstractAggregation ->mutableInstructionStatus()->gridState
+      << probe.abstractAggregation->mutableInstructionStatus()->gridState
       << ");\n"
       // Must load 'state' and 'table' here because thread 0 might have
       // been inactive on entry and have 'table' uninited.
@@ -303,7 +304,7 @@ void makeAggregateProbe(
       << "  table = reinterpret_cast<GpuHashTable*>(state->table);\n"
          "    ret->numDistinct = table->numDistinct;\n"
          "  }\n"
-    "  __syncthreads();\n";
+         "  __syncthreads();\n";
 }
 
 std::string readAggRow(CompileState& state, const ReadAggregation& read) {

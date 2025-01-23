@@ -830,13 +830,14 @@ void CompileState::makeLevel(std::vector<KernelBox>& level) {
         instruction->reserveState(instructionStatus_);
         auto* status = instruction->mutableInstructionStatus();
         if (status) {
-	  allStatuses_.push_back(status);
+          allStatuses_.push_back(status);
           currentBox_->steps[stepIdx_]->status = *status;
         }
         auto opInst = dynamic_cast<AbstractOperator*>(instruction);
         if (opInst) {
           if (auto* agg = dynamic_cast<AbstractAggregation*>(opInst)) {
-            currentBox_->kernelEntryPoints_[agg->continueIdx()] = kernelEntryPointCounter++;
+            currentBox_->kernelEntryPoints_[agg->continueIdx()] =
+                kernelEntryPointCounter++;
           }
           AbstractState* state = opInst->state;
           state->instruction = instruction;
@@ -846,7 +847,7 @@ void CompileState::makeLevel(std::vector<KernelBox>& level) {
   }
 }
 
-void  CompileState::makeLevelKernel(std::vector<KernelBox>& level) {
+void CompileState::makeLevelKernel(std::vector<KernelBox>& level) {
   KernelSpec spec;
   auto& firstBox = level[0];
   makeLevelText(pipelineIdx_, kernelSeq_, spec);
@@ -875,7 +876,8 @@ void  CompileState::makeLevelKernel(std::vector<KernelBox>& level) {
     programState->create =
         [inst = abstractInst](
             WaveStream& stream) -> std::shared_ptr<OperatorState> {
-								   auto newState = std::make_shared<AggregateOperatorState>(stream.arenaShared());
+      auto newState =
+          std::make_shared<AggregateOperatorState>(stream.arenaShared());
       newState->instruction = inst;
       stream.makeAggregate(*inst, *newState);
       return newState;
@@ -901,7 +903,7 @@ void  CompileState::makeLevelKernel(std::vector<KernelBox>& level) {
       program->add(std::move(i));
     }
   }
-    programs_.push_back(std::move(program));
+  programs_.push_back(std::move(program));
 }
 
 bool emptyLevel(const std::vector<KernelBox>& level) {
@@ -990,7 +992,6 @@ void CompileState::generatePrograms() {
       makeLevelKernel(currentCandidate_->steps[kernelSeq_]);
     }
 
-
     std::vector<std::vector<ProgramPtr>> levels;
     for (auto& program : programs_) {
       levels.emplace_back();
@@ -998,9 +999,14 @@ void CompileState::generatePrograms() {
     }
     if (!levels.empty()) {
       operators_.push_back(std::make_unique<Project>(
-						     *this, selectedPipelines_[pipelineIdx_].outputType, std::move(levels)));
+          *this,
+          selectedPipelines_[pipelineIdx_].outputType,
+          std::move(levels)));
       currentCandidate_->setOutputIds(
-				      this, operators_.back().get(), start, currentCandidate_->steps.size());
+          this,
+          operators_.back().get(),
+          start,
+          currentCandidate_->steps.size());
     }
     operators_.at(firstOperatorIdx)->setInstructionStatus(instructionStatus_);
   }

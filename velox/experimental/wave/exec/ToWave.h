@@ -203,7 +203,7 @@ struct EndNullCheck : public KernelStep {
   std::string toString() const override {
     return "end null check";
   }
-  
+
   AbstractOperand* result;
   int32_t label;
 };
@@ -986,7 +986,7 @@ class CompileState {
 
   // True if there is a sink after 'segmentIdx'.
   bool hasSink(int32_t sigmentIdx);
-  
+
   void placeAggregation(PipelineCandidate& candidate, Segment& segment);
 
   NullCheck* addNullCheck(PipelineCandidate& candidate, AbstractOperand* op);
@@ -1017,9 +1017,8 @@ class CompileState {
 
   void makeLevel(std::vector<KernelBox>& level);
 
-  void  makeLevelKernel(std::vector<KernelBox>& level);
+  void makeLevelKernel(std::vector<KernelBox>& level);
 
-  
   // Return true if 'nthWrap' is the wrappedAt of any of 'params'.
   bool isWrapInParams(int32_t nthWrap, const LevelParams& params);
 

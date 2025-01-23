@@ -266,7 +266,7 @@ AdvanceResult AbstractReadAggregation::canAdvance(
       aggState->numRows = r;
       aggState->bytes = b;
       aggState->resultRowPointers =
-	aggState->arena->allocate<int64_t*>(maxReadStreams);
+          aggState->arena->allocate<int64_t*>(maxReadStreams);
       deviceAgg->numReadStreams = maxReadStreams;
       deviceAgg->resultRowPointers =
           aggState->resultRowPointers->as<uintptr_t*>();
