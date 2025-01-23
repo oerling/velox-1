@@ -127,7 +127,7 @@ void WaveBarrier::acquire(void* reason, std::function<void()> preWait) {
     if (numJoined_ == 1) {
       exclusiveToken_ = reason;
       exclusiveTid_ = getTid();
-      return true;
+      return;
     }
     auto promise = folly::Promise<bool>();
     future = promise.getSemiFuture();
@@ -140,7 +140,6 @@ void WaveBarrier::acquire(void* reason, std::function<void()> preWait) {
   }
   waitForBool(std::move(future));
   exclusiveTid_ = getTid();
-  return true;
 }
 
 void WaveBarrier::release() {

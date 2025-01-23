@@ -78,7 +78,7 @@ class TableScanTest : public virtual HiveConnectorTestBase,
     FLAGS_wave_max_reader_batch_rows = param.batchSize;
     FLAGS_wave_reader_rows_per_tb = param.rowsPerTB;
     numDrivers_ = param.numDrivers;
-    if (false && param.makeDict) {
+    if (param.makeDict) {
       roundTo_ = 500000;
     }
   }
