@@ -283,6 +283,9 @@ RowVectorPtr WaveDriver::getOutput() {
               pipelines_[i + 1].noMoreInput = true;
               pipelines_[i + 1].canAdvance = true;
               i += 2;
+	      if (maybeWaitForPeers()) {
+		return nullptr;
+	      }
               break;
             } else {
               // Last finished.
@@ -304,6 +307,30 @@ RowVectorPtr WaveDriver::getOutput() {
   return nullptr;
 }
 
+  bool WaveDriver::maybeWaitForPeers() {
+  std::vector<ContinuePromise> promises;
+  std::vector<std::shared_ptr<Driver>> peers;
+
+    if (!operatorCtx_->task()->allPeersFinished(
+          planNodeId(), operatorCtx_->driver(), &continueFuture_, promises, peers)) {
+      blockingReason_ = BlockingReason::kYield;
+      return true;
+  }
+
+
+  SCOPE_EXIT {
+    // Realize the promises so that the other Drivers (which were not
+    // the last to finish) can continue from the barrier.
+    peers.clear();
+    for (auto& promise : promises) {
+      promise.setValue();
+    }
+  };
+
+  return false;
+  }
+
+  
 void WaveDriver::flush(int32_t pipelineIdx) {
   //
   ;
