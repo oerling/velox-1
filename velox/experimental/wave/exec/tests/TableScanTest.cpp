@@ -42,14 +42,15 @@ struct WaveScanTestParam {
   int32_t batchSize{20000};
   int32_t rowsPerTB{1024};
   bool makeDict{false};
+  int32_t numDrivers{1};
 };
 
 std::vector<WaveScanTestParam> waveScanTestParams() {
   return {
       WaveScanTestParam{},
       WaveScanTestParam{.numStreams = 4, .rowsPerTB = 4096, .makeDict = true},
-      WaveScanTestParam{.numStreams = 4, .batchSize = 1111},
-      WaveScanTestParam{.numStreams = 9, .batchSize = 16500, .makeDict = true},
+      WaveScanTestParam{.numStreams = 4, .batchSize = 1111, .numDrivers = 2},
+      WaveScanTestParam{.numStreams = 9, .batchSize = 16500, .makeDict = true, .numDrivers = 2 },
       WaveScanTestParam{
           .numStreams = 2, .batchSize = 20000, .rowsPerTB = 20480}};
 }
@@ -72,6 +73,7 @@ class TableScanTest : public virtual HiveConnectorTestBase,
     FLAGS_max_streams_per_driver = param.numStreams;
     FLAGS_wave_max_reader_batch_rows = param.batchSize;
     FLAGS_wave_reader_rows_per_tb = param.rowsPerTB;
+    numDrivers_ = param.numDrivers;
     if (false && param.makeDict) {
       roundTo_ = 500000;
     }

@@ -48,9 +48,8 @@ class WaveBarrier {
   void leave();
 
   /// Gets exclusive access. All other threads in the coordinated set are
-  /// stopped wen this returns true. If this returns false, another thread
-  /// already acquired and released the barrier for 'reason'.
-  bool acquire(void* reason, std::function<void()> preWait);
+  /// stopped wen this returns. If the calling thread will block, 'preWait' is called first.
+  void acquire(void* reason, std::function<void()> preWait);
 
   /// Releases exclusive. The calling thread must have called acquire() first.
   void release();
@@ -59,11 +58,8 @@ class WaveBarrier {
   /// returns immediately. If there is an acquire() pending, blocks
   /// until all threads with acquire() have called
   /// release(). Acquires are continued one by one after all threads
-  /// are either blocked in arrive() or acquire().
+  /// are either blocked in arrive() or acquire(). If the calling thread waits, 'preWait' is called before the wait.
   void mayYield(std::function<void()> preWait);
-
-  /// Blocks until all threads that have called enter() have called arrive().
-  void arrive();
   
   static std::shared_ptr<WaveBarrier>
   get(const std::string& taskId, int32_t driverId, int32_t operatorId);
@@ -231,6 +227,14 @@ class WaveDriver : public exec::SourceOperator {
       int32_t from,
       int32_t numRows);
 
+  /// Sets 'blockingFuture_' and returns true if the caller should go
+  /// off thread to wait for other Drivers to complete the current
+  /// pipeline before moving to the next pipeline. Used if multiple
+  /// Drivers update a shared resource like a an aggregation where all
+  /// have to be at end before the aggregation is read.
+  bool maybeWaitForPeers();
+
+  
   // Carries out advance actions like rehashing tables or getting more memory.
   // Synchronizes with 'barrier_' if needed.
   void prepareAdvance(

@@ -120,7 +120,7 @@ int32_t getTid() {
 }
 } // namespace
 
-bool WaveBarrier::acquire(void* reason, std::function<void()> preWait) {
+void WaveBarrier::acquire(void* reason, std::function<void()> preWait) {
   folly::SemiFuture<bool> future(false);
   {
     std::lock_guard<std::mutex> l(mutex_);
@@ -308,26 +308,29 @@ RowVectorPtr WaveDriver::getOutput() {
 }
 
   bool WaveDriver::maybeWaitForPeers() {
-  std::vector<ContinuePromise> promises;
-  std::vector<std::shared_ptr<Driver>> peers;
+    if (operatorCtx_->task()->numDrivers(operatorCtx_->driver()) == 1) {
+      return false;
+    }
+    if (barrier_->stateMap().states.empty()) {
+      return false;
+    }
+    std::vector<ContinuePromise> promises;
+    std::vector<std::shared_ptr<exec::Driver>> peers;
 
     if (!operatorCtx_->task()->allPeersFinished(
-          planNodeId(), operatorCtx_->driver(), &continueFuture_, promises, peers)) {
-      blockingReason_ = BlockingReason::kYield;
+          planNodeId(), operatorCtx_->driver(), &blockingFuture_, promises, peers)) {
+      blockingReason_ = exec::BlockingReason::kYield;
       return true;
   }
 
-
-  SCOPE_EXIT {
     // Realize the promises so that the other Drivers (which were not
     // the last to finish) can continue from the barrier.
     peers.clear();
     for (auto& promise : promises) {
       promise.setValue();
     }
-  };
 
-  return false;
+    return false;
   }
 
   
