@@ -188,10 +188,6 @@ class WaveDriver : public exec::SourceOperator {
 
     std::vector<std::unique_ptr<WaveStream>> arrived;
 
-    std::vector<std::unique_ptr<WaveStream>> continuable;
-
-    std::vector<std::unique_ptr<WaveStream>> blocked;
-
     /// Streams ready to recycle. A stream's device side resources are usually
     /// reusable for a new batch from the source operator.
     std::vector<std::unique_ptr<WaveStream>> finished;
@@ -295,9 +291,6 @@ class WaveDriver : public exec::SourceOperator {
   std::vector<std::unique_ptr<AbstractState>>& states_;
 
   WaveStats waveStats_;
-
-  // States shared between WaveStreams and WaveDrivers, for example join/group
-  // by tables.
 
   RowVectorPtr result_;
 };

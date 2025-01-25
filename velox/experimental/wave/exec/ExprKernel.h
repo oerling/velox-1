@@ -34,6 +34,9 @@ struct DeviceAggregation {
   /// hash table, nullptr if no grouping keys.
   GpuHashTableBase* table{nullptr};
 
+  /// Device side atomic counting thread blocks working on the state. Assert this is 0 at rehash or resupply of allocators.
+  uint32_t debugBlockCounter{0};
+  
   // Byte size of a rowm rounded to next 8.
   int32_t rowSize = 0;
 

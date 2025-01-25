@@ -16,6 +16,8 @@
 
 #include "velox/experimental/wave/exec/AggregateGen.h"
 
+DEFINE_bool(hash_tb_check, false, "Generate code to keep active TB count in hash tables");
+
 namespace facebook::velox::wave {
 
 void AggregateGenerator::loadArgs(
@@ -44,6 +46,19 @@ void AggregateGenerator::loadArgs(
   state.generated() << fmt::format("  sync{}: ;\n", syncLabel);
 }
 
+  void maybeEnterCheck(std::stringstream& out, int32_t ord) {
+    if (FLAGS_hash_tb_check) {
+      out << fmt::format("  if (threadIdx.x == 0 && shared->nthBlock == 0) { auto*dbgState = reinterpret_cast<DeviceAggregation*>(shared->states[{}]); atomicAdd(&dbgState->debugBlockCounter, 1); }\n", ord); 
+	}
+  }
+
+  void maybeLeaveCheck(std::stringstream& out, int32_t ord) {
+    if (FLAGS_hash_tb_check) {
+      out << fmt::format("  if (threadIdx.x == 0 && shared->nthBlock == shared->numRowsPerThread -1) { auto*dbgState = reinterpret_cast<DeviceAggregation*>(shared->states[{}]); atomicAdd(&dbgState->debugBlockCounter, -1); }\n", ord);
+    }
+  }
+
+  
 std::string makeAggregateRow(CompileState& state, const AggregateProbe& probe) {
   std::stringstream out;
   out << "struct HashRow {\n"
@@ -215,18 +230,18 @@ std::string checkReturnBlockStatus() {
 #endif
 }
 
-void makeNonGroupedAggregation(
-    CompileState& state,
-    const AggregateProbe& probe,
-    int32_t syncLabel) {
-  auto& out = state.generated();
-  out << fmt::format("  sync{}:\n", syncLabel);
-  state.declareNamed("DeviceAggregation* state;");
-  state.declareNamed("uint32_t accNulls;");
-  out << fmt::format(
-      "  state =\n"
-      "    reinterpret_cast<DeviceAggregation*>(shared->states[{}]);\n",
-      state.stateOrdinal(*probe.state));
+  void makeNonGroupedAggregation(
+				 CompileState& state,
+				 const AggregateProbe& probe,
+				 int32_t syncLabel) {
+    auto& out = state.generated();
+    out << fmt::format("  sync{}:\n", syncLabel);
+    state.declareNamed("DeviceAggregation* state;");
+    state.declareNamed("uint32_t accNulls;");
+    out << fmt::format(
+		       "  state =\n"
+		       "    reinterpret_cast<DeviceAggregation*>(shared->states[{}]);\n",
+		       state.stateOrdinal(*probe.state));
   state.declareNamed("HashRow* row;");
   out << "  row = reinterpret_cast<HashRow*>(state->singleRow);\n";
   for (auto i = 0; i < probe.updates.size(); i += 32) {
@@ -266,6 +281,7 @@ void makeAggregateProbe(
     makeNonGroupedAggregation(state, probe, syncLabel);
     return;
   }
+  auto stateOrd = state.stateOrdinal(*probe.state);
   auto& out = state.generated();
   state.declareNamed("uint64_t hash;");
   makeHash(state, probe.keys, true, "");
@@ -276,10 +292,11 @@ void makeAggregateProbe(
   out << fmt::format(
       "  state =\n"
       "    reinterpret_cast<DeviceAggregation*>(shared->states[{}]);\n",
-      state.stateOrdinal(*probe.state));
+      stateOrd);
   state.declareNamed("GpuHashTable* table;");
   out << "  table = reinterpret_cast<GpuHashTable*>(state->table);\n";
   out << fmt::format(" sync{}:\n", syncLabel);
+  maybeEnterCheck(out, stateOrd);
   out << "  shared->status->errors[threadIdx.x] = laneStatus;\n";
   out << "  table->updatingProbe<HashRow>(threadIdx.x, LaneId(), laneStatus == ErrorCode::kOk, ops, \n";
   makeCompareLambda(state, probe.keys, true);
@@ -300,11 +317,12 @@ void makeAggregateProbe(
       << fmt::format(
              "  state =\n"
              "    reinterpret_cast<DeviceAggregation*>(shared->states[{}]);\n",
-             state.stateOrdinal(*probe.state))
+             stateOrd)
       << "  table = reinterpret_cast<GpuHashTable*>(state->table);\n"
          "    ret->numDistinct = table->numDistinct;\n"
-         "  }\n"
-         "  __syncthreads();\n";
+    "  }\n";
+  maybeLeaveCheck(out, stateOrd);
+  out << "  __syncthreads();\n";
 }
 
 std::string readAggRow(CompileState& state, const ReadAggregation& read) {

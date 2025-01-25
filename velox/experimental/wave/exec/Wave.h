@@ -273,7 +273,9 @@ struct AggregateOperatorState : public OperatorState {
     return alignedHead;
   }
 
-  AbstractAggregation* instruction{nullptr};
+  bool isGrouped{false};
+  int32_t rowSize;
+  int32_t maxReadStreams{1};
 
   /// Mutex to serialize allocating row ranges to different Drivers in a
   /// multi-driver read.

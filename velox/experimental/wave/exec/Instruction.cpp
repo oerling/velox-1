@@ -15,6 +15,7 @@
  */
 
 #include "velox/experimental/wave/exec/Wave.h"
+#include<iostream>
 
 namespace facebook::velox::wave {
 
@@ -101,7 +102,11 @@ void resupplyHashTable(WaveStream& stream, AbstractInstruction& inst) {
   auto stateId = agg->state->id;
   auto* state = stream.operatorState(stateId)->as<AggregateOperatorState>();
   auto* head = state->alignedHead;
+  auto numSlots = [](GpuHashTableBase* t) { return (t->sizeMask + 1 ) * GpuBucketMembers::kNumSlots;};
   auto* hashTable = reinterpret_cast<GpuHashTableBase*>(head + 1);
+  deviceStream->prefetch(
+			 nullptr, state->alignedHead, state->alignedHeadSize);
+  deviceStream->wait();
   auto* gridState = stream.gridStatus<AggregateReturn>(agg->instructionStatus);
   auto* blockStatus = stream.hostBlockStatus();
   int32_t numBlocks = bits::roundUp(stream.numRows(), kBlockSize) / kBlockSize;
@@ -113,6 +118,7 @@ void resupplyHashTable(WaveStream& stream, AbstractInstruction& inst) {
       bits::nextPowerOfTwo(numFailed + hashTable->numDistinct * 2);
   int64_t increment =
       rowSize * (newSize - hashTable->numDistinct) / numPartitions;
+  std::cout << fmt::format("resupply: size={} newSize={} increment={} numFailed={} ht={}\n", numSlots(hashTable), newSize, increment, numFailed, (void*)hashTable);
   for (auto i = 0; i < numPartitions; ++i) {
     auto* allocator =
         &reinterpret_cast<HashPartitionAllocator*>(hashTable + 1)[i];
@@ -128,7 +134,7 @@ void resupplyHashTable(WaveStream& stream, AbstractInstruction& inst) {
   int32_t numOldBuckets;
   // Rehash if close to max. We can have growth from variable length
   // accumulators so rehash is not always right.
-  if (gridState->numDistinct >= hashTable->maxEntries / 10 * 9) {
+  if (newSize > numSlots(hashTable)) {
     oldBuckets = state->buffers[1];
     numOldBuckets = hashTable->sizeMask + 1;
     state->buffers[1] = state->arena->allocate<GpuBucketMembers>(
@@ -156,6 +162,9 @@ void resupplyHashTable(WaveStream& stream, AbstractInstruction& inst) {
         ->setupAggregation(control, entryPointIdx, program->kernel());
   }
   deviceStream->wait();
+  if (rehash) {
+    std::cout << fmt::format("rehashed {}\n", (void*)hashTable);
+  }
   WaveStream::releaseStream(std::move(deviceStream));
 }
 
@@ -192,6 +201,9 @@ std::pair<int64_t, int64_t> countResultRows(
   for (auto& range : ranges) {
     auto bits = reinterpret_cast<uint64_t*>(range.base);
     int32_t numFree = bits::countBits(bits, 0, range.firstRowOffset * 8);
+    if (numFree) {
+      std::cout << "freeRows=" << numFree << std::endl;
+    }
     auto n = ((range.rowOffset - range.firstRowOffset) / rowSize) - numFree;
     count += n;
     bytes += n * rowSize + (range.capacity - range.stringOffset);
@@ -235,10 +247,10 @@ AdvanceResult AbstractReadAggregation::canAdvance(
     int32_t instructionIdx) const {
   auto* aggState = reinterpret_cast<AggregateOperatorState*>(state);
   int32_t batchSize = 100'000;
-  int32_t rowSize = aggState->instruction->rowSize();
+  int32_t rowSize = aggState->rowSize;
   std::lock_guard<std::mutex> l(aggState->mutex);
-  if (!aggState->instruction->keys.empty()) {
-    auto maxReadStreams = aggState->instruction->maxReadStreams;
+  if (aggState->isGrouped) {
+    auto maxReadStreams = aggState->maxReadStreams;
     auto streamIdx = stream.streamIdx();
     if (streamIdx >= maxReadStreams) {
       return {};

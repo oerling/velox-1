@@ -192,6 +192,8 @@ void WaveBarrier::mayYield(std::function<void()> preWait) {
   waitFor(std::move(waitFuture));
 }
 
+#define TR(str, msg) (std::cout << fmt::format("St{}: {}\n", str->streamIdx(), msg));
+  
 WaveDriver::WaveDriver(
     exec::DriverCtx* driverCtx,
     RowTypePtr outputType,
@@ -310,6 +312,7 @@ bool WaveDriver::maybeWaitForPeers() {
   if (barrier_->stateMap().states.empty()) {
     return false;
   }
+  std::cout << "wait_for_peers\n";
   std::vector<ContinuePromise> promises;
   std::vector<std::shared_ptr<exec::Driver>> peers;
 
@@ -372,6 +375,7 @@ exec::BlockingReason WaveDriver::processArrived(Pipeline& pipeline) {
 
         runOperators(
             pipeline, *pipeline.arrived[streamIdx], i, advance[0].numRows);
+	TR(pipeline.arrived[streamIdx], "running");
         moveTo(pipeline.arrived, streamIdx, pipeline.running, true);
         continued = true;
         break;
@@ -383,6 +387,7 @@ exec::BlockingReason WaveDriver::processArrived(Pipeline& pipeline) {
     } else {
       /// Not blocked and not continuable, so must be at end.
       pipeline.arrived[streamIdx]->releaseStreamsAndEvents();
+      TR(pipeline.arrived[streamIdx], "finished");
       moveTo(pipeline.arrived, streamIdx, pipeline.finished);
       --streamIdx;
     }
@@ -395,6 +400,7 @@ void WaveDriver::prepareAdvance(
     WaveStream& stream,
     int32_t from,
     std::vector<AdvanceResult>& advanceVector) {
+  VELOX_CHECK(stream.state() == WaveStream::State::kNotRunning || stream.state() == WaveStream::State::kHost);
   void* driversToken = nullptr;
   int32_t exclusiveIndex = 0;
   for (auto i = 0; i < advanceVector.size(); ++i) {
@@ -408,14 +414,16 @@ void WaveDriver::prepareAdvance(
       VELOX_CHECK_NOT_NULL(driversToken);
       exclusiveIndex = i;
     } else if (advance.syncStreams) {
+      waitForArrival(pipeline);
     } else {
       // No sync, like adding memory to string pool for func.
       pipeline.operators[from]->callUpdateStatus(stream, advance);
     }
   }
   if (driversToken) {
+    TR((&stream), "acquire");
     barrier_->acquire(driversToken, [&]() { waitForArrival(pipeline); });
-    auto guard = folly::makeGuard([&]() { barrier_->release(); });
+    auto guard = folly::makeGuard([&]() { TR((&stream), "release"); barrier_->release(); });
 
     waitForArrival(pipeline);
     pipeline.operators[from]->callUpdateStatus(
@@ -455,10 +463,18 @@ void WaveDriver::waitForArrival(Pipeline& pipeline) {
         pipeline.running[i]->setState(WaveStream::State::kNotRunning);
         pipeline.running[i]->checkBlockStatuses();
         pipeline.running[i]->throwIfError(interpretError);
+	TR(pipeline.running[i], "arrived inside wait");
         moveTo(pipeline.running, i, pipeline.arrived);
       }
       ++waitLoops;
       --i;
+    }
+    if (waitLoops > 1000000) {
+      totalWaitLoops += waitLoops;
+      waitLoops = 0;
+      for (auto i = 0; i < pipeline.running.size(); ++i) {
+	TR(pipeline.running[i], "pending");
+      }
     }
   }
   totalWaitLoops += waitLoops;
@@ -529,6 +545,7 @@ Advance WaveDriver::advance(int pipelineIdx) {
           isWaiting = false;
         }
         arrived->throwIfError(interpretError);
+	TR(pipeline.running[i], "arrived");
         moveTo(pipeline.running, i, pipeline.arrived);
         if (pipeline.makesHostResult) {
           result_ = makeResult(*arrived, lastSet);
@@ -558,7 +575,7 @@ Advance WaveDriver::advance(int pipelineIdx) {
       // Ordinal of WaveStream across this pipeline across all parallel
       // WaveDrivers.
       int16_t streamId = pipeline.arrived.size() +
-          pipeline.running.size() *
+			  pipeline.running.size() +
               (FLAGS_max_streams_per_driver *
                operatorCtx_->driverCtx()->driverId);
       auto stream = std::make_unique<WaveStream>(
@@ -568,6 +585,7 @@ Advance WaveDriver::advance(int pipelineIdx) {
           &barrier_->stateMap(),
           pipeline.operators[0]->instructionStatus(),
           streamId);
+      TR(stream, "created");
       stream->setState(WaveStream::State::kHost);
       pipeline.arrived.push_back(std::move(stream));
     }

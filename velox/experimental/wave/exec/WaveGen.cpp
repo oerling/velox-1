@@ -878,7 +878,9 @@ void CompileState::makeLevelKernel(std::vector<KernelBox>& level) {
             WaveStream& stream) -> std::shared_ptr<OperatorState> {
       auto newState =
           std::make_shared<AggregateOperatorState>(stream.arenaShared());
-      newState->instruction = inst;
+      newState->isGrouped = !inst->keys.empty();
+      newState->rowSize = inst->rowSize();
+      newState->maxReadStreams = inst->maxReadStreams;
       stream.makeAggregate(*inst, *newState);
       return newState;
     };
