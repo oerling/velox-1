@@ -14,8 +14,8 @@
  * limitations under the License.
  */
 
+#include <iostream>
 #include "velox/experimental/wave/exec/Wave.h"
-#include<iostream>
 
 namespace facebook::velox::wave {
 
@@ -102,10 +102,11 @@ void resupplyHashTable(WaveStream& stream, AbstractInstruction& inst) {
   auto stateId = agg->state->id;
   auto* state = stream.operatorState(stateId)->as<AggregateOperatorState>();
   auto* head = state->alignedHead;
-  auto numSlots = [](GpuHashTableBase* t) { return (t->sizeMask + 1 ) * GpuBucketMembers::kNumSlots;};
+  auto numSlots = [](GpuHashTableBase* t) {
+    return (t->sizeMask + 1) * GpuBucketMembers::kNumSlots;
+  };
   auto* hashTable = reinterpret_cast<GpuHashTableBase*>(head + 1);
-  deviceStream->prefetch(
-			 nullptr, state->alignedHead, state->alignedHeadSize);
+  deviceStream->prefetch(nullptr, state->alignedHead, state->alignedHeadSize);
   deviceStream->wait();
   auto* gridState = stream.gridStatus<AggregateReturn>(agg->instructionStatus);
   auto* blockStatus = stream.hostBlockStatus();
@@ -118,7 +119,13 @@ void resupplyHashTable(WaveStream& stream, AbstractInstruction& inst) {
       bits::nextPowerOfTwo(numFailed + hashTable->numDistinct * 2);
   int64_t increment =
       rowSize * (newSize - hashTable->numDistinct) / numPartitions;
-  std::cout << fmt::format("resupply: size={} newSize={} increment={} numFailed={} ht={}\n", numSlots(hashTable), newSize, increment, numFailed, (void*)hashTable);
+  std::cout << fmt::format(
+      "resupply: size={} newSize={} increment={} numFailed={} ht={}\n",
+      numSlots(hashTable),
+      newSize,
+      increment,
+      numFailed,
+      (void*)hashTable);
   for (auto i = 0; i < numPartitions; ++i) {
     auto* allocator =
         &reinterpret_cast<HashPartitionAllocator*>(hashTable + 1)[i];

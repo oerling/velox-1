@@ -192,8 +192,9 @@ void WaveBarrier::mayYield(std::function<void()> preWait) {
   waitFor(std::move(waitFuture));
 }
 
-#define TR(str, msg) (std::cout << fmt::format("St{}: {}\n", str->streamIdx(), msg));
-  
+#define TR(str, msg) \
+  (std::cout << fmt::format("St{}: {}\n", str->streamIdx(), msg));
+
 WaveDriver::WaveDriver(
     exec::DriverCtx* driverCtx,
     RowTypePtr outputType,
@@ -375,7 +376,7 @@ exec::BlockingReason WaveDriver::processArrived(Pipeline& pipeline) {
 
         runOperators(
             pipeline, *pipeline.arrived[streamIdx], i, advance[0].numRows);
-	TR(pipeline.arrived[streamIdx], "running");
+        TR(pipeline.arrived[streamIdx], "running");
         moveTo(pipeline.arrived, streamIdx, pipeline.running, true);
         continued = true;
         break;
@@ -400,7 +401,9 @@ void WaveDriver::prepareAdvance(
     WaveStream& stream,
     int32_t from,
     std::vector<AdvanceResult>& advanceVector) {
-  VELOX_CHECK(stream.state() == WaveStream::State::kNotRunning || stream.state() == WaveStream::State::kHost);
+  VELOX_CHECK(
+      stream.state() == WaveStream::State::kNotRunning ||
+      stream.state() == WaveStream::State::kHost);
   void* driversToken = nullptr;
   int32_t exclusiveIndex = 0;
   for (auto i = 0; i < advanceVector.size(); ++i) {
@@ -423,7 +426,10 @@ void WaveDriver::prepareAdvance(
   if (driversToken) {
     TR((&stream), "acquire");
     barrier_->acquire(driversToken, [&]() { waitForArrival(pipeline); });
-    auto guard = folly::makeGuard([&]() { TR((&stream), "release"); barrier_->release(); });
+    auto guard = folly::makeGuard([&]() {
+      TR((&stream), "release");
+      barrier_->release();
+    });
 
     waitForArrival(pipeline);
     pipeline.operators[from]->callUpdateStatus(
@@ -463,7 +469,7 @@ void WaveDriver::waitForArrival(Pipeline& pipeline) {
         pipeline.running[i]->setState(WaveStream::State::kNotRunning);
         pipeline.running[i]->checkBlockStatuses();
         pipeline.running[i]->throwIfError(interpretError);
-	TR(pipeline.running[i], "arrived inside wait");
+        TR(pipeline.running[i], "arrived inside wait");
         moveTo(pipeline.running, i, pipeline.arrived);
       }
       ++waitLoops;
@@ -473,7 +479,7 @@ void WaveDriver::waitForArrival(Pipeline& pipeline) {
       totalWaitLoops += waitLoops;
       waitLoops = 0;
       for (auto i = 0; i < pipeline.running.size(); ++i) {
-	TR(pipeline.running[i], "pending");
+        TR(pipeline.running[i], "pending");
       }
     }
   }
@@ -545,7 +551,7 @@ Advance WaveDriver::advance(int pipelineIdx) {
           isWaiting = false;
         }
         arrived->throwIfError(interpretError);
-	TR(pipeline.running[i], "arrived");
+        TR(pipeline.running[i], "arrived");
         moveTo(pipeline.running, i, pipeline.arrived);
         if (pipeline.makesHostResult) {
           result_ = makeResult(*arrived, lastSet);
@@ -574,10 +580,8 @@ Advance WaveDriver::advance(int pipelineIdx) {
             FLAGS_max_streams_per_driver) {
       // Ordinal of WaveStream across this pipeline across all parallel
       // WaveDrivers.
-      int16_t streamId = pipeline.arrived.size() +
-			  pipeline.running.size() +
-              (FLAGS_max_streams_per_driver *
-               operatorCtx_->driverCtx()->driverId);
+      int16_t streamId = pipeline.arrived.size() + pipeline.running.size() +
+          (FLAGS_max_streams_per_driver * operatorCtx_->driverCtx()->driverId);
       auto stream = std::make_unique<WaveStream>(
           arena_,
           *deviceArena_,

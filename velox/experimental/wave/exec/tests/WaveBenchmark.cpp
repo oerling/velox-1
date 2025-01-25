@@ -305,18 +305,18 @@ class WaveBenchmark : public QueryBenchmarkBase {
           aggs.push_back(fmt::format("sum({})", aggInputs[i]));
         }
 
-	if (!keys.empty() && !FLAGS_wave) {
-	  builder.localPartition(keys);
-	}
-	
+        if (!keys.empty() && !FLAGS_wave) {
+          builder.localPartition(keys);
+        }
+
         plan.plan = builder.singleAggregation(keys, aggs).planNode();
 
-	if (!keys.empty()) {
-	  if (!FLAGS_wave) {
-	    builder.localPartition({});
-	  }
-	  builder.singleAggregation({}, {"sum(1)"});
-	}
+        if (!keys.empty()) {
+          if (!FLAGS_wave) {
+            builder.localPartition({});
+          }
+          builder.singleAggregation({}, {"sum(1)"});
+        }
         return plan;
       }
       default:
