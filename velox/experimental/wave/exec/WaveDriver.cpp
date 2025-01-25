@@ -83,6 +83,8 @@ void WaveBarrier::enter() {
           makeVeloxContinuePromiseContract("WaveDriver");
 
       promises_.push_back(std::move(promise));
+      ++numJoined_;
+      ++numInArrive_;
     }
     waitFor(std::move(waitFuture));
   }
@@ -129,14 +131,17 @@ void WaveBarrier::acquire(void* reason, std::function<void()> preWait) {
       exclusiveTid_ = getTid();
       return;
     }
+  }
+  if (preWait) {
+    preWait();
+  }
+  {
+    std::lock_guard<std::mutex> l(mutex_);
     auto promise = folly::Promise<bool>();
     future = promise.getSemiFuture();
     exclusivePromises_.push_back(std::move(promise));
     exclusiveTokens_.push_back(reason);
     maybeReleaseAcquireLocked();
-  }
-  if (preWait) {
-    preWait();
   }
   waitForBool(std::move(future));
   exclusiveTid_ = getTid();
@@ -155,6 +160,7 @@ void WaveBarrier::release() {
     if (exclusivePromises_.empty()) {
       exclusiveToken_ = nullptr;
       exclusiveTid_ = 0;
+      VELOX_CHECK_EQ(numInArrive_, promises_.size());
       numInArrive_ = 0;
       for (auto& promise : promises_) {
         promise.setValue();
@@ -175,19 +181,33 @@ void WaveBarrier::release() {
 
 void WaveBarrier::mayYield(std::function<void()> preWait) {
   ContinueFuture waitFuture;
+  folly::Promise<bool> exclPromise;
   {
     std::lock_guard<std::mutex> l(mutex_);
     if (exclusiveTokens_.empty()) {
       return;
     }
-    ++numInArrive_;
+  }
+  // Somebody has acquire() pending. The acquire() will not complete until this adds itself to waiting. But before acknowledging the acquire, do preWait.
+  if (preWait) {
+    preWait();
+  }
+  {
+    std::lock_guard<std::mutex> l(mutex_);
     auto [promise, future] = makeVeloxContinuePromiseContract("WaveDriver");
     promises_.push_back(std::move(promise));
     waitFuture = std::move(future);
-    maybeReleaseAcquireLocked();
+    ++numInArrive_;
+    if (numJoined_ - numInArrive_ == exclusivePromises_.size() &&
+	!exclusivePromises_.empty()) {
+      exclusiveToken_ = exclusiveTokens_.back();
+      exclPromise = std::move(exclusivePromises_.back());
+      exclusivePromises_.pop_back();
+      exclusiveTokens_.pop_back();
+    }
   }
-  if (preWait) {
-    preWait();
+  if (exclPromise.valid()) {
+    exclPromise.setValue(true);
   }
   waitFor(std::move(waitFuture));
 }

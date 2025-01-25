@@ -108,6 +108,7 @@ void resupplyHashTable(WaveStream& stream, AbstractInstruction& inst) {
   auto* hashTable = reinterpret_cast<GpuHashTableBase*>(head + 1);
   deviceStream->prefetch(nullptr, state->alignedHead, state->alignedHeadSize);
   deviceStream->wait();
+  VELOX_CHECK_EQ(head->debugActiveBlockCounter, 0);
   auto* gridState = stream.gridStatus<AggregateReturn>(agg->instructionStatus);
   auto* blockStatus = stream.hostBlockStatus();
   int32_t numBlocks = bits::roundUp(stream.numRows(), kBlockSize) / kBlockSize;

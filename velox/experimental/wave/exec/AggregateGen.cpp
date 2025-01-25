@@ -52,7 +52,8 @@ void AggregateGenerator::loadArgs(
 void maybeEnterCheck(std::stringstream& out, int32_t ord) {
   if (FLAGS_hash_tb_check) {
     out << fmt::format(
-        "  if (threadIdx.x == 0 && shared->nthBlock == 0) { auto*dbgState = reinterpret_cast<DeviceAggregation*>(shared->states[{}]); atomicAdd(&dbgState->debugBlockCounter, 1); }\n",
+        "  if (threadIdx.x == 0 && shared->nthBlock == 0) {{"
+	"auto*dbgState = reinterpret_cast<DeviceAggregation*>(shared->states[{}]); atomicAdd(&dbgState->debugActiveBlockCounter, 1); }}\n",
         ord);
   }
 }
@@ -60,7 +61,8 @@ void maybeEnterCheck(std::stringstream& out, int32_t ord) {
 void maybeLeaveCheck(std::stringstream& out, int32_t ord) {
   if (FLAGS_hash_tb_check) {
     out << fmt::format(
-        "  if (threadIdx.x == 0 && shared->nthBlock == shared->numRowsPerThread -1) { auto*dbgState = reinterpret_cast<DeviceAggregation*>(shared->states[{}]); atomicAdd(&dbgState->debugBlockCounter, -1); }\n",
+        "  if (threadIdx.x == 0 && shared->nthBlock == shared->numRowsPerThread -1) {{ "
+	"auto*dbgState = reinterpret_cast<DeviceAggregation*>(shared->states[{}]); atomicAdd(&dbgState->debugActiveBlockCounter, -1); }}\n",
         ord);
   }
 }

@@ -76,7 +76,7 @@ class WaveBarrier {
   // Releases an exclusive waiting caller if non-exclusives are in
   // arrive or have left.
   void maybeReleaseAcquireLocked();
-
+  
   // Serializes all non-static state.
   std::mutex mutex_;
 
