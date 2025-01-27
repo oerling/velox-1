@@ -105,6 +105,10 @@ int32_t CompileState::declareVariable(const AbstractOperand& op) {
 }
 
 void CompileState::declareNamed(const std::string& line) {
+  if (namedDeclares_.count(line)) {
+    return;
+  }
+  namedDeclares_.insert(line);
   declarations_ << line << std::endl;
 }
 
@@ -337,7 +341,7 @@ std::string Compute::toString() const {
 }
 
 void CompileState::ensureOperand(AbstractOperand* op) {
-  if (op->inRegister) {
+  if (op->inRegister || op->constant || op->literalNull) {
     return;
   }
   auto& flags = this->flags(*op);
@@ -365,10 +369,13 @@ void CompileState::ensureOperand(AbstractOperand* op) {
 }
 
 std::string CompileState::isNull(const AbstractOperand* op) {
-  auto ord = ordinal(*op);
   if (op->notNull) {
     return "false";
   }
+      if (op->literalNull) {
+	return "true";
+      }
+    auto ord = ordinal(*op);
   if (op->inRegister) {
     return fmt::format("(0 == (nulls{} & (1U << {})))", ord / 32, ord & 31);
   }
@@ -376,6 +383,9 @@ std::string CompileState::isNull(const AbstractOperand* op) {
 }
 
 std::string CompileState::operandValue(const AbstractOperand* op) {
+  if (op->constant) {
+    return literalText(*op);
+  }
   VELOX_CHECK(op->inRegister);
   return fmt::format("r{}", ordinal(*op));
 }
@@ -739,6 +749,7 @@ ProgramKey CompileState::makeLevelText(
   inlines_ = std::stringstream();
   includeText_ = std::stringstream();
   includes_.clear();
+  namedDeclares_.clear();
   functions_.clear();
   std::vector<AbstractOperand*> input;
   std::vector<AbstractOperand*> local;

@@ -34,6 +34,9 @@ DEFINE_bool(
     "Enables measuring host to device transfer latency separet "
     "from wait time for compute");
 
+DEFINE_bool(wave_trace_stream, false, "Enable trace of streams and drivers");
+
+
 namespace facebook::velox::wave {
 
 PrintTime::PrintTime(const char* title)
@@ -773,6 +776,9 @@ LaunchControl* WaveStream::prepareProgramLaunch(
   } else {
     VELOX_CHECK_EQ(exes.size(), control.programInfo.size());
     for (auto& info : control.programInfo) {
+      if (!info.advance.empty()) {
+	isContinue = true;
+      }
       if (info.advance.isRetry) {
         isContinue = true;
         checkBlockStatuses();

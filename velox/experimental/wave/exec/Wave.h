@@ -31,6 +31,17 @@
 
 DECLARE_bool(wave_timing);
 DECLARE_bool(wave_transfer_timing);
+DECLARE_bool(wave_trace_stream);
+
+#define TR(str, msg) \
+  if (FLAGS_wave_trace_stream) {\
+      (std::cout << fmt::format("St{}: {}\n", str->streamIdx(), msg));}
+
+
+#define TR1(msg) \
+  if (FLAGS_wave_trace_stream) {\
+  std::cout << msg; }
+
 
 namespace facebook::velox::wave {
 

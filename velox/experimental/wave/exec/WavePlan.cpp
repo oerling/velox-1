@@ -401,6 +401,7 @@ bool CompileState::tryPlanOperator(
     auto* state = newState(StateKind::kGroupBy, node->id(), "");
     auto aggregationStep = node->step();
     step->state = state;
+    step->id = ++aggCounter_;
     step->rows = newOperand(BIGINT(), "rows");
     std::vector<AbstractOperand*> aggResults;
     for (auto& key : node->groupingKeys()) {
@@ -412,11 +413,18 @@ bool CompileState::tryPlanOperator(
       auto& agg = node->aggregates()[i];
       std::vector<AbstractOperand*> args;
       for (auto& expr : agg.call->inputs()) {
-        args.push_back(fieldToOperand(
-            *std::dynamic_pointer_cast<const core::FieldAccessTypedExpr>(expr),
-            &topScope_));
-      }
+	if (auto fieldAccess = std::dynamic_pointer_cast<const core::FieldAccessTypedExpr>(expr)) {
+	  args.push_back(fieldToOperand(
+					*fieldAccess,
+					&topScope_));
+	} else if (auto literal = std::dynamic_pointer_cast<const core::ConstantTypedExpr>(expr)) {
+	  auto expr = std::make_shared<exec::ConstantExpr>(literal->toConstantVector(pool_));
+	  args.push_back(exprToOperand(*expr, &topScope_));
+	} else {
+	  VELOX_FAIL("Bad arg to aggregation");
+	}
 
+      }
       auto* func = makeStep<AggregateUpdate>();
       func->step = aggregationStep;
       func->name = agg.call->name();

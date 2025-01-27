@@ -17,6 +17,8 @@
 #include <iostream>
 #include "velox/experimental/wave/exec/Wave.h"
 
+DECLARE_int32(wave_max_reader_batch_rows);
+
 namespace facebook::velox::wave {
 
 std::string rowTypeString(const Type& type) {
@@ -120,13 +122,13 @@ void resupplyHashTable(WaveStream& stream, AbstractInstruction& inst) {
       bits::nextPowerOfTwo(numFailed + hashTable->numDistinct * 2);
   int64_t increment =
       rowSize * (newSize - hashTable->numDistinct) / numPartitions;
-  std::cout << fmt::format(
+  TR1(fmt::format(
       "resupply: size={} newSize={} increment={} numFailed={} ht={}\n",
       numSlots(hashTable),
       newSize,
       increment,
       numFailed,
-      (void*)hashTable);
+      (void*)hashTable));
   for (auto i = 0; i < numPartitions; ++i) {
     auto* allocator =
         &reinterpret_cast<HashPartitionAllocator*>(hashTable + 1)[i];
@@ -171,7 +173,7 @@ void resupplyHashTable(WaveStream& stream, AbstractInstruction& inst) {
   }
   deviceStream->wait();
   if (rehash) {
-    std::cout << fmt::format("rehashed {}\n", (void*)hashTable);
+    TR1(fmt::format("rehashed {}\n", (void*)hashTable));
   }
   WaveStream::releaseStream(std::move(deviceStream));
 }
@@ -210,7 +212,7 @@ std::pair<int64_t, int64_t> countResultRows(
     auto bits = reinterpret_cast<uint64_t*>(range.base);
     int32_t numFree = bits::countBits(bits, 0, range.firstRowOffset * 8);
     if (numFree) {
-      std::cout << "freeRows=" << numFree << std::endl;
+      TR1(fmt::format("freeRows={}\n", numFree));
     }
     auto n = ((range.rowOffset - range.firstRowOffset) / rowSize) - numFree;
     count += n;
@@ -254,7 +256,7 @@ AdvanceResult AbstractReadAggregation::canAdvance(
     OperatorState* state,
     int32_t instructionIdx) const {
   auto* aggState = reinterpret_cast<AggregateOperatorState*>(state);
-  int32_t batchSize = 100'000;
+  int32_t batchSize = FLAGS_wave_max_reader_batch_rows;
   int32_t rowSize = aggState->rowSize;
   std::lock_guard<std::mutex> l(aggState->mutex);
   if (aggState->isGrouped) {

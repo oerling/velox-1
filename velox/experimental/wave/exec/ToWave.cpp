@@ -48,6 +48,7 @@ CompileState::CompileState(
       operands_(runtime_->operands),
       operatorStates_(runtime_->states) {
   setDevice(getDevice());
+  pool_ = driver_.driverCtx()->task->pool();
 }
 
 common::Subfield* CompileState::toSubfield(const Expr& expr) {

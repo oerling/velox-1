@@ -476,6 +476,9 @@ struct AggregateProbe : public KernelStep {
 
   // The instruction, used for generating the read of the aggregate state.
   AbstractAggregation* abstractAggregation{nullptr};
+
+  /// Serial number. Differentiates between aggs in the same kernel, e.g. read one and update another.
+  int32_t id{0};
 };
 
 struct ReadAggregation : public KernelStep {
@@ -1083,6 +1086,9 @@ class CompileState {
   // Distinct includes pulled in by functions called from the generated kernel.
   folly::F14FastSet<std::string> includes_;
 
+  // Deduplicates declareNamed().
+  folly::F14FastSet<std::string> namedDeclares_;
+
   // Text of the #include section for the generated kernel.
   std::stringstream includeText_;
 
@@ -1154,6 +1160,9 @@ class CompileState {
   // Counter for making names for wraps.
   int32_t wrapId_{0};
 
+  // Counter for names of agg structs and classes.
+  int32_t aggCounter_{0};
+  
   // Operands that have a declaration. Set when emitting code.
   OperandSet declared_;
 
@@ -1172,6 +1181,7 @@ class CompileState {
   // Mutex serializing the background code generation after missing kernel
   // cache.
   std::mutex generateMutex_;
+  memory::MemoryPool* pool_{nullptr};
 };
 
 void registerWaveFunctions();
@@ -1184,6 +1194,10 @@ int32_t cudaTypeAlign(const Type& type);
 
 int32_t cudaTypeSize(const Type& type);
 
+  /// Replaces occurrences of 'from' with 'to' in 'str'.
+  std::string
+replaceAll(std::string str, const std::string& from, const std::string& to);
+  
 WaveRegistry& waveRegistry();
 AggregateRegistry& aggregateRegistry();
 

@@ -188,7 +188,8 @@ void WaveBarrier::mayYield(std::function<void()> preWait) {
       return;
     }
   }
-  // Somebody has acquire() pending. The acquire() will not complete until this adds itself to waiting. But before acknowledging the acquire, do preWait.
+  // Somebody has acquire() pending. The acquire() will not complete until this
+  // adds itself to waiting. But before acknowledging the acquire, do preWait.
   if (preWait) {
     preWait();
   }
@@ -199,7 +200,7 @@ void WaveBarrier::mayYield(std::function<void()> preWait) {
     waitFuture = std::move(future);
     ++numInArrive_;
     if (numJoined_ - numInArrive_ == exclusivePromises_.size() &&
-	!exclusivePromises_.empty()) {
+        !exclusivePromises_.empty()) {
       exclusiveToken_ = exclusiveTokens_.back();
       exclPromise = std::move(exclusivePromises_.back());
       exclusivePromises_.pop_back();
@@ -211,9 +212,6 @@ void WaveBarrier::mayYield(std::function<void()> preWait) {
   }
   waitFor(std::move(waitFuture));
 }
-
-#define TR(str, msg) \
-  (std::cout << fmt::format("St{}: {}\n", str->streamIdx(), msg));
 
 WaveDriver::WaveDriver(
     exec::DriverCtx* driverCtx,
@@ -333,7 +331,7 @@ bool WaveDriver::maybeWaitForPeers() {
   if (barrier_->stateMap().states.empty()) {
     return false;
   }
-  std::cout << "wait_for_peers\n";
+  TR1("wait_for_peers\n");
   std::vector<ContinuePromise> promises;
   std::vector<std::shared_ptr<exec::Driver>> peers;
 

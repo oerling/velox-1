@@ -26,6 +26,21 @@
 #include <filesystem>
 #include "velox/experimental/wave/jit/Headers.h"
 #include "velox/external/jitify/jitify.hpp"
+DEFINE_bool(cuda_G,
+	    #ifndef NDEBUG
+	    true
+	    #else
+	    false
+	    #endif
+	    , "Enable -G for NVRTC");
+
+DEFINE_int32(cuda_O,
+	    #ifndef NDEBUG
+	     0
+	    #else
+	     3
+	    #endif
+	    , "-O level for NVRTC");
 
 namespace facebook::velox::wave {
 
@@ -243,11 +258,15 @@ void ensureInit() {
       "} \n";
 
   waveNvrtcFlags.push_back("-std=c++17");
-#ifndef NDEBUG
+  if (FLAGS_cuda_O) {
+    char str[10];
+    sprintf(str, "-O%d", FLAGS_cuda_O);
+    waveNvrtcFlags.push_back("-Xptxas");
+    waveNvrtcFlags.push_back(std::string(str));
+  }
+  if (FLAGS_cuda_G) {
   waveNvrtcFlags.push_back("-G");
-#else
-  // waveNvrtcFlags.push_back("-O3");
-#endif
+  }
   getNvrtcOptions(waveNvrtcFlags);
   ::jitify::detail::detect_and_add_cuda_arch(waveNvrtcFlags);
 
@@ -261,7 +280,11 @@ void ensureInit() {
     makeNTS(str);
     waveNvrtcFlagsString.push_back(str.data());
   }
-
+  printf("\nNVRTC flags: ");
+  for (auto i = 0; i < waveNvrtcFlagsString.size(); ++i) {
+    printf("%s ", waveNvrtcFlagsString[i]);
+  }
+  printf("\n");
   inited = true;
 }
 
