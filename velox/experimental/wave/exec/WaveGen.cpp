@@ -372,10 +372,10 @@ std::string CompileState::isNull(const AbstractOperand* op) {
   if (op->notNull) {
     return "false";
   }
-      if (op->literalNull) {
-	return "true";
-      }
-    auto ord = ordinal(*op);
+  if (op->literalNull) {
+    return "true";
+  }
+  auto ord = ordinal(*op);
   if (op->inRegister) {
     return fmt::format("(0 == (nulls{} & (1U << {})))", ord / 32, ord & 31);
   }

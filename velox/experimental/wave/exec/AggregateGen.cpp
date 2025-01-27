@@ -69,7 +69,8 @@ void maybeLeaveCheck(std::stringstream& out, int32_t ord) {
 
 std::string makeAggregateRow(CompileState& state, const AggregateProbe& probe) {
   std::stringstream out;
-  out << "struct HashRow" << probe.id << " {\n"
+  out << "struct HashRow" << probe.id
+      << " {\n"
          "  int32_t flags;\n"
       << std::endl;
   int32_t numNullable = probe.keys.size() + probe.updates.size();
@@ -162,14 +163,16 @@ void makeAggregateOps(
 
   out << "struct AggregateOps" << probe.id << " {\n"
       << "  AggregateOps" << probe.id << "() = default;\n"
-      << "  __device__ AggregateOps" << probe.id << "(uint64_t hash, WaveShared* shared) : hashNumber(hash), shared(shared){}\n"
+      << "  __device__ AggregateOps" << probe.id
+      << "(uint64_t hash, WaveShared* shared) : hashNumber(hash), shared(shared){}\n"
       << "  uint64_t hashNumber;\n"
       << "  WaveShared* shared;\n";
   if (forRead) {
   } else {
     out << "  uint64_t __device__ hash(int32_t /*i*/) const { return hashNumber; }\n";
     makeRowHash(state, probe.keys, true, probe.id);
-    out << replaceAll(aggregateOpsBoilerPlate, "$I$", fmt::format("{}", probe.id));
+    out << replaceAll(
+        aggregateOpsBoilerPlate, "$I$", fmt::format("{}", probe.id));
   }
   out << "};\n\n";
 
@@ -180,10 +183,14 @@ void makeAggregateOps(
   out << "void __global__ setupAggregationKernel(AggregationControl op) {\n"
          "  if (op.oldBuckets) {\n"
          "    auto table = op.head->table;\n"
-    "    reinterpret_cast<GpuHashTable*>(table)->rehash<HashRow" << probe.id << ">(\n"
+         "    reinterpret_cast<GpuHashTable*>(table)->rehash<HashRow"
+      << probe.id
+      << ">(\n"
          "        reinterpret_cast<GpuBucket*>(op.oldBuckets),\n"
          "        op.numOldBuckets,\n"
-    "        AggregateOps" << probe.id << "(0, nullptr));\n"
+         "        AggregateOps"
+      << probe.id
+      << "(0, nullptr));\n"
          "    return;\n"
          "  }\n"
          "  auto* data = new (op.head) DeviceAggregation();\n"
@@ -200,7 +207,8 @@ void makeUpdateLambda(
     std::vector<const KernelStep*> updates) {
   auto& out = state.generated();
 
-  out << "  [&](GpuHashTable* table, HashRow" << probe.id << "* row, uint32_t peers, int32_t leader, int32_t laneId) {\n";
+  out << "  [&](GpuHashTable* table, HashRow" << probe.id
+      << "* row, uint32_t peers, int32_t leader, int32_t laneId) {\n";
   std::vector<const AggregateUpdate*> deferred;
 
   auto emitUpdates = [&](bool flush) {
@@ -250,7 +258,8 @@ void makeNonGroupedAggregation(
       "    reinterpret_cast<DeviceAggregation*>(shared->states[{}]);\n",
       state.stateOrdinal(*probe.state));
   state.declareNamed(fmt::format("HashRow{}* row;", probe.id));
-  out << "  row = reinterpret_cast<HashRow" << probe.id << "*>(state->singleRow);\n";
+  out << "  row = reinterpret_cast<HashRow" << probe.id
+      << "*>(state->singleRow);\n";
   for (auto i = 0; i < probe.updates.size(); i += 32) {
     out << "  if (threadIdx.x == 0) {\n"
         << fmt::format("  accNulls = row->nulls{};\n", i / 32) << "  }\n";
@@ -305,7 +314,8 @@ void makeAggregateProbe(
   out << fmt::format(" sync{}:\n", syncLabel);
   maybeEnterCheck(out, stateOrd);
   out << "  shared->status->errors[threadIdx.x] = laneStatus;\n";
-  out << "  table->updatingProbe<HashRow" << probe.id << ">(threadIdx.x, LaneId(), laneStatus == ErrorCode::kOk, ops, \n";
+  out << "  table->updatingProbe<HashRow" << probe.id
+      << ">(threadIdx.x, LaneId(), laneStatus == ErrorCode::kOk, ops, \n";
   makeCompareLambda(state, probe.keys, true, probe.id);
   out << ",\n";
   makeInitGroupRow(state, probe.keys, probe.updates, probe.id);
@@ -353,7 +363,8 @@ void makeReadAggregation(CompileState& state, const ReadAggregation& read) {
                "  state =\n"
                "    reinterpret_cast<DeviceAggregation*>(shared->states[{}]);\n",
                stateOrdinal);
-    out << "  HashRow" << id << "* readRow = reinterpret_cast<HashRow" << id << "*>(state->singleRow);\n";
+    out << "  HashRow" << id << "* readRow = reinterpret_cast<HashRow" << id
+        << "*>(state->singleRow);\n";
     out << readAggRow(state, read);
     out << "    shared->status->numRows = 1;\n"
         << "  }\n";
@@ -373,7 +384,9 @@ void makeReadAggregation(CompileState& state, const ReadAggregation& read) {
          "  auto state = reinterpret_cast<DeviceAggregation*>(shared->states["
       << stateOrdinal
       << "]);\n"
-    "    readRow = reinterpret_cast<HashRow" << id << "*>(\n"
+         "    readRow = reinterpret_cast<HashRow"
+      << id
+      << "*>(\n"
          "      state->resultRowPointers[shared->streamIdx][rowIdx]);\n";
   // Copy keys and accumulators to output.
   for (auto i = 0; i < read.probe->keys.size(); ++i) {

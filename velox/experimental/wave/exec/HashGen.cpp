@@ -74,7 +74,7 @@ void makeCompareLambda(
     CompileState& state,
     const std::vector<AbstractOperand*>& keys,
     bool nullableKeys,
-		       int32_t id) {
+    int32_t id) {
   auto& out = state.generated();
   out << "  [&](HashRow" << id << "* row) -> bool {\n";
   if (nullableKeys) {
@@ -116,7 +116,7 @@ void makeInitGroupRow(
     CompileState& state,
     const OpVector& keys,
     const std::vector<const AggregateUpdate*>& aggregates,
-		      int32_t id) {
+    int32_t id) {
   auto& out = state.generated();
   out << "  [&](HashRow" << id << "* row) {\n";
   int32_t numNullFlags = aggregates.size() + keys.size();
@@ -148,7 +148,7 @@ void makeRowHash(
     CompileState& state,
     const std::vector<AbstractOperand*>& keys,
     bool nullableKeys,
-		 int32_t id) {
+    int32_t id) {
   auto& out = state.inlines();
   out << "  uint64_t __device__ hashRow(HashRow" << id << "* row) {\n"
       << "  uint64_t hash = 1;\n";
@@ -190,7 +190,7 @@ std::string extractColumn(
     out << fmt::format(
         "  setNull(operands, {}, blockBase, ({}->nulls{} & (1U << {})) == 0);\n",
         ordinal,
-	row,
+        row,
         nthNull / 32,
         nthNull & 31);
   }

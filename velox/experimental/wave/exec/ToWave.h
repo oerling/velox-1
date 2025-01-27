@@ -477,7 +477,8 @@ struct AggregateProbe : public KernelStep {
   // The instruction, used for generating the read of the aggregate state.
   AbstractAggregation* abstractAggregation{nullptr};
 
-  /// Serial number. Differentiates between aggs in the same kernel, e.g. read one and update another.
+  /// Serial number. Differentiates between aggs in the same kernel, e.g. read
+  /// one and update another.
   int32_t id{0};
 };
 
@@ -1162,7 +1163,7 @@ class CompileState {
 
   // Counter for names of agg structs and classes.
   int32_t aggCounter_{0};
-  
+
   // Operands that have a declaration. Set when emitting code.
   OperandSet declared_;
 
@@ -1194,10 +1195,10 @@ int32_t cudaTypeAlign(const Type& type);
 
 int32_t cudaTypeSize(const Type& type);
 
-  /// Replaces occurrences of 'from' with 'to' in 'str'.
-  std::string
+/// Replaces occurrences of 'from' with 'to' in 'str'.
+std::string
 replaceAll(std::string str, const std::string& from, const std::string& to);
-  
+
 WaveRegistry& waveRegistry();
 AggregateRegistry& aggregateRegistry();
 

@@ -275,17 +275,17 @@ class WaveBenchmark : public QueryBenchmarkBase {
         std::vector<std::string> keyProjections;
         std::vector<std::string> keys;
         for (auto i = 0; i < type_->size(); ++i) {
-	  if (i < FLAGS_num_keys) {
-	    keyProjections.push_back(fmt::format(
-						 "(c{} / {}) % {} as c{}",
-						 i,
-						 specs_[i].roundUp,
-						 FLAGS_key_mod,
-						 i));
-	    keys.push_back(fmt::format("c{}", i));
-	  } else {
-	    keyProjections.push_back(fmt::format("c{}", i));
-	  }
+          if (i < FLAGS_num_keys) {
+            keyProjections.push_back(fmt::format(
+                "(c{} / {}) % {} as c{}",
+                i,
+                specs_[i].roundUp,
+                FLAGS_key_mod,
+                i));
+            keys.push_back(fmt::format("c{}", i));
+          } else {
+            keyProjections.push_back(fmt::format("c{}", i));
+          }
         }
         if (!keys.empty()) {
           builder.project(keyProjections);
@@ -313,31 +313,32 @@ class WaveBenchmark : public QueryBenchmarkBase {
         for (auto i = FLAGS_num_keys; i < aggInputs.size(); ++i) {
           aggs.push_back(fmt::format("sum({})", aggInputs[i]));
         }
-	
+
         if (!keys.empty() && !FLAGS_wave) {
           builder.localPartition(keys);
         }
 
-	auto aggsAndCount = aggs;
-	aggsAndCount.push_back("sum(1)");
+        auto aggsAndCount = aggs;
+        aggsAndCount.push_back("sum(1)");
         builder.singleAggregation(keys, aggsAndCount);
 
         if (!keys.empty()) {
           if (!FLAGS_wave) {
             builder.localPartition({});
           }
-	  auto aggType = builder.planNode()->outputType();
-	  auto sumCounts = fmt::format("sum({})", aggType->nameOf(aggType->size() - 1));
+          auto aggType = builder.planNode()->outputType();
+          auto sumCounts =
+              fmt::format("sum({})", aggType->nameOf(aggType->size() - 1));
           builder.singleAggregation({}, {"sum(1)", sumCounts});
         }
-	plan.plan = builder.planNode();
-	return plan;
+        plan.plan = builder.planNode();
+        return plan;
       }
       default:
         VELOX_FAIL("Bad query number");
     }
   }
-  
+
   void prepareQuery(int32_t query) {
     switch (query) {
       case 1: {
