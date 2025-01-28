@@ -280,6 +280,7 @@ AdvanceResult AbstractReadAggregation::canAdvance(
         for (auto j = 0; j < 2; j++) {
           if (!allocators[i].ranges[j].empty()) {
             aggState->ranges.push_back(std::move(allocators[i].ranges[j]));
+	    aggState->ranges.back().clearOverflows(aggState->rowSize);
           }
         }
       }

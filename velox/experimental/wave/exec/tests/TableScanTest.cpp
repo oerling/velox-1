@@ -32,12 +32,15 @@ DECLARE_int32(wave_max_reader_batch_rows);
 DECLARE_int32(max_streams_per_driver);
 DECLARE_int32(wave_reader_rows_per_tb);
 
-DEFINE_int32(agg_mod1, 10000, "Num distinct in 1st group by");
+DEFINE_int32(agg_mod1, 50000, "Num distinct in 1st group by");
+
+DEFINE_int32(agg_mod2, 9000, "Num distinct in 2nd group by");
 
 DEFINE_int32(max_drivers, 2, "Number of drivers in multidriver tests");
 
-DEFINE_int32(num_batches, 3, "Number of batches of test data");
-DEFINE_int32(batch_size, 20'000, "Batch size  in test data");
+DEFINE_int32(wt_num_batches, 3, "Number of batches of test data");
+
+DEFINE_int32(wt_batch_size, 20'000, "Batch size  in test data");
 
 using namespace facebook::velox;
 using namespace facebook::velox::core;
@@ -197,7 +200,7 @@ class TableScanTest : public virtual HiveConnectorTestBase,
       auto child = row->childAt(i);
       int32_t counter = 0;
       if (auto ints = child->as<FlatVector<int64_t>>()) {
-	makeNumbers(ints, mod, counter);
+	makeNumbers(child, mod, counter);
       }
       if (notNull) {
         child->clearNulls(0, row->size());
@@ -281,8 +284,8 @@ class TableScanTest : public virtual HiveConnectorTestBase,
 
   VectorFuzzer::Options options_;
   std::unique_ptr<VectorFuzzer> fuzzer_;
-  int32_t numBatches_ = FLAGS_num_batches;
-  int32_t batchSize_ = FLAGS_batch_size;
+  int32_t numBatches_ = FLAGS_wt_num_batches;
+  int32_t batchSize_ = FLAGS_wt_batch_size;
   int32_t numDrivers_{1};
   std::vector<RowVectorPtr> vectors_;
   bool dumpData_{false};
@@ -509,7 +512,7 @@ TEST_P(TableScanTest, scan2GroupBy) {
                   .singleAggregation(
                       {"c0"}, {"sum(1)", "sum(c1)", "sum(c2)", "sum(rn)"})
                   .singleAggregation(
-				     {}, {"sum(1)", "sum(a0)", "sum(1)", "sum(rn)"})
+				     {}, {"sum(1)", "sum(a0)"})
                   .planNode();
   auto task = assertQuery(
       plan,
@@ -530,14 +533,14 @@ TEST_P(TableScanTest, scan3GroupBy) {
                   .tableScan(type)
                   .singleAggregation(
                       {"c0"}, {"sum(1)", "sum(c1)"})
-    .project(fmt::format("c0 % {} as c0", FLAGS_agg_mod2), "a0")
+    .project({fmt::format("c0 % {} as c0", FLAGS_agg_mod2), "a0"})
     .singleAggregation(
 		       {"c0"}, {"sum(1)", "sum(a0)"})
     .planNode();
   auto task = assertQuery(
       plan,
       splits,
-      "SELECT sum(1), sum(a0) from (SELECT c0, sum(c1), sum(c2), sum(c3), sum(rn) FROM tmp  group by c0) d");
+      fmt::format("SELECT c0 % {}, sum(1), sum(a0) from (SELECT c0, sum(c1), sum(c2), sum(c3), sum(rn) FROM tmp  group by c0) d group by c0 % {}", FLAGS_agg_mod2, FLAGS_agg_mod2));
 }
 
 
