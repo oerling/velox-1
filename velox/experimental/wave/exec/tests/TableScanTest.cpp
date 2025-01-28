@@ -59,7 +59,8 @@ std::vector<WaveScanTestParam> waveScanTestParams() {
   return {
       WaveScanTestParam{},
       WaveScanTestParam{.numStreams = 4, .rowsPerTB = 4096, .makeDict = true},
-      WaveScanTestParam{.numStreams = 4, .batchSize = 1111, .numDrivers = FLAGS_max_drivers},
+      WaveScanTestParam{
+          .numStreams = 4, .batchSize = 1111, .numDrivers = FLAGS_max_drivers},
       WaveScanTestParam{
           .numStreams = 9,
           .batchSize = 16500,
@@ -200,7 +201,7 @@ class TableScanTest : public virtual HiveConnectorTestBase,
       auto child = row->childAt(i);
       int32_t counter = 0;
       if (auto ints = child->as<FlatVector<int64_t>>()) {
-	makeNumbers(child, mod, counter);
+        makeNumbers(child, mod, counter);
       }
       if (notNull) {
         child->clearNulls(0, row->size());
@@ -215,7 +216,6 @@ class TableScanTest : public virtual HiveConnectorTestBase,
     }
   }
 
-  
   wave::test::SplitVector makeTable(
       const std::string& name,
       std::vector<RowVectorPtr>& rows) {
@@ -511,8 +511,7 @@ TEST_P(TableScanTest, scan2GroupBy) {
                   .tableScan(type)
                   .singleAggregation(
                       {"c0"}, {"sum(1)", "sum(c1)", "sum(c2)", "sum(rn)"})
-                  .singleAggregation(
-				     {}, {"sum(1)", "sum(a0)"})
+                  .singleAggregation({}, {"sum(1)", "sum(a0)"})
                   .planNode();
   auto task = assertQuery(
       plan,
@@ -531,18 +530,18 @@ TEST_P(TableScanTest, scan3GroupBy) {
 
   auto plan = PlanBuilder(pool_.get())
                   .tableScan(type)
-                  .singleAggregation(
-                      {"c0"}, {"sum(1)", "sum(c1)"})
-    .project({fmt::format("c0 % {} as c0", FLAGS_agg_mod2), "a0"})
-    .singleAggregation(
-		       {"c0"}, {"sum(1)", "sum(a0)"})
-    .planNode();
+                  .singleAggregation({"c0"}, {"sum(1)", "sum(c1)"})
+                  .project({fmt::format("c0 % {} as c0", FLAGS_agg_mod2), "a0"})
+                  .singleAggregation({"c0"}, {"sum(1)", "sum(a0)"})
+                  .planNode();
   auto task = assertQuery(
       plan,
       splits,
-      fmt::format("SELECT c0 % {}, sum(1), sum(a0) from (SELECT c0, sum(c1), sum(c2), sum(c3), sum(rn) FROM tmp  group by c0) d group by c0 % {}", FLAGS_agg_mod2, FLAGS_agg_mod2));
+      fmt::format(
+          "SELECT c0 % {}, sum(1), sum(a0) from (SELECT c0, sum(c1), sum(c2), sum(c3), sum(rn) FROM tmp  group by c0) d group by c0 % {}",
+          FLAGS_agg_mod2,
+          FLAGS_agg_mod2));
 }
-
 
 VELOX_INSTANTIATE_TEST_SUITE_P(
     TableScanTests,

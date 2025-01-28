@@ -494,7 +494,7 @@ struct ReadAggregation : public KernelStep {
   }
 
   std::string preContinueCode(CompileState& state) override;
-  
+
   void visitResults(
       std::function<void(AbstractOperand*)> visitor) const override;
 
@@ -514,8 +514,7 @@ struct ReadAggregation : public KernelStep {
 
   // Reference to the aggregate info for generating the AbstractReadAggregation.
   const AggregateProbe* probe;
-    int32_t continueLabelN;
-
+  int32_t continueLabelN;
 };
 
 struct JoinBuild : public KernelStep {
@@ -1115,9 +1114,10 @@ class CompileState {
   int32_t labelCounter_{0};
   int32_t nextSyncLabel_{0};
 
-  // Counter for making labels to jump to for continuing from continuable instructions.
+  // Counter for making labels to jump to for continuing from continuable
+  // instructions.
   int32_t nextContinueLabel_{0};
-  
+
   thread_local static PipelineCandidate* currentCandidate_;
   thread_local static KernelBox* currentBox_;
 

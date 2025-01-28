@@ -242,7 +242,7 @@ int32_t makeResultRows(
       }
       result[fill++] = range.base + offset;
       if (fill >= maxRows) {
-	++startRow;
+        ++startRow;
         return fill;
       }
     }
@@ -280,7 +280,7 @@ AdvanceResult AbstractReadAggregation::canAdvance(
         for (auto j = 0; j < 2; j++) {
           if (!allocators[i].ranges[j].empty()) {
             aggState->ranges.push_back(std::move(allocators[i].ranges[j]));
-	    aggState->ranges.back().clearOverflows(aggState->rowSize);
+            aggState->ranges.back().clearOverflows(aggState->rowSize);
           }
         }
       }

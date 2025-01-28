@@ -36,7 +36,10 @@ DEFINE_bool(
 
 DEFINE_bool(wave_trace_stream, false, "Enable trace of streams and drivers");
 
-DEFINE_int32(wave_init_group_by_buckets, 2048, "Initial buckets in group by hash table (4 slots/bucket)");
+DEFINE_int32(
+    wave_init_group_by_buckets,
+    2048,
+    "Initial buckets in group by hash table (4 slots/bucket)");
 
 namespace facebook::velox::wave {
 
@@ -772,7 +775,8 @@ LaunchControl* WaveStream::prepareProgramLaunch(
   }
   // tru if not first launch.
   bool isContinue = false;
-  // true if redoing selected lanes of a previous launch. Requires using the same control block as in the previous launch.
+  // true if redoing selected lanes of a previous launch. Requires using the
+  // same control block as in the previous launch.
   bool isRetry = false;
   auto& control = *controlPtr;
   if (control.programInfo.empty()) {
@@ -781,18 +785,18 @@ LaunchControl* WaveStream::prepareProgramLaunch(
     VELOX_CHECK_EQ(exes.size(), control.programInfo.size());
     for (auto& info : control.programInfo) {
       if (info.advance.empty()) {
-	continue;
+        continue;
       }
       isContinue = true;
       if (info.advance.isRetry) {
         isContinue = true;
-	isRetry = true;
+        isRetry = true;
         checkBlockStatuses();
         break;
       } else {
-	numRows_ = info.advance.numRows;
-	inputBlocksPerExe = bits::roundUp(numRows_, kBlockSize) / kBlockSize;
-	blocksPerExe = bits::roundUp(inputBlocksPerExe, rowsPerThread);
+        numRows_ = info.advance.numRows;
+        inputBlocksPerExe = bits::roundUp(numRows_, kBlockSize) / kBlockSize;
+        blocksPerExe = bits::roundUp(inputBlocksPerExe, rowsPerThread);
       }
     }
   }

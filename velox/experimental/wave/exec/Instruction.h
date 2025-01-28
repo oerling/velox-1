@@ -178,9 +178,10 @@ struct AdvanceResult {
   /// The label where to pick up.
   int32_t continueLabel{0};
 
-  // The instruction index in host side Program where to pick up. If not 0, must have 'isRetry' true.
+  // The instruction index in host side Program where to pick up. If not 0, must
+  // have 'isRetry' true.
   int32_t instructionIdx{0};
-  
+
   /// True if continuing execution of a partially executed instruction. false if
   /// getting a new batch from a source. If true, the kernel launch must specify
   /// continue in the next kernel launch.
@@ -391,14 +392,17 @@ struct AbstractAggregation : public AbstractOperator {
 };
 
 struct AbstractReadAggregation : public AbstractOperator {
-  AbstractReadAggregation(int32_t serial, AbstractAggregation* aggregation, int32_t continueLabel)
+  AbstractReadAggregation(
+      int32_t serial,
+      AbstractAggregation* aggregation,
+      int32_t continueLabel)
       : AbstractOperator(
             OpCode::kReadAggregate,
             serial,
             aggregation->state,
             aggregation->outputType),
         aggregation(aggregation),
-	continueLabel(continueLabel) {}
+        continueLabel(continueLabel) {}
 
   AdvanceResult canAdvance(
       WaveStream& stream,
@@ -409,7 +413,6 @@ struct AbstractReadAggregation : public AbstractOperator {
   AbstractAggregation* aggregation;
   int32_t literalOffset{0};
   int32_t continueLabel{-1};
-
 };
 
 /// Serializes 'row' to characters interpretable on device.
