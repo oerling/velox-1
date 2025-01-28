@@ -408,7 +408,7 @@ struct AggregateProbe : public KernelStep {
   }
 
   std::optional<int32_t> continueLabel() const override {
-    return abstractAggregation->continueIdx();
+    return continueLabelN;
   }
 
   bool isBarrier() const override {
@@ -480,6 +480,8 @@ struct AggregateProbe : public KernelStep {
   /// Serial number. Differentiates between aggs in the same kernel, e.g. read
   /// one and update another.
   int32_t id{0};
+
+  int32_t continueLabelN{-1};
 };
 
 struct ReadAggregation : public KernelStep {
@@ -487,6 +489,12 @@ struct ReadAggregation : public KernelStep {
     return StepKind::kReadAggregation;
   }
 
+  std::optional<int32_t> continueLabel() const override {
+    return continueLabelN;
+  }
+
+  std::string preContinueCode(CompileState& state) override;
+  
   void visitResults(
       std::function<void(AbstractOperand*)> visitor) const override;
 
@@ -506,6 +514,8 @@ struct ReadAggregation : public KernelStep {
 
   // Reference to the aggregate info for generating the AbstractReadAggregation.
   const AggregateProbe* probe;
+    int32_t continueLabelN;
+
 };
 
 struct JoinBuild : public KernelStep {
@@ -1105,6 +1115,9 @@ class CompileState {
   int32_t labelCounter_{0};
   int32_t nextSyncLabel_{0};
 
+  // Counter for making labels to jump to for continuing from continuable instructions.
+  int32_t nextContinueLabel_{0};
+  
   thread_local static PipelineCandidate* currentCandidate_;
   thread_local static KernelBox* currentBox_;
 

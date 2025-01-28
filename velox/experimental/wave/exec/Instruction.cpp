@@ -194,7 +194,7 @@ AdvanceResult AbstractAggregation::canAdvance(
     // resupply the device side hash table.
     return {
         .numRows = stream.numRows(),
-        .instructionIdx = serial,
+        .continueLabel = continueLabel,
         .isRetry = true,
         .syncDrivers = true,
         .updateStatus = resupplyHashTable,
@@ -339,7 +339,7 @@ AdvanceResult AbstractReadAggregation::canAdvance(
   // Single row case.
   if (aggState->isNew) {
     aggState->isNew = false;
-    return {.numRows = 1};
+    return {.numRows = 1, .continueLabel = continueLabel};
   }
   return {};
 }

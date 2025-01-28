@@ -403,6 +403,7 @@ bool CompileState::tryPlanOperator(
     step->state = state;
     step->id = ++aggCounter_;
     step->rows = newOperand(BIGINT(), "rows");
+    step->continueLabelN = ++nextContinueLabel_;
     std::vector<AbstractOperand*> aggResults;
     for (auto& key : node->groupingKeys()) {
       step->keys.push_back(fieldToOperand(*key, &topScope_));
@@ -445,6 +446,8 @@ bool CompileState::tryPlanOperator(
     auto read = makeStep<ReadAggregation>();
     read->probe = step;
     read->state = state;
+    read->continueLabelN = ++nextContinueLabel_;
+
     for (auto i = 0; i < node->groupingKeys().size(); ++i) {
       read->keys.push_back(
           fieldToOperand(*toSubfield(outputType->nameOf(i)), &topScope_));

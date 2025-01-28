@@ -398,12 +398,12 @@ void makeReadAggregation(CompileState& state, const ReadAggregation& read) {
         *read.keys[i]);
   }
   out << readAggRow(state, read);
+  out << "  } else { laneStatus = ErrorCode::kInactive; }\n";
   out << "  if (threadIdx.x == 0) {\n"
       << "    shared->numRows = blockBase + kBlockSize <= numRows \n"
       << "   ? kBlockSize \n"
-      << "    : numRows - blockBase;\n"
-      << "  }\n"
-      << "    }\n";
+      << "    : numRows + kBlockSize <= blockBase ? 0 : numRows - blockBase;\n"
+      << "  }\n";
 }
 
 std::string streamToString(std::stringstream* s) {

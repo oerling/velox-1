@@ -551,6 +551,7 @@ std::unique_ptr<AbstractInstruction> AggregateProbe::addInstruction(
   }
   agg->roundedRowSize = bits::roundUp(offset, 8);
   abstractAggregation = agg.get();
+  agg->continueLabel = continueLabelN;
   return agg;
 }
 
@@ -583,6 +584,11 @@ void ReadAggregation::generateMain(CompileState& state, int32_t /*syncLabel*/) {
   makeAggregateOps(state, *probe, true);
   makeReadAggregation(state, *this);
 }
+  
+std::string ReadAggregation::preContinueCode(CompileState& state) {
+  // A read aggregation has all lanes on and marks the ones aftter end as off in the operator code.
+  return "    laneStatus = ErrorCode::kOk;\n;";
+}
 
 std::string AggregateUpdate::toString() const {
   std::stringstream out;
@@ -597,7 +603,7 @@ std::string AggregateUpdate::toString() const {
 std::unique_ptr<AbstractInstruction> ReadAggregation::addInstruction(
     CompileState& state) {
   return std::make_unique<AbstractReadAggregation>(
-      state.nextSerial(), probe->abstractAggregation);
+						   state.nextSerial(), probe->abstractAggregation, continueLabelN);
 }
 
 void writeDebugFile(const KernelSpec& spec) {

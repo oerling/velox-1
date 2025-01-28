@@ -768,20 +768,29 @@ LaunchControl* WaveStream::prepareProgramLaunch(
     controlVector[nthLaunch] = std::make_unique<LaunchControl>(key, inputRows);
     controlPtr = controlVector[nthLaunch].get();
   }
+  // tru if not first launch.
   bool isContinue = false;
+  // true if redoing selected lanes of a previous launch. Requires using the same control block as in the previous launch.
+  bool isRetry = false;
   auto& control = *controlPtr;
   if (control.programInfo.empty()) {
     control.programInfo.resize(exes.size());
   } else {
     VELOX_CHECK_EQ(exes.size(), control.programInfo.size());
     for (auto& info : control.programInfo) {
-      if (!info.advance.empty()) {
-        isContinue = true;
+      if (info.advance.empty()) {
+	continue;
       }
+      isContinue = true;
       if (info.advance.isRetry) {
         isContinue = true;
+	isRetry = true;
         checkBlockStatuses();
         break;
+      } else {
+	numRows_ = info.advance.numRows;
+	inputBlocksPerExe = bits::roundUp(numRows_, kBlockSize) / kBlockSize;
+	blocksPerExe = bits::roundUp(inputBlocksPerExe, rowsPerThread);
       }
     }
   }
@@ -818,26 +827,34 @@ LaunchControl* WaveStream::prepareProgramLaunch(
   }
   size += operandBytes;
   int32_t statusOffset = 0;
+  int32_t statusBytes = 0;
   if (!inputControl) {
     statusOffset = size;
     //  Pointer to return block for each tB.
-    size += bits::roundUp(blocksPerExe * sizeof(BlockStatus), 8);
-    size += bits::roundUp(
+    statusBytes = bits::roundUp(blocksPerExe * sizeof(BlockStatus), 8);
+    statusBytes += bits::roundUp(
         instructionStatus_.gridStateSize +
             instructionStatus_.blockState * numBlocks,
         8);
+    size += statusBytes;
   }
   // 1 pointer per exe and an exe-dependent data area.
   int32_t operatorStateOffset = size;
   size += exes.size() * sizeof(void*) + operatorStateBytes;
-  auto buffer = arena_->allocate<char>(size);
+  WaveBufferPtr buffer;
+  if (isRetry) {
+    buffer = std::move(control.deviceData);
+  } else {
+    buffer = arena_->allocate<char>(size);
+  }
   if (stream) {
     stream->prefetch(nullptr, buffer->as<char>(), buffer->size());
   }
   // Zero initialization is expected, for example for operands and arrays in
   // Operand::indices.
-  memset(buffer->as<char>(), 0, size);
-
+  if (!isRetry) {
+    memset(buffer->as<char>(), 0, size);
+  }
   control.sharedMemorySize = shared;
   // Now we fill in the various arrays and put their start addresses in
   // 'control'.
@@ -851,7 +868,7 @@ LaunchControl* WaveStream::prepareProgramLaunch(
       ? addBytes<int32_t*>(control.params.operands, exes.size() * sizeof(void*))
       : nullptr;
 
-  if (!inputControl) {
+  if (!inputControl && !isRetry) {
     // If the launch produces new statuses (as opposed to updating status of a
     // previous launch), there is an array with a status for each TB. If there
     // are multiple exes, they all share the same error codes. A launch can have
@@ -878,7 +895,7 @@ LaunchControl* WaveStream::prepareProgramLaunch(
         control.params.startPC[i] = -1;
       } else {
         control.params.startPC[i] =
-            control.programInfo[i].advance.instructionIdx;
+            control.programInfo[i].advance.continueLabel;
       }
     }
     auto operandPtrs = fillOperands(*exes[i], operandStart, info[i]);
@@ -1170,6 +1187,7 @@ AdvanceResult Program::canAdvance(
     }
     auto result = instruction->canAdvance(stream, control, state, i);
     if (!result.empty()) {
+      result.instructionIdx = i;
       result.programIdx = programIdx;
       return result;
     }
