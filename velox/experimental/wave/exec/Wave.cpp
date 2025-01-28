@@ -36,6 +36,8 @@ DEFINE_bool(
 
 DEFINE_bool(wave_trace_stream, false, "Enable trace of streams and drivers");
 
+DEFINE_int32(wave_init_group_by_buckets, 2048, "Initial buckets in group by hash table (4 slots/bucket)");
+
 namespace facebook::velox::wave {
 
 PrintTime::PrintTime(const char* title)
@@ -1015,7 +1017,7 @@ void WaveStream::makeAggregate(
     auto* hashTable = reinterpret_cast<GpuHashTableBase*>(header + 1);
     HashPartitionAllocator* allocators =
         reinterpret_cast<HashPartitionAllocator*>(hashTable + 1);
-    int32_t numBuckets = 2048;
+    int32_t numBuckets = bits::nextPowerOfTwo(FLAGS_wave_init_group_by_buckets);
     header->table = hashTable;
     WaveBufferPtr table =
         arena_->allocate<char>(sizeof(GpuBucketMembers) * numBuckets);

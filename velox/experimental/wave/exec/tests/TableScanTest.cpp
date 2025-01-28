@@ -32,6 +32,13 @@ DECLARE_int32(wave_max_reader_batch_rows);
 DECLARE_int32(max_streams_per_driver);
 DECLARE_int32(wave_reader_rows_per_tb);
 
+DEFINE_int32(agg_mod1, 10000, "Num distinct in 1st group by");
+
+DEFINE_int32(max_drivers, 2, "Number of drivers in multidriver tests");
+
+DEFINE_int32(num_batches, 3, "Number of batches of test data");
+DEFINE_int32(batch_size, 20'000, "Batch size  in test data");
+
 using namespace facebook::velox;
 using namespace facebook::velox::core;
 using namespace facebook::velox::exec;
@@ -49,12 +56,12 @@ std::vector<WaveScanTestParam> waveScanTestParams() {
   return {
       WaveScanTestParam{},
       WaveScanTestParam{.numStreams = 4, .rowsPerTB = 4096, .makeDict = true},
-      WaveScanTestParam{.numStreams = 4, .batchSize = 1111, .numDrivers = 2},
+      WaveScanTestParam{.numStreams = 4, .batchSize = 1111, .numDrivers = FLAGS_max_drivers},
       WaveScanTestParam{
           .numStreams = 9,
           .batchSize = 16500,
           .makeDict = true,
-          .numDrivers = 2},
+          .numDrivers = FLAGS_max_drivers},
       WaveScanTestParam{
           .numStreams = 2, .batchSize = 20000, .rowsPerTB = 20480}};
 }
@@ -173,6 +180,39 @@ class TableScanTest : public virtual HiveConnectorTestBase,
     }
   }
 
+  void makeSeq(
+      RowVectorPtr row,
+      int64_t mod = std::numeric_limits<int64_t>::max(),
+      bool notNull = true,
+      int32_t begin = -1,
+      int32_t end = -1,
+      int64_t roundTo = 1) {
+    if (begin == -1) {
+      begin = 0;
+    }
+    if (end == -1) {
+      end = row->type()->size();
+    }
+    for (auto i = begin; i < end; ++i) {
+      auto child = row->childAt(i);
+      int32_t counter = 0;
+      if (auto ints = child->as<FlatVector<int64_t>>()) {
+	makeNumbers(ints, mod, counter);
+      }
+      if (notNull) {
+        child->clearNulls(0, row->size());
+      }
+    }
+  }
+
+  void makeNumbers(VectorPtr vector, int32_t mod, int32_t& counter) {
+    auto numbers = vector->as<FlatVector<int64_t>>();
+    for (auto i = 0; i < numbers->size(); ++i) {
+      numbers->set(i, counter++ % mod);
+    }
+  }
+
+  
   wave::test::SplitVector makeTable(
       const std::string& name,
       std::vector<RowVectorPtr>& rows) {
@@ -241,8 +281,8 @@ class TableScanTest : public virtual HiveConnectorTestBase,
 
   VectorFuzzer::Options options_;
   std::unique_ptr<VectorFuzzer> fuzzer_;
-  int32_t numBatches_ = 3;
-  int32_t batchSize_ = 20'000;
+  int32_t numBatches_ = FLAGS_num_batches;
+  int32_t batchSize_ = FLAGS_batch_size;
   int32_t numDrivers_{1};
   std::vector<RowVectorPtr> vectors_;
   bool dumpData_{false};
@@ -408,7 +448,7 @@ TEST_P(TableScanTest, scanDict) {
       makeData(type, numBatches_, batchSize_, false, [&](RowVectorPtr row) {
         makeRange(row, 10000000000, false);
         int32_t card = 1200;
-        makeNumbers(row->childAt(row->childrenSize() - 1), counter);
+        makeNumbers(row->childAt(row->childrenSize() - 1), 1000000000, counter);
         for (auto i = 0; i < row->childrenSize() - 1; ++i) {
           auto child = row->childAt(i);
           for (auto i = 0; i < card; ++i) {
@@ -461,24 +501,43 @@ TEST_P(TableScanTest, scan2GroupBy) {
           {BIGINT(), BIGINT(), BIGINT(), BIGINT(), BIGINT()});
   auto splits =
       makeData(type, numBatches_ * 4, batchSize_, true, [&](RowVectorPtr row) {
-        makeRange(row, 1000000000, true);
+        makeSeq(row, FLAGS_agg_mod1, true);
       });
 
   auto plan = PlanBuilder(pool_.get())
-                  .tableScan(type, {"c1 < 950000000"})
-                  .project(
-                      {"c0",
-                       "c1 + 1 as c1",
-                       "c2 + 2 as c2",
-                       "c3 + c2 as c3",
-                       "rn + 1 as rn"})
+                  .tableScan(type)
                   .singleAggregation(
-                      {"c0"}, {"sum(c1)", "sum(c2)", "sum(c3)", "sum(rn)"})
+                      {"c0"}, {"sum(1)", "sum(c1)", "sum(c2)", "sum(rn)"})
+                  .singleAggregation(
+				     {}, {"sum(1)", "sum(a0)", "sum(1)", "sum(rn)"})
                   .planNode();
   auto task = assertQuery(
       plan,
       splits,
-      "SELECT c0, sum(c1 + 1), sum(c2 + 2), sum(c3 + c2), sum(rn + 1) FROM tmp where c1 < 950000000 group by c0");
+      "SELECT sum(1), sum(a0) from (SELECT c0, sum(c1), sum(c2), sum(c3), sum(rn) FROM tmp  group by c0) d");
+}
+
+TEST_P(TableScanTest, scan3GroupBy) {
+  auto type =
+      ROW({"c0", "c1", "c2", "c3", "rn"},
+          {BIGINT(), BIGINT(), BIGINT(), BIGINT(), BIGINT()});
+  auto splits =
+      makeData(type, numBatches_ * 4, batchSize_, true, [&](RowVectorPtr row) {
+        makeSeq(row, FLAGS_agg_mod1, true);
+      });
+
+  auto plan = PlanBuilder(pool_.get())
+                  .tableScan(type)
+                  .singleAggregation(
+                      {"c0"}, {"sum(1)", "sum(c1)"})
+    .project(fmt::format("c0 % {} as c0", FLAGS_agg_mod2), "a0")
+    .singleAggregation(
+		       {"c0"}, {"sum(1)", "sum(a0)"})
+    .planNode();
+  auto task = assertQuery(
+      plan,
+      splits,
+      "SELECT sum(1), sum(a0) from (SELECT c0, sum(c1), sum(c2), sum(c3), sum(rn) FROM tmp  group by c0) d");
 }
 
 

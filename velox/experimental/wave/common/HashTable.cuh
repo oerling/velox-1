@@ -330,6 +330,7 @@ class GpuHashTable : public GpuHashTableBase {
         auto candidate = bucket->loadWithWait<RowType>(hitIdx);
         if (compare(candidate)) {
           if (toInsert) {
+	    printf("free insertable\n");
             ops.freeInsertable(this, toInsert, h);
           }
           hit = candidate;
