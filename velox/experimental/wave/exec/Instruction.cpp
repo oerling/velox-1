@@ -242,6 +242,7 @@ int32_t makeResultRows(
       }
       result[fill++] = range.base + offset;
       if (fill >= maxRows) {
+	++startRow;
         return fill;
       }
     }
