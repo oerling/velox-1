@@ -667,8 +667,15 @@ std::string WaveDriver::toString() const {
 }
 
 void WaveDriver::setError() {
+  hasError_ = true;
   for (auto& pipeline : pipelines_) {
     for (auto& stream : pipeline.running) {
+      stream->setError();
+    }
+    for (auto& stream : pipeline.arrived) {
+      stream->setError();
+    }
+    for (auto& stream : pipeline.finished) {
       stream->setError();
     }
   }

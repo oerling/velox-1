@@ -29,6 +29,8 @@
 
 #include <folly/executors/CPUThreadPoolExecutor.h>
 
+#include <iostream>
+
 DECLARE_bool(wave_timing);
 DECLARE_bool(wave_transfer_timing);
 DECLARE_bool(wave_trace_stream);
@@ -970,6 +972,7 @@ class WaveStream {
   void releaseStreamsAndEvents();
 
   void setError() {
+    TR(this, "Setting error.");
     hasError_ = true;
   }
 

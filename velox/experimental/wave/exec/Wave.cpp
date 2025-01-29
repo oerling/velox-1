@@ -163,12 +163,7 @@ WaveVector* Executable::operandVector(OperandId id, const TypePtr& type) {
 }
 
 WaveStream::~WaveStream() {
-  if (!hasError_) {
-    VELOX_CHECK(
-        state_ == State::kHost || state_ == State::kNotRunning,
-        "Bad state at ~WaveStream: {}",
-        static_cast<int32_t>(state_));
-  }
+  // Wait for device side activity. Memory accessed from device is live until the streams are deleted, so block here.
   for (auto& stream : streams_) {
     stream->wait();
   }
@@ -889,6 +884,9 @@ LaunchControl* WaveStream::prepareProgramLaunch(
       status->numRows =
           i == inputBlocksPerExe - 1 ? inputRows % kBlockSize : kBlockSize;
     }
+  }else if (!inputControl) {
+    // No input control and retry. the statuses are as left by the previous try.
+    ;
   } else {
     control.params.status = inputControl->params.status;
   }
@@ -1081,6 +1079,7 @@ void WaveStream::throwIfError(std::function<void(const KernelError*)> action) {
   int32_t errorOffset = bits::roundUp(numBlocks * sizeof(BlockStatus), 8);
   auto error = addBytes<KernelError*>(hostSide, errorOffset);
   if (error->messageEnum) {
+    setError();
     action(error);
   }
 }

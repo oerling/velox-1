@@ -254,7 +254,10 @@ class WaveDriver : public exec::SourceOperator {
   // Sets the WaveStreams to error state.
   void setError();
 
-  // Supports Task-wide sync between WaveDrivers on different exec::Drivers.
+  // Supports Task-wide sync between WaveDrivers on different
+  // exec::Drivers. Must be last in destruct order. If streams are
+  // destructed before thisthen device activity stops before device
+  // resources shared between WaveDrivers go away.
   std::shared_ptr<WaveBarrier> barrier_;
 
   std::shared_ptr<GpuArena> arena_;
@@ -271,8 +274,6 @@ class WaveDriver : public exec::SourceOperator {
     waveStats_.add(stats);
     stats.clear();
   }
-
-  std::vector<Pipeline> pipelines_;
 
   // The replaced Operators from the Driver. Can be used for a CPU fallback.
   std::vector<std::unique_ptr<exec::Operator>> cpuOperators_;
@@ -293,6 +294,11 @@ class WaveDriver : public exec::SourceOperator {
   WaveStats waveStats_;
 
   RowVectorPtr result_;
+
+  bool hasError_{false};
+
+  // Streams for device side activity. First in destruct order to finish device activity before releasing shared device resources.
+  std::vector<Pipeline> pipelines_;
 };
 
 } // namespace facebook::velox::wave
