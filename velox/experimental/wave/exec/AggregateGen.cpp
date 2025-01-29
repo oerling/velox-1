@@ -351,14 +351,14 @@ std::string readAggRow(CompileState& state, const ReadAggregation& read) {
   return out.str();
 }
 
-void makeReadAggregation(CompileState& state, const ReadAggregation& read) {
+void makeReadAggregation(CompileState& state, const ReadAggregation& read, int32_t syncLabel) {
   auto& out = state.generated();
   auto stateOrdinal = state.stateOrdinal(*read.state);
   state.declareNamed("DeviceAggregation* state;");
   auto id = read.probe->id;
   if (read.probe->keys.empty()) {
     // Case with no grouping.
-    out << "  if (threadIdx.x != 0) { laneStatus = ErrorCode::kInactive; } else {\n"
+    out << "  if (threadIdx.x != 0) { laneStatus = ErrorCode::kInactive; goto sync" << syncLabel << "; } else {\n"
         << fmt::format(
                "  state =\n"
                "    reinterpret_cast<DeviceAggregation*>(shared->states[{}]);\n",
@@ -403,7 +403,8 @@ void makeReadAggregation(CompileState& state, const ReadAggregation& read) {
       << "    shared->numRows = blockBase + kBlockSize <= numRows \n"
       << "   ? kBlockSize \n"
       << "    : numRows + kBlockSize <= blockBase ? 0 : numRows - blockBase;\n"
-      << "  }\n";
+      << "  }\n"
+    "  if (laneStatus != ErrorCode::kOk) { goto sync" << syncLabel << "; }\n";
 }
 
 std::string streamToString(std::stringstream* s) {

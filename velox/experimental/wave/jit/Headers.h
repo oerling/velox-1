@@ -1827,7 +1827,6 @@ const char* velox_experimental_wave_common_HashTable_cuh =
     "        auto candidate = bucket->loadWithWait<RowType>(hitIdx);\n"
     "        if (compare(candidate)) {\n"
     "          if (toInsert) {\n"
-    "	    printf(\"free insertable\\n\");\n"
     "            ops.freeInsertable(this, toInsert, h);\n"
     "          }\n"
     "          hit = candidate;\n"

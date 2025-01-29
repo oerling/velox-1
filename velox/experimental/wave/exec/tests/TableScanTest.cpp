@@ -516,7 +516,7 @@ TEST_P(TableScanTest, scan2GroupBy) {
   auto task = assertQuery(
       plan,
       splits,
-      "SELECT sum(1), sum(a0) from (SELECT c0, sum(c1), sum(c2), sum(c3), sum(rn) FROM tmp  group by c0) d");
+      "SELECT sum(1), sum(a0) from (SELECT c0, sum(1) as a0, sum(c1), sum(c2), sum(c3), sum(rn) FROM tmp  group by c0) d");
 }
 
 TEST_P(TableScanTest, scan3GroupBy) {
@@ -538,7 +538,7 @@ TEST_P(TableScanTest, scan3GroupBy) {
       plan,
       splits,
       fmt::format(
-          "SELECT c0 % {}, sum(1), sum(a0) from (SELECT c0, sum(c1), sum(c2), sum(c3), sum(rn) FROM tmp  group by c0) d group by c0 % {}",
+          "SELECT c0 % {}, sum(1), sum(a0) from (SELECT c0, sum(1) as a0, sum(c1), sum(c2), sum(c3), sum(rn) FROM tmp  group by c0) d group by c0 % {}",
           FLAGS_agg_mod2,
           FLAGS_agg_mod2));
 }

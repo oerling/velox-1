@@ -579,10 +579,10 @@ std::string AggregateProbe::toString() const {
 void AggregateUpdate::generateMain(CompileState& state, int32_t /*syncLabel*/) {
 }
 
-void ReadAggregation::generateMain(CompileState& state, int32_t /*syncLabel*/) {
+void ReadAggregation::generateMain(CompileState& state, int32_t syncLabel) {
   visitResults([&](auto op) { op->isStored = true; });
   makeAggregateOps(state, *probe, true);
-  makeReadAggregation(state, *this);
+  makeReadAggregation(state, *this, syncLabel);
 }
 
 std::string ReadAggregation::preContinueCode(CompileState& state) {
@@ -724,7 +724,7 @@ ProgramKey CompileState::makeLevelText(
       auto step = box.steps[stepIdx_];
       sharedSize_ = std::max<int32_t>(sharedSize_, step->sharedMemorySize());
 
-      int32_t syncLabel = -1;
+      int32_t syncLabel = nextSyncLabel_;
       if (step->isBarrier()) {
         syncLabel = nextSyncLabel_;
         ++nextSyncLabel_;

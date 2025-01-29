@@ -187,6 +187,10 @@ AdvanceResult AbstractAggregation::canAdvance(
     return {};
   }
   auto gridState = stream.gridStatus<AggregateReturn>(instructionStatus);
+  if (!gridState) {
+    // There is no state if there has been no launch. Not continuable.
+    return {};
+  }
   if (gridState->numDistinct) {
     stream.checkBlockStatuses();
     stream.clearGridStatus<AggregateReturn>(instructionStatus);
