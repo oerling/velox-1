@@ -1207,8 +1207,6 @@ void Program::callUpdateStatus(WaveStream& stream, AdvanceResult& advance) {
   }
 }
 
-
-
 std::unique_ptr<Executable> Program::getExecutable(
     int32_t maxRows,
     const std::vector<std::unique_ptr<AbstractOperand>>& operands) {
