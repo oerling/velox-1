@@ -163,7 +163,8 @@ WaveVector* Executable::operandVector(OperandId id, const TypePtr& type) {
 }
 
 WaveStream::~WaveStream() {
-  // Wait for device side activity. Memory accessed from device is live until the streams are deleted, so block here.
+  // Wait for device side activity. Memory accessed from device is live until
+  // the streams are deleted, so block here.
   for (auto& stream : streams_) {
     stream->wait();
   }
@@ -884,7 +885,7 @@ LaunchControl* WaveStream::prepareProgramLaunch(
       status->numRows =
           i == inputBlocksPerExe - 1 ? inputRows % kBlockSize : kBlockSize;
     }
-  }else if (!inputControl) {
+  } else if (!inputControl) {
     // No input control and retry. the statuses are as left by the previous try.
     ;
   } else {

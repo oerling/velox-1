@@ -297,7 +297,8 @@ class WaveDriver : public exec::SourceOperator {
 
   bool hasError_{false};
 
-  // Streams for device side activity. First in destruct order to finish device activity before releasing shared device resources.
+  // Streams for device side activity. First in destruct order to finish device
+  // activity before releasing shared device resources.
   std::vector<Pipeline> pipelines_;
 };
 
