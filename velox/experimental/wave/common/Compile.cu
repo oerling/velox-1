@@ -225,6 +225,18 @@ void ensureInit() {
     waveNvrtcFlags.push_back("-G");
   }
   getNvrtcOptions(waveNvrtcFlags);
+  auto device = currentDevice();
+  bool hasArch = false;
+  for (auto& flag : waveNvrtcFlags) {
+    if (strstr(flag.c_str(), "-arch") != nullptr) {
+      hasArch = true;
+      break;
+    }
+  }
+  if (!hasArch) {
+    waveNvrtcFlags.push_back(fmt::format(
+        "--gpu-architecture=compute_{}{}", device->major, device->minor));
+  }
   ::jitify::detail::detect_and_add_cuda_arch(waveNvrtcFlags);
 
   static jitify::JitCache kernel_cache;
@@ -241,7 +253,7 @@ void ensureInit() {
   for (auto i = 0; i < waveNvrtcFlagsString.size(); ++i) {
     printf("%s ", waveNvrtcFlagsString[i]);
   }
-  printf("\n");
+  printf("\nDevice=%s\n", device->toString().c_str());
   inited = true;
 }
 

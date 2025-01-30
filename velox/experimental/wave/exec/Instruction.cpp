@@ -17,7 +17,6 @@
 #include <iostream>
 #include "velox/experimental/wave/exec/Wave.h"
 
-
 DEFINE_int32(
     wave_max_reader_batch_rows,
     80 * 1024,

@@ -53,6 +53,19 @@ void cudaCheckFatal(cudaError_t err, const char* file, int line) {
   exit(1);
 }
 
+std::string Device::toString() const {
+  return fmt::format(
+      "Device {}: {} {}.{} global {}MB {} SMs, {}K shmem/SM, {}K L2",
+      deviceId,
+      model,
+      major,
+      minor,
+      globalMB,
+      numSM,
+      sharedMemPerSM >> 10,
+      L2Size >> 10);
+}
+
 namespace {
 std::mutex ctxMutex;
 bool driverInited = false;
