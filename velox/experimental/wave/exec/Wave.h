@@ -408,7 +408,6 @@ struct Executable {
   // int32_t* per thread block.
   folly::F14FastMap<int32_t, int32_t**> wraps;
 
-
   // Backing memory for intermediate Operands. Free when 'this' arrives. If
   // scheduling follow up work that is synchronized with arrival of 'this', the
   // intermediates can be moved to the dependent executable at time of
@@ -635,7 +634,6 @@ class Program : public std::enable_shared_from_this<Program> {
   std::string toString() const;
 
  private:
-
   std::unique_ptr<CompiledKernel> kernel_;
 
   GpuArena* arena_{nullptr};

@@ -93,7 +93,7 @@ inline const T* addBytes(const T* ptr, int bytes) {
 void prefetchToDevice(void* ptr, size_t size) {
   CUDA_CHECK_FATAL(cudaMemPrefetchAsync(ptr, size, FLAGS_device_id, nullptr));
 }
-  
+
 template <typename T>
 void makeBitpackDict(
     int32_t bitWidth,
@@ -247,19 +247,25 @@ class GpuDecoderTest : public ::testing::Test {
     float selectivity{1};
   };
 
-
   template <typename T>
-  void makeFilter(GpuDecode* op, T* dict, int32_t dictSize, int32_t bitWidth, float selectivity) {
+  void makeFilter(
+      GpuDecode* op,
+      T* dict,
+      int32_t dictSize,
+      int32_t bitWidth,
+      float selectivity) {
     op->filterKind = WaveFilterKind::kBigintRange;
-    int64_t upper = bitWidth != 0 ? (1 << bitWidth) * selectivity : dict[dictSize - 1] * selectivity;
+    int64_t upper = bitWidth != 0 ? (1 << bitWidth) * selectivity
+                                  : dict[dictSize - 1] * selectivity;
     op->filter._.int64Range[0] = 0;
     op->filter._.int64Range[1] = upper;
   }
 
-    template <int kBlockSize>
-    void fillRows(GpuDecode* op, int32_t* rows, int32_t valuesPerOp, float everyNth) {
-      int32_t opIdx = op->nthBlock;
-      int32_t i = 0;
+  template <int kBlockSize>
+  void
+  fillRows(GpuDecode* op, int32_t* rows, int32_t valuesPerOp, float everyNth) {
+    int32_t opIdx = op->nthBlock;
+    int32_t i = 0;
 
     auto numBlocks = valuesPerOp / kBlockSize;
     for (auto block = 0; block < op->numRowsPerThread; ++block) {
@@ -268,17 +274,17 @@ class GpuDecoderTest : public ::testing::Test {
       int32_t last = std::min<int32_t>(op->maxRow, row + kBlockSize);
       int32_t counter = 0;
       for (;;) {
-	int32_t target = row + counter * everyNth;
-	if (target > last) {
-	  op->blockStatus[block].numRows = counter;
-	  break;
-	}
-	++counter;
-	rows[rowIdx++] = target; 
+        int32_t target = row + counter * everyNth;
+        if (target > last) {
+          op->blockStatus[block].numRows = counter;
+          break;
+        }
+        ++counter;
+        rows[rowIdx++] = target;
       }
     }
   }
-  
+
   template <typename T, int kBlockSize>
   void dictTestPlan(
       int32_t bitWidth,
@@ -328,7 +334,8 @@ class GpuDecoderTest : public ::testing::Test {
                                  : DecodeStep::kDictionaryOnBitpack;
       ops[i].encoding = DecodeStep::kDictionaryOnBitpack;
       ops[i].dataType = WaveTypeTrait<T>::typeKind;
-      ops[i].nullMode = opts.everyNth == 1 ? NullMode::kDenseNonNull : NullMode::kSparseNonNull;
+      ops[i].nullMode = opts.everyNth == 1 ? NullMode::kDenseNonNull
+                                           : NullMode::kSparseNonNull;
       ops[i].nthBlock = i;
       ops[i].numRowsPerThread = i == numOps - 1
           ? roundUp(numValues - (valuesPerOp * i), kBlockSize) / kBlockSize
@@ -339,13 +346,18 @@ class GpuDecoderTest : public ::testing::Test {
 
       ops[i].blockStatus = blockStatus + (i * valuesPerThread);
       if (rows) {
-	ops[i].rows = &(rows.get())[i * valuesPerOp];
-	fillRows<kBlockSize>(&ops[i], rows.get(), valuesPerOp, opts.everyNth);
+        ops[i].rows = &(rows.get())[i * valuesPerOp];
+        fillRows<kBlockSize>(&ops[i], rows.get(), valuesPerOp, opts.everyNth);
       }
       if (resultRows) {
-	ops[i].resultRows = & resultRows[i * valuesPerOp];
-	makeFilter(&ops[i], dict, (1 << bitWidth), bitsOnly ? bitWidth : 0, opts.selectivity);
-	ops[i].temp = &(temp.get())[i * (2 + (kBlockSize / kWarpThreads))];
+        ops[i].resultRows = &resultRows[i * valuesPerOp];
+        makeFilter(
+            &ops[i],
+            dict,
+            (1 << bitWidth),
+            bitsOnly ? bitWidth : 0,
+            opts.selectivity);
+        ops[i].temp = &(temp.get())[i * (2 + (kBlockSize / kWarpThreads))];
       }
 
       auto& op = ops[i].data.dictionaryOnBitpack;
@@ -360,17 +372,16 @@ class GpuDecoderTest : public ::testing::Test {
       op.dataType = WaveTypeTrait<T>::typeKind;
     }
     if (rows) {
-      prefetchToDevice(
-		       rows.get(), numValues * sizeof(int32_t));
+      prefetchToDevice(rows.get(), numValues * sizeof(int32_t));
     }
     if (resultRows) {
-      prefetchToDevice(
-		       resultRows.get(), numValues * sizeof(int32_t));
+      prefetchToDevice(resultRows.get(), numValues * sizeof(int32_t));
     }
 
     std::string selection;
     if (opts.everyNth != 1 || opts.selectivity != 1) {
-      selection = fmt::format("look at {} select {}", 1/ opts.everyNth, opts.selectivity);
+      selection = fmt::format(
+          "look at {} select {}", 1 / opts.everyNth, opts.selectivity);
     }
     testCase(
         fmt::format(
@@ -379,7 +390,7 @@ class GpuDecoderTest : public ::testing::Test {
             sizeof(T) * 8,
             numValues,
             useScatter,
-	    selection),
+            selection),
         [&] {
 #ifdef USE_PROGRAM_API
           callViaPrograms(ops.get(), numOps);
@@ -763,9 +774,7 @@ TEST_F(GpuDecoderTest, filter) {
   dictTestPlan<int64_t, 256>(22, 40'000'003, 1024, false, true, true, opts);
   opts.selectivity = 1;
   dictTestPlan<int64_t, 256>(22, 40'000'003, 1024, false, true, true, opts);
-
 }
-
 
 TEST_F(GpuDecoderTest, sparseBool) {
   testSparseBool<256>(40013, 1024);

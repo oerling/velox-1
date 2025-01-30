@@ -26,21 +26,25 @@
 #include <filesystem>
 #include "velox/experimental/wave/jit/Headers.h"
 #include "velox/external/jitify/jitify.hpp"
-DEFINE_bool(cuda_G,
-	    #ifndef NDEBUG
-	    true
-	    #else
-	    false
-	    #endif
-	    , "Enable -G for NVRTC");
+DEFINE_bool(
+    cuda_G,
+#ifndef NDEBUG
+    true
+#else
+    false
+#endif
+    ,
+    "Enable -G for NVRTC");
 
-DEFINE_int32(cuda_O,
-	    #ifndef NDEBUG
-	     0
-	    #else
-	     3
-	    #endif
-	    , "-O level for NVRTC");
+DEFINE_int32(
+    cuda_O,
+#ifndef NDEBUG
+    0
+#else
+    3
+#endif
+    ,
+    "-O level for NVRTC");
 
 #ifndef VELOX_OSS_BUILD
 #include "velox/facebook/NvrtcUtil.h"
@@ -218,7 +222,7 @@ void ensureInit() {
     waveNvrtcFlags.push_back(std::string(str));
   }
   if (FLAGS_cuda_G) {
-  waveNvrtcFlags.push_back("-G");
+    waveNvrtcFlags.push_back("-G");
   }
   getNvrtcOptions(waveNvrtcFlags);
   ::jitify::detail::detect_and_add_cuda_arch(waveNvrtcFlags);
@@ -243,11 +247,11 @@ void ensureInit() {
 
 } // namespace
 
-//static
+// static
 void CompiledModule::initialize() {
   ensureInit();
 }
-  
+
 std::shared_ptr<CompiledModule> CompiledModule::create(const KernelSpec& spec) {
   ensureInit();
   const char** headers = waveHeaderTextString.data();
@@ -363,8 +367,7 @@ KernelInfo CompiledModuleImpl::info(int32_t kernelIdx) {
   cuFuncGetAttribute(&info.numRegs, CU_FUNC_ATTRIBUTE_NUM_REGS, f);
   cuFuncGetAttribute(
       &info.sharedMemory, CU_FUNC_ATTRIBUTE_SHARED_SIZE_BYTES, f);
-  cuFuncGetAttribute(
-      &info.localMemory, CU_FUNC_ATTRIBUTE_LOCAL_SIZE_BYTES, f);
+  cuFuncGetAttribute(&info.localMemory, CU_FUNC_ATTRIBUTE_LOCAL_SIZE_BYTES, f);
   cuFuncGetAttribute(
       &info.maxThreadsPerBlock, CU_FUNC_ATTRIBUTE_MAX_THREADS_PER_BLOCK, f);
   int32_t max;

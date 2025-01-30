@@ -1172,7 +1172,7 @@ void Program::getOperatorStates(WaveStream& stream, std::vector<void*>& ptrs) {
       }
       ptrs[i] = state->devicePtr();
     }
-    }
+  }
 }
 
 bool Program::isSink() const {
@@ -1283,7 +1283,5 @@ std::string Program::toString() const {
   out << "}" << std::endl;
   return out.str();
 }
-
-
 
 } // namespace facebook::velox::wave

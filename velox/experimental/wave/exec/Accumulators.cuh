@@ -69,7 +69,6 @@ void __device__ __forceinline__ simpleAccumulate(
     if ((toUpdate &= toUpdate - 1) == 0) {
       return;
     }
-
   }
 }
 

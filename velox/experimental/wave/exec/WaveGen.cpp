@@ -1030,6 +1030,6 @@ void CompileState::generatePrograms() {
     }
     operators_.at(firstOperatorIdx)->setInstructionStatus(instructionStatus_);
   }
-  }
+}
 
 } // namespace facebook::velox::wave

@@ -127,7 +127,6 @@ AbstractState* CompileState::newState(
   return state;
 }
 
-
 bool maybeNotNull(const AbstractOperand* op) {
   if (!op) {
     return true;
@@ -197,34 +196,34 @@ bool CompileState::compile() {
   driver_.initializeOperators();
   RowTypePtr inputType;
   std::vector<OperandId> resultOrder;
-    outputType = makeOperators(operatorIndex, resultOrder);
-    if (operators_.empty()) {
-      return false;
-    }
+  outputType = makeOperators(operatorIndex, resultOrder);
+  if (operators_.empty()) {
+    return false;
+  }
 
   for (auto& op : operators_) {
     op->finalize(*this);
   }
-    if (!reserveMemory()) {
-      VELOX_FAIL("Failed to reserve unified memory for Wave");
-    }
-    auto waveOpUnique = std::make_unique<WaveDriver>(
-        driver_.driverCtx(),
-        outputType,
-        operators[first]->planNodeId(),
-        operators[first]->operatorId(),
-        std::move(arena_),
-        std::move(operators_),
-        std::move(resultOrder),
-        runtime_);
-    auto waveOp = waveOpUnique.get();
-    waveOp->initialize();
-    std::vector<std::unique_ptr<exec::Operator>> added;
-    added.push_back(std::move(waveOpUnique));
-    auto replaced = driverFactory_.replaceOperators(
-        driver_, first, operatorIndex, std::move(added));
-    waveOp->setReplaced(std::move(replaced));
-    return true;
+  if (!reserveMemory()) {
+    VELOX_FAIL("Failed to reserve unified memory for Wave");
+  }
+  auto waveOpUnique = std::make_unique<WaveDriver>(
+      driver_.driverCtx(),
+      outputType,
+      operators[first]->planNodeId(),
+      operators[first]->operatorId(),
+      std::move(arena_),
+      std::move(operators_),
+      std::move(resultOrder),
+      runtime_);
+  auto waveOp = waveOpUnique.get();
+  waveOp->initialize();
+  std::vector<std::unique_ptr<exec::Operator>> added;
+  added.push_back(std::move(waveOpUnique));
+  auto replaced = driverFactory_.replaceOperators(
+      driver_, first, operatorIndex, std::move(added));
+  waveOp->setReplaced(std::move(replaced));
+  return true;
 }
 
 bool waveDriverAdapter(

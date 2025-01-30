@@ -265,7 +265,6 @@ void Stream::deviceConstantToHostAsync(
       stream_->stream));
 }
 
-
 namespace {
 struct CallbackData {
   CallbackData(std::function<void()> callback)
@@ -377,8 +376,7 @@ KernelInfo kernelInfo(const void* func) {
 std::string KernelInfo::toString() const {
   std::stringstream out;
   out << "NumRegs=" << numRegs << " maxThreadsPerBlock= " << maxThreadsPerBlock
-      << " sharedMemory=" << sharedMemory
-      << " localMemory=" << localMemory
+      << " sharedMemory=" << sharedMemory << " localMemory=" << localMemory
       << " occupancy 256,  0=" << maxOccupancy0
       << " occupancy 256,32=" << maxOccupancy32;
   return out.str();

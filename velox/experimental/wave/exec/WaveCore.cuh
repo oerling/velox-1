@@ -32,7 +32,12 @@ inline T* __device__ gridStatus(const WaveShared* shared, int32_t gridState) {
       gridState);
 }
 
-  inline __device__ void setError(WaveShared* shared, ErrorCode& laneStatus, bool insideTry, int32_t messageEnum, int64_t extra = 0) {
+inline __device__ void setError(
+    WaveShared* shared,
+    ErrorCode& laneStatus,
+    bool insideTry,
+    int32_t messageEnum,
+    int64_t extra = 0) {
   laneStatus = ErrorCode::kError;
   if (insideTry) {
     return;
@@ -237,19 +242,20 @@ __device__ inline T& flatResult(Operand* op, int32_t blockBase) {
   extern __shared__ char sharedChar[];                                         \
   WaveShared* shared = reinterpret_cast<WaveShared*>(sharedChar);              \
   if (threadIdx.x == 0) {                                                      \
-    shared->operands = params.operands[0];                          \
+    shared->operands = params.operands[0];                                     \
     shared->numBlocks = params.numBlocks;                                      \
     shared->numRowsPerThread = params.numRowsPerThread;                        \
     auto startBlock = blockIdx.x * shared->numRowsPerThread;                   \
     auto branchIdx = startBlock / shared->numBlocks;                           \
     startBlock = startBlock - (shared->numBlocks * branchIdx);                 \
     shared->programIdx = branchIdx;                                            \
-    startBlock = (startBlock / shared->numRowsPerThread) * shared->numRowsPerThread;   \
+    startBlock =                                                               \
+        (startBlock / shared->numRowsPerThread) * shared->numRowsPerThread;    \
     int32_t numBlocksAbove = shared->numBlocks - startBlock;                   \
     if (numBlocksAbove < shared->numRowsPerThread) {                           \
       shared->numRowsPerThread = numBlocksAbove;                               \
     }                                                                          \
-  shared->status = &params.status[startBlock];				\
+    shared->status = &params.status[startBlock];                               \
     shared->numRows = shared->status->numRows;                                 \
     shared->blockBase = startBlock * kBlockSize;                               \
     shared->states = params.operatorStates[0];                                 \
@@ -279,7 +285,7 @@ __device__ inline T& flatResult(Operand* op, int32_t blockBase) {
 
 #define PROGRAM_EPILOGUE()                                \
   shared->status->errors[threadIdx.x] = laneStatus;       \
-  __syncthreads(); \
+  __syncthreads();                                        \
   if (threadIdx.x == 0) {                                 \
     shared->status->numRows = shared->numRows;            \
     if (++shared->nthBlock >= shared->numRowsPerThread) { \

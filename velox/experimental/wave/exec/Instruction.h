@@ -279,7 +279,6 @@ struct AbstractInstruction {
   int32_t serial{-1};
 };
 
-
 enum class StateKind : uint8_t { kGroupBy };
 
 /// Represents a shared state operated on by instructions. For example, a
