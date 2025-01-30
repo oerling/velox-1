@@ -513,7 +513,6 @@ bool isInlinable(PipelineCandidate& candidate, AbstractOperand* op) {
 
 void recordReference(PipelineCandidate& candidate, AbstractOperand* op) {
   auto& flags = candidate.flags(op);
-  auto* box = candidate.boxOf(flags.definedIn);
   if (flags.firstUse.empty()) {
     flags.firstUse = CodePosition(
         candidate.steps.size() - 1,

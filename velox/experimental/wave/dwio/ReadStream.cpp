@@ -23,10 +23,8 @@ DEFINE_int32(
     1024,
     "Number of items per thread block in Wave reader");
 
-DEFINE_int32(
-    wave_max_reader_batch_rows,
-    80 * 1024,
-    "Max batch for Wave table scan");
+DECLARE_int32(
+	      wave_max_reader_batch_rows);
 
 namespace facebook::velox::wave {
 

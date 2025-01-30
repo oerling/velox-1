@@ -308,7 +308,7 @@ void Compute::generateMain(CompileState& state, int32_t /*syncLable*/) {
   if (md.maySetStatus) {
     if (tryLabel.has_value()) {
       state.generated() << fmt::format(
-          "  if (laneStatus != ErrorCode::kOk) { goto tryNull{};}\n",
+          "  if (laneStatus != ErrorCode::kOk) {{ goto tryNull{};}}\n",
           tryLabel.value());
     } else {
       state.generated() << fmt::format(

@@ -17,7 +17,11 @@
 #include <iostream>
 #include "velox/experimental/wave/exec/Wave.h"
 
-DECLARE_int32(wave_max_reader_batch_rows);
+
+DEFINE_int32(
+    wave_max_reader_batch_rows,
+    80 * 1024,
+    "Max batch for Wave table scan");
 
 namespace facebook::velox::wave {
 
@@ -111,7 +115,6 @@ void resupplyHashTable(WaveStream& stream, AbstractInstruction& inst) {
   deviceStream->prefetch(nullptr, state->alignedHead, state->alignedHeadSize);
   deviceStream->wait();
   VELOX_CHECK_EQ(head->debugActiveBlockCounter, 0);
-  auto* gridState = stream.gridStatus<AggregateReturn>(agg->instructionStatus);
   auto* blockStatus = stream.hostBlockStatus();
   int32_t numBlocks = bits::roundUp(stream.numRows(), kBlockSize) / kBlockSize;
   int32_t numFailed =

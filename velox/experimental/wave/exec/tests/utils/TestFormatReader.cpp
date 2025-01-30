@@ -76,15 +76,12 @@ void TestFormatData::decodeAlphabet(
         deviceStaging.reserve(bits::roundUp(alphabet->numValues, 32) / 8);
     deviceStaging.registerPointer(filterId, &filterBitmap_, true);
   }
-  BufferId resultId = kNoBufferId;
   BufferId decodedId = kNoBufferId;
   Staging staging(
       alphabet->values->as<char>(), alphabet->values->size(), alphabet->region);
   BufferId rawId = splitStaging.add(staging);
 
   for (auto blockIdx = 0; blockIdx < numBlocks; ++blockIdx) {
-    auto rowsInBlock =
-        std::min<int32_t>(rowsPerBlock, numRows - (blockIdx * rowsPerBlock));
     auto columnKind = static_cast<WaveTypeKind>(column_->kind);
     auto valueSize = waveTypeKindSize(columnKind);
     auto step = makeAlphabetStep(
@@ -207,8 +204,6 @@ void TestFormatData::startOp(
   }
   VELOX_CHECK_LT(numBlocks, 256 * 256, "Overflow 16 bit block number");
   for (auto blockIdx = 0; blockIdx < numBlocks; ++blockIdx) {
-    auto rowsInBlock = std::min<int32_t>(
-        rowsPerBlock, op.rows.size() - (blockIdx * rowsPerBlock));
     auto columnKind = static_cast<WaveTypeKind>(column_->kind);
 
     auto step = makeStep(

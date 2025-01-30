@@ -162,7 +162,6 @@ void CompileState::setConditionalNullable(AbstractOperand* op) {
   if (op->inputs.empty()) {
     return;
   }
-  bool allMaybeNonNull = false;
   for (auto* input : op->inputs) {
     if (!maybeNotNull(input)) {
       return;
@@ -189,7 +188,6 @@ bool CompileState::compile() {
 
   int32_t first = 0;
   int32_t operatorIndex = 0;
-  int32_t nodeIndex = 0;
   RowTypePtr outputType;
   // Make sure operator states are initialized.  We will need to inspect some of
   // them during the transformation.

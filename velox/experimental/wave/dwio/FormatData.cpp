@@ -307,7 +307,6 @@ std::unique_ptr<GpuDecode> FormatData::makeAlphabetStep(
     int32_t numRows) {
   auto rowsPerBlock = FLAGS_wave_reader_rows_per_tb;
   auto maxRowsPerThread = (rowsPerBlock / kBlockSize);
-  int32_t numBlocks = bits::roundUp(numRows, rowsPerBlock) / rowsPerBlock;
 
   auto rowsInBlock =
       std::min<int32_t>(rowsPerBlock, numRows - (blockIdx * rowsPerBlock));
