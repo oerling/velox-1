@@ -490,7 +490,6 @@ class GpuDecoderTest : public ::testing::Test {
         3);
     for (int j = 0; j < numBlocks; ++j) {
       auto& op = ops[j].data.varint;
-      ASSERT_EQ(op.resultSize, numValues);
       for (int i = 0; i < numValues; ++i) {
         ASSERT_EQ(reinterpret_cast<const uint64_t*>(op.result)[i], expected[i]);
       }

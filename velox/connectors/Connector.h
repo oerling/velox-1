@@ -350,7 +350,9 @@ class IndexSource {
     /// 'future' to complete before calling 'next' again.
     virtual std::optional<std::shared_ptr<LookupResult>> next(
         vector_size_t size,
-        velox::ContinueFuture& future) = 0;
+        velox::ContinueFuture& future) {
+      VELOX_UNSUPPORTED();
+    }
   };
 
   virtual LookupResultIterator lookup(const LookupRequest& request) = 0;
