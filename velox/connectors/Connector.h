@@ -352,11 +352,9 @@ class IndexSource {
         vector_size_t size,
         velox::ContinueFuture& future) = 0;
   };
-#if 0
-  virtual LookupResultIterator lookup(const LookupRequest& request) {
-    VELOX_UNSUPPORTED();
-  }
-#endif
+
+  virtual LookupResultIterator lookup(const LookupRequest& request) = 0;
+
   virtual std::unordered_map<std::string, RuntimeCounter> runtimeStats() = 0;
 };
 
