@@ -46,16 +46,21 @@ class BarrierTest : public testing::Test {
     message(threadIdx, "enter");
     barrier->enter();
     for (auto action = 0; action < 100; ++action) {
-      std::this_thread::sleep_for(std::chrono::milliseconds(1)); // NOLINT
+      //std::this_thread::sleep_for(std::chrono::milliseconds(1)); // NOLINT
       if (action % 10 == 0 && threadIdx % 10 < 5) {
         void* reason = reinterpret_cast<void*>(action + 1);
         message(threadIdx, "acq");
         barrier->acquire(reason, nullptr);
         message(threadIdx, "exc");
-        std::this_thread::sleep_for(std::chrono::milliseconds(10)); // NOLINT
+        //std::this_thread::sleep_for(std::chrono::milliseconds(10)); // NOLINT
         ++numAcquired_;
         message(threadIdx, "rel");
         barrier->release();
+      } else if (action % 11 == 0) {
+	    message(threadIdx, "leave-middle");
+	    barrier->leave();
+	    message(threadIdx, "enter-middle");
+	    barrier->enter();
       } else {
         message(threadIdx, "mayYield");
         barrier->mayYield(nullptr);
@@ -80,7 +85,7 @@ class BarrierTest : public testing::Test {
 };
 
 TEST_F(BarrierTest, basic) {
-  constexpr int32_t kNumThreads = 20;
+  constexpr int32_t kNumThreads = 100;
   std::vector<std::thread> threads;
   threads.reserve(kNumThreads);
   for (int32_t threadIndex = 0; threadIndex < kNumThreads; ++threadIndex) {

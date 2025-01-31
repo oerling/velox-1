@@ -72,10 +72,16 @@ class WaveBarrier {
     return stateMap_;
   }
 
+  std::string toString();
+  
  private:
+  std::string toStringLocked();
+
   // Releases an exclusive waiting caller if non-exclusives are in
   // arrive or have left.
   void maybeReleaseAcquireLocked();
+
+  void waitForExclDone();
 
   // Serializes all non-static state.
   std::mutex mutex_;
@@ -86,10 +92,16 @@ class WaveBarrier {
   // Thread holding the barrier. For debugging.
   int32_t exclusiveTid_{0};
 
+  // tids that wait to get excl ownership.
+  std::vector<int32_t> waitingForExcl_;
+
+  /// tids that wait for exclusive section to finish.
+  std::vector<int32_t> waitingForExclDone_;
+  
   // Number of threads to coordinate.
   int32_t numJoined_{0};
 
-  // Number of threads blocked in arrive().
+  // Number of threads blocked in mayYield() or release() or enter().
   int32_t numInArrive_{0};
   std::vector<ContinuePromise> promises_;
   std::vector<folly::Promise<bool>> exclusivePromises_;

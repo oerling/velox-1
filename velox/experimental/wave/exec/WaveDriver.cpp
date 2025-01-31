@@ -70,24 +70,84 @@ bool waitForBool(folly::SemiFuture<bool> future) {
       .get();
 }
 
-void WaveBarrier::enter() {
-  for (;;) {
-    ContinueFuture waitFuture;
-    {
-      std::lock_guard<std::mutex> l(mutex_);
-      if (!exclusiveToken_) {
-        ++numJoined_;
-        return;
-      }
-      auto [promise, waitFuture] =
-          makeVeloxContinuePromiseContract("WaveDriver");
 
-      promises_.push_back(std::move(promise));
-      ++numJoined_;
-      ++numInArrive_;
+#if !defined(__APPLE__)
+#define VELOX_CHECK_TID(n) VEOX_CHECK(n)
+  #else
+#define VELOX_CHECK_TID()
+#endif
+  namespace {
+    int32_t getTid() {
+#if !defined(__APPLE__)
+  // This is a debugging feature disabled on the Mac since syscall
+  // is deprecated on that platform.
+  return syscall(FOLLY_SYS_gettid);
+#else
+  return 0;
+    #endif
     }
-    waitFor(std::move(waitFuture));
+
+    bool isTidIn(std::vector<int32_t>& tids) {
+      return std::find(tids.begin(), tids.end(), getTid()) != tids.end();
+    }
+
+        bool isTidNotIn(std::vector<int32_t>& tids) {
+      return std::find(tids.begin(), tids.end(), getTid()) == tids.end();
+    }
+
+    bool isTidNotIn(std::vector<int32_t>& tids, std::mutex& mtx) {
+      std::lock_guard<std::mutex> l(mtx);
+      return std::find(tids.begin(), tids.end(), getTid()) == tids.end();
+    }
+
+} // namespace
+
+
+  std::string   WaveBarrier::toStringLocked() {
+    std::stringstream out;
+    out << "{barrier: " << (exclusiveToken_ ? "excl" : "") << " joined=" << numJoined_ << " yielded=" << numInArrive_ << " ";
+    if (!waitingForExcl_.empty()) {
+      out << " wait for excl: ";
+      for (auto t : waitingForExcl_) {
+	out << t << " ";
+      }
+    }
+        if (!waitingForExclDone_.empty()) {
+      out << " wait for excl done: ";
+      for (auto t : waitingForExclDone_) {
+	out << t << " ";
+      }
+	}out << "}";
+	return out.str();
   }
+
+
+std::string WaveBarrier::toString() {
+  std::lock_guard<std::mutex> l(mutex_);
+  return toStringLocked();
+}
+
+void WaveBarrier::enter() {
+  ContinueFuture waitFuture;
+  {
+    std::lock_guard<std::mutex> l(mutex_);
+    VELOX_CHECK_TID(isTidNotIn(waitingForExcl_));
+    VELOX_CHECK_TID(isTidNotIn(waitingForExclDone_));
+    if (!exclusiveToken_ && exclusiveTokens_.empty()) {
+      ++numJoined_;
+      return;
+    }
+    auto [promise, tempFuture] =
+      makeVeloxContinuePromiseContract("WaveDriver");
+    
+    waitFuture = std::move(tempFuture);
+    promises_.push_back(std::move(promise));
+    ++numJoined_;
+    ++numInArrive_;
+    waitingForExclDone_.push_back(getTid());
+  }
+  waitFor(std::move(waitFuture));
+  VELOX_CHECK_TID(isTidNotIn(waitingForExclDone_, mutex_));
 }
 
 void WaveBarrier::maybeReleaseAcquireLocked() {
@@ -97,6 +157,7 @@ void WaveBarrier::maybeReleaseAcquireLocked() {
   if (numJoined_ - numInArrive_ == exclusivePromises_.size() &&
       !exclusivePromises_.empty()) {
     exclusiveToken_ = exclusiveTokens_.back();
+    waitingForExcl_.pop_back();
     auto promise = std::move(exclusivePromises_.back());
     exclusivePromises_.pop_back();
     exclusiveTokens_.pop_back();
@@ -106,21 +167,12 @@ void WaveBarrier::maybeReleaseAcquireLocked() {
 
 void WaveBarrier::leave() {
   std::lock_guard<std::mutex> l(mutex_);
+    VELOX_CHECK_TID(isTidNotIn(waitingForExcl_));
+    VELOX_CHECK_TID(isTidNotIn(waitingForExclDone_));
+
   --numJoined_;
   maybeReleaseAcquireLocked();
 }
-
-namespace {
-int32_t getTid() {
-#if !defined(__APPLE__)
-  // This is a debugging feature disabled on the Mac since syscall
-  // is deprecated on that platform.
-  return syscall(FOLLY_SYS_gettid);
-#else
-  return 0;
-#endif
-}
-} // namespace
 
 void WaveBarrier::acquire(void* reason, std::function<void()> preWait) {
   folly::SemiFuture<bool> future(false);
@@ -141,6 +193,7 @@ void WaveBarrier::acquire(void* reason, std::function<void()> preWait) {
     future = promise.getSemiFuture();
     exclusivePromises_.push_back(std::move(promise));
     exclusiveTokens_.push_back(reason);
+    waitingForExcl_.push_back(getTid());
     maybeReleaseAcquireLocked();
   }
   waitForBool(std::move(future));
@@ -165,6 +218,7 @@ void WaveBarrier::release() {
       for (auto& promise : promises_) {
         promise.setValue();
       }
+      waitingForExclDone_.clear();
       promises_.clear();
       return;
     }
@@ -177,6 +231,7 @@ void WaveBarrier::release() {
     maybeReleaseAcquireLocked();
   }
   waitFor(std::move(waitFuture));
+  VELOX_CHECK_TID(isTidNotIn(waitingForExclDone_, mutex_));
 }
 
 void WaveBarrier::mayYield(std::function<void()> preWait) {
@@ -199,18 +254,21 @@ void WaveBarrier::mayYield(std::function<void()> preWait) {
     promises_.push_back(std::move(promise));
     waitFuture = std::move(future);
     ++numInArrive_;
+    waitingForExclDone_.push_back(getTid());
     if (numJoined_ - numInArrive_ == exclusivePromises_.size() &&
         !exclusivePromises_.empty()) {
       exclusiveToken_ = exclusiveTokens_.back();
       exclPromise = std::move(exclusivePromises_.back());
       exclusivePromises_.pop_back();
       exclusiveTokens_.pop_back();
+      waitingForExcl_.pop_back();
     }
   }
   if (exclPromise.valid()) {
     exclPromise.setValue(true);
   }
   waitFor(std::move(waitFuture));
+  VELOX_CHECK_TID(isTidNotIn(waitingForExclDone_, mutex_));
 }
 
 WaveDriver::WaveDriver(
