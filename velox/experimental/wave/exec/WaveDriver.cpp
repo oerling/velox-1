@@ -70,57 +70,56 @@ bool waitForBool(folly::SemiFuture<bool> future) {
       .get();
 }
 
-
 #if !defined(__APPLE__)
 #define VELOX_CHECK_TID(n) VEOX_CHECK(n)
-  #else
+#else
 #define VELOX_CHECK_TID()
 #endif
-  namespace {
-    int32_t getTid() {
+namespace {
+int32_t getTid() {
 #if !defined(__APPLE__)
   // This is a debugging feature disabled on the Mac since syscall
   // is deprecated on that platform.
   return syscall(FOLLY_SYS_gettid);
 #else
   return 0;
-    #endif
-    }
+#endif
+}
 
-    bool isTidIn(std::vector<int32_t>& tids) {
-      return std::find(tids.begin(), tids.end(), getTid()) != tids.end();
-    }
+bool isTidIn(std::vector<int32_t>& tids) {
+  return std::find(tids.begin(), tids.end(), getTid()) != tids.end();
+}
 
-        bool isTidNotIn(std::vector<int32_t>& tids) {
-      return std::find(tids.begin(), tids.end(), getTid()) == tids.end();
-    }
+bool isTidNotIn(std::vector<int32_t>& tids) {
+  return std::find(tids.begin(), tids.end(), getTid()) == tids.end();
+}
 
-    bool isTidNotIn(std::vector<int32_t>& tids, std::mutex& mtx) {
-      std::lock_guard<std::mutex> l(mtx);
-      return std::find(tids.begin(), tids.end(), getTid()) == tids.end();
-    }
+bool isTidNotIn(std::vector<int32_t>& tids, std::mutex& mtx) {
+  std::lock_guard<std::mutex> l(mtx);
+  return std::find(tids.begin(), tids.end(), getTid()) == tids.end();
+}
 
 } // namespace
 
-
-  std::string   WaveBarrier::toStringLocked() {
-    std::stringstream out;
-    out << "{barrier: " << (exclusiveToken_ ? "excl" : "") << " joined=" << numJoined_ << " yielded=" << numInArrive_ << " ";
-    if (!waitingForExcl_.empty()) {
-      out << " wait for excl: ";
-      for (auto t : waitingForExcl_) {
-	out << t << " ";
-      }
+std::string WaveBarrier::toStringLocked() {
+  std::stringstream out;
+  out << "{barrier: " << (exclusiveToken_ ? "excl" : "")
+      << " joined=" << numJoined_ << " yielded=" << numInArrive_ << " ";
+  if (!waitingForExcl_.empty()) {
+    out << " wait for excl: ";
+    for (auto t : waitingForExcl_) {
+      out << t << " ";
     }
-        if (!waitingForExclDone_.empty()) {
-      out << " wait for excl done: ";
-      for (auto t : waitingForExclDone_) {
-	out << t << " ";
-      }
-	}out << "}";
-	return out.str();
   }
-
+  if (!waitingForExclDone_.empty()) {
+    out << " wait for excl done: ";
+    for (auto t : waitingForExclDone_) {
+      out << t << " ";
+    }
+  }
+  out << "}";
+  return out.str();
+}
 
 std::string WaveBarrier::toString() {
   std::lock_guard<std::mutex> l(mutex_);
@@ -137,9 +136,8 @@ void WaveBarrier::enter() {
       ++numJoined_;
       return;
     }
-    auto [promise, tempFuture] =
-      makeVeloxContinuePromiseContract("WaveDriver");
-    
+    auto [promise, tempFuture] = makeVeloxContinuePromiseContract("WaveDriver");
+
     waitFuture = std::move(tempFuture);
     promises_.push_back(std::move(promise));
     ++numJoined_;
@@ -167,8 +165,8 @@ void WaveBarrier::maybeReleaseAcquireLocked() {
 
 void WaveBarrier::leave() {
   std::lock_guard<std::mutex> l(mutex_);
-    VELOX_CHECK_TID(isTidNotIn(waitingForExcl_));
-    VELOX_CHECK_TID(isTidNotIn(waitingForExclDone_));
+  VELOX_CHECK_TID(isTidNotIn(waitingForExcl_));
+  VELOX_CHECK_TID(isTidNotIn(waitingForExclDone_));
 
   --numJoined_;
   maybeReleaseAcquireLocked();

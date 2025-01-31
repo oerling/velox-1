@@ -73,7 +73,7 @@ class WaveBarrier {
   }
 
   std::string toString();
-  
+
  private:
   std::string toStringLocked();
 
@@ -97,7 +97,7 @@ class WaveBarrier {
 
   /// tids that wait for exclusive section to finish.
   std::vector<int32_t> waitingForExclDone_;
-  
+
   // Number of threads to coordinate.
   int32_t numJoined_{0};
 
