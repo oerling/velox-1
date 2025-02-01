@@ -80,9 +80,6 @@ void AggregateProbe::visitReferences(
   for (auto& key : keys) {
     visitor(key);
   }
-  for (auto& update : inlinedUpdates) {
-    update->visitReferences(visitor);
-  }
 }
 
 void AggregateUpdate::visitReferences(
@@ -193,6 +190,7 @@ AbstractOperand* CompileState::switchOperand(
     clauseScope.operandMap.clear();
   }
   auto result = newOperand(switchExpr.type(), "r");
+  result->expr = &switchExpr;
   result->inputs = std::move(opInputs);
   scope->operandMap[Value(&switchExpr)] = result;
   return result;
@@ -431,62 +429,75 @@ Segment& CompileState::addSegment(
       }
       step->updates = allUpdates;
       segments_.back().steps.push_back(step);
-      outputType = node->outputType();
-      addSegment(BoundaryType::kSource, node, outputType);
-      auto read = makeStep<ReadAggregation>();
-      read->probe = step;
-      read->state = state;
-      for (auto i = 0; i < node->groupingKeys().size(); ++i) {
-	read->keys.push_back(
-			     fieldToOperand(*toSubfield(outputType->nameOf(i)), &topScope_));
-      }
-      read->funcs = std::move(allUpdates);
-      for (auto i = 0; i < read->funcs.size(); ++i) {
-	const_cast<AggregateUpdate*>(read->funcs[i])->result = fieldToOperand(
-									      *toSubfield(output->nameOf(i + read->keys.size())), &topScope_);
-      }
-      segments_.back().steps.push_back(read);
-    } else if (name == "HashBuild") {
-      auto* node = dynamic_cast<const core::HashJoinNode*>(
-							   driverFactory_.planNodes[nodeIndex].get());
-      VELOX_CHECK_NOT_NULL(node);
-      auto step = makeStep<HashBuild>();
-      auto* state = newState(StateKind::kHashBuild, node->id(), "");
-      auto& keys = node->rightKeys();
-      for (auto i = 0; i < keys.size(); ++i) {
-	step->keys.push_back(
-			     fieldToOperand(*toSubfield(keys(i)), &topScope_));
-      }
-      auto& rightType = node->sources()[1]->outputType();
-      for (auto i : build->dependentChannels()) {
-	auto& name = rightType->nameOf(i);
-	step->dependent.push_back(fieldToOperand(toSubfield(name))); );
+    } else if (name == "FilterProject") {
+    tryFilterProject(op, outputType, nodeIndex);
+  } else if (name == "Aggregation") {
+    auto* node = dynamic_cast<const core::AggregationNode*>(
+        driverFactory_.planNodes[nodeIndex].get());
+    VELOX_CHECK_NOT_NULL(node);
+    addSegment(BoundaryType::kAggregation, node, nullptr);
+    auto step = makeStep<AggregateProbe>();
+    auto* state = newState(StateKind::kGroupBy, node->id(), "");
+    auto aggregationStep = node->step();
+    step->state = state;
+    step->id = ++aggCounter_;
+    step->rows = newOperand(BIGINT(), "rows");
+    step->continueLabelN = ++nextContinueLabel_;
+    std::vector<AbstractOperand*> aggResults;
+    for (auto& key : node->groupingKeys()) {
+      step->keys.push_back(fieldToOperand(*key, &topScope_));
     }
-  }
-  segments_.back().steps.push_back(setp);
-} else if (name == "HashProbe") {
-  auto* node = dynamic_cast<const core::HashJoinNode*>(
-						       driverFactory_.planNodes[nodeIndex].get());
-  VELOX_CHECK_NOT_NULL(node);
+    std::vector<const AggregateUpdate*> allUpdates;
+    auto& output = node->outputType();
+    for (auto i = 0; i < node->aggregates().size(); ++i) {
+      auto& agg = node->aggregates()[i];
+      std::vector<AbstractOperand*> args;
+      for (auto& expr : agg.call->inputs()) {
+        if (auto fieldAccess =
+                std::dynamic_pointer_cast<const core::FieldAccessTypedExpr>(
+                    expr)) {
+          args.push_back(fieldToOperand(*fieldAccess, &topScope_));
+        } else if (
+            auto literal =
+                std::dynamic_pointer_cast<const core::ConstantTypedExpr>(
+                    expr)) {
+          auto expr = std::make_shared<exec::ConstantExpr>(
+              literal->toConstantVector(pool_));
+          args.push_back(exprToOperand(*expr, &topScope_));
+        } else {
+          VELOX_FAIL("Bad arg to aggregation");
+        }
+      }
+      auto* func = makeStep<AggregateUpdate>();
+      func->step = aggregationStep;
+      func->name = agg.call->name();
+      func->accumulatorIdx = i;
+      func->rows = step->rows;
+      func->signature = agg.rawInputTypes;
+      func->generator = aggregateRegistry().getGenerator(*func);
+      func->args = std::move(args);
+      allUpdates.push_back(func);
+    }
+    step->updates = allUpdates;
+    segments_.back().steps.push_back(step);
+    outputType = node->outputType();
+    addSegment(BoundaryType::kSource, node, outputType);
+    auto read = makeStep<ReadAggregation>();
+    read->probe = step;
+    read->state = state;
+    read->continueLabelN = ++nextContinueLabel_;
 
-  auto step = makeStep<HashProbe>();
-  auto* state = newState(StateKind::kGroupBy, node->id(), "");
-  auto& keys = node->leftKeys();
-  for (auto& key : keys) {
-    step->keys.push_back(
-			 fieldToOperand(*toSubfield(keys(i)), &topScope_));
-  }
-  segments_.back().steps.push_back(step);
-  addSegment(BoundaryType::kJoin, node, node->outputType());
-  auto filter = node->filter();
-  if (filter) {
-    auto expr =makeStep<JoinFilter>();
-    segments_.back().steps.push_back(expr);
-  }
-  auto expand = makeStep<joinExpand>();
-  
- } else {
-    {
+    for (auto i = 0; i < node->groupingKeys().size(); ++i) {
+      read->keys.push_back(
+          fieldToOperand(*toSubfield(outputType->nameOf(i)), &topScope_));
+    }
+    read->funcs = std::move(allUpdates);
+    for (auto i = 0; i < read->funcs.size(); ++i) {
+      const_cast<AggregateUpdate*>(read->funcs[i])->result = fieldToOperand(
+          *toSubfield(output->nameOf(i + read->keys.size())), &topScope_);
+    }
+    segments_.back().steps.push_back(read);
+  } else {
     return false;
   }
   return true;
@@ -541,7 +552,6 @@ bool isInlinable(PipelineCandidate& candidate, AbstractOperand* op) {
 
 void recordReference(PipelineCandidate& candidate, AbstractOperand* op) {
   auto& flags = candidate.flags(op);
-  auto* box = candidate.boxOf(flags.definedIn);
   if (flags.firstUse.empty()) {
     flags.firstUse = CodePosition(
         candidate.steps.size() - 1,
@@ -574,7 +584,9 @@ void recordReference(PipelineCandidate& candidate, AbstractOperand* op) {
     }
   }
   flags.lastUse = CodePosition(
-      candidate.steps.size() - 1, candidate.boxIdx, box->steps.size());
+      candidate.steps.size() - 1,
+      candidate.boxIdx,
+      candidate.currentBox->steps.size());
 }
 
 void distinctLeavesInner(
@@ -624,6 +636,24 @@ NullCheck* CompileState::addNullCheck(
   check->result = op;
   return check;
 }
+bool shouldDelay(const AbstractOperand* op, const OperandFlags& flags) {
+  auto* expr = op->expr;
+  if (!expr) {
+    return false;
+  }
+  if (functionRetriable(*expr)) {
+    return false;
+  }
+  auto& fields = expr->distinctFields();
+  int32_t expensive = flags.inInlineGroupBy ? 5 : 20;
+  if (op->costWithChildren >= expensive) {
+    return false;
+  }
+  if (op->numUses > 1 && fields.size() > 1) {
+    return false;
+  }
+  return true;
+}
 
 void CompileState::placeExpr(
     PipelineCandidate& candidate,
@@ -636,6 +666,9 @@ void CompileState::placeExpr(
   if (!flags.definedIn.empty()) {
     recordReference(candidate, op);
   } else {
+    if (mayDelay && shouldDelay(op, flags)) {
+      return;
+    }
     bool checkNulls = !insideNullPropagating_ && op->expr->propagatesNulls();
     ScopedVarSetter s(&insideNullPropagating_, true, checkNulls);
     NullCheck* check;
@@ -685,7 +718,7 @@ bool isSink(const PipelineCandidate& candidate) {
   bool result;
   for (auto i = 0; i < level.size(); ++i) {
     auto& box = level[i];
-    bool sink = box.steps.back()->isSink();
+    bool sink = !box.steps.empty() && box.steps.back()->isSink();
     if (i == 0) {
       result = sink;
     } else {
@@ -748,6 +781,15 @@ void CompileState::placeAggregation(
     }
   }
 }
+bool CompileState::hasSink(int32_t idx) {
+  for (auto i = idx; i < segments_.size(); ++i) {
+    auto bound = segments_[i].boundary;
+    if (bound == BoundaryType::kAggregation) {
+      return true;
+    }
+  }
+  return false;
+}
 
 void CompileState::planSegment(
     PipelineCandidate& candidate,
@@ -790,8 +832,10 @@ void CompileState::planSegment(
       break;
     }
     case BoundaryType::kExpr: {
+      bool mayDelay = hasSink(segmentIdx);
       for (auto i = 0; i < segment.topLevelDefined.size(); ++i) {
-        placeExpr(candidate, segment.topLevelDefined[i], true);
+        auto* op = segment.topLevelDefined[i];
+        placeExpr(candidate, op, mayDelay);
       }
       break;
     }
@@ -799,8 +843,9 @@ void CompileState::planSegment(
       auto& filter = segment.steps[0]->as<Filter>();
       placeExpr(candidate, filter.flag, false);
       candidate.currentBox->steps.push_back(&filter);
+      bool mayDelay = hasSink(segmentIdx);
       for (auto i = 0; i < segment.topLevelDefined.size(); ++i) {
-        placeExpr(candidate, segment.topLevelDefined[i], true);
+        placeExpr(candidate, segment.topLevelDefined[i], mayDelay);
       }
       break;
     }
@@ -838,7 +883,7 @@ void PipelineCandidate::markParams(
     int32_t branchIdx,
     std::vector<LevelParams>& params) {
   for (auto stepIdx = 0; stepIdx < box.steps.size(); ++stepIdx) {
-    box.steps[stepIdx]->visitReferences([&](AbstractOperand* op) {
+    auto referenceVisitor = [&](AbstractOperand* op) {
       if (op->constant) {
         return;
       }
@@ -846,8 +891,8 @@ void PipelineCandidate::markParams(
       if (flags.definedIn.kernelSeq < kernelSeq) {
         levelParams[kernelSeq].input.add(op->id);
       }
-    });
-    box.steps[stepIdx]->visitResults([&](AbstractOperand* op) {
+    };
+    auto resultVisitor = [&](AbstractOperand* op) {
       auto& flags = this->flags(op);
       if (flags.definedIn.empty()) {
         flags.definedIn = CodePosition(kernelSeq, branchIdx, stepIdx);
@@ -859,7 +904,17 @@ void PipelineCandidate::markParams(
       } else {
         levelParams[kernelSeq].local.add(op->id);
       }
-    });
+    };
+    auto step = box.steps[stepIdx];
+    step->visitReferences(referenceVisitor);
+    step->visitResults(resultVisitor);
+    if (step->kind() == StepKind::kAggregateProbe) {
+      auto probe = step->as<AggregateProbe>();
+      for (auto j = 0; j < probe.inlinedUpdates.size(); ++j) {
+        probe.inlinedUpdates[j]->visitReferences(referenceVisitor);
+        probe.inlinedUpdates[j]->visitResults(resultVisitor);
+      }
+    }
     box.steps[stepIdx]->visitStates([&](AbstractState* state) {
       levelParams[kernelSeq].states.add(state->id);
     });

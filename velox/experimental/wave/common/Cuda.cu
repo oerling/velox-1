@@ -53,6 +53,19 @@ void cudaCheckFatal(cudaError_t err, const char* file, int line) {
   exit(1);
 }
 
+std::string Device::toString() const {
+  return fmt::format(
+      "Device {}: {} {}.{} global {}MB {} SMs, {}K shmem/SM, {}K L2",
+      deviceId,
+      model,
+      major,
+      minor,
+      globalMB,
+      numSM,
+      sharedMemPerSM >> 10,
+      L2Size >> 10);
+}
+
 namespace {
 std::mutex ctxMutex;
 bool driverInited = false;
@@ -252,6 +265,19 @@ void Stream::deviceToHostAsync(
       stream_->stream));
 }
 
+void Stream::deviceConstantToHostAsync(
+    void* hostAddress,
+    const void* deviceAddress,
+    size_t size) {
+  CUDA_CHECK(cudaMemcpyFromSymbolAsync(
+      hostAddress,
+      *reinterpret_cast<const char*>(deviceAddress),
+      size,
+      0,
+      cudaMemcpyDeviceToHost,
+      stream_->stream));
+}
+
 namespace {
 struct CallbackData {
   CallbackData(std::function<void()> callback)
@@ -350,6 +376,7 @@ KernelInfo kernelInfo(const void* func) {
   info.numRegs = attrs.numRegs;
   info.maxThreadsPerBlock = attrs.maxThreadsPerBlock;
   info.sharedMemory = attrs.sharedSizeBytes;
+  info.localMemory = attrs.localSizeBytes;
   int max;
   cudaOccupancyMaxActiveBlocksPerMultiprocessor(&max, func, 256, 0);
   info.maxOccupancy0 = max;
@@ -362,7 +389,7 @@ KernelInfo kernelInfo(const void* func) {
 std::string KernelInfo::toString() const {
   std::stringstream out;
   out << "NumRegs=" << numRegs << " maxThreadsPerBlock= " << maxThreadsPerBlock
-      << " sharedMemory=" << sharedMemory
+      << " sharedMemory=" << sharedMemory << " localMemory=" << localMemory
       << " occupancy 256,  0=" << maxOccupancy0
       << " occupancy 256,32=" << maxOccupancy32;
   return out.str();

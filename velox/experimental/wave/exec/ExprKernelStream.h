@@ -24,7 +24,6 @@ namespace facebook::velox::wave {
 /// A stream for invoking ExprKernel.
 class WaveKernelStream : public Stream {
  public:
-
   /// Sets up or updates an aggregation.
   void setupAggregation(
       AggregationControl& op,

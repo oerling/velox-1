@@ -16,16 +16,15 @@
 
 #include "velox/experimental/wave/exec/ExprKernel.h"
 
+#include <assert.h>
 #include <gflags/gflags.h>
 #include "velox/experimental/wave/common/CudaUtil.cuh"
 #include "velox/experimental/wave/exec/ExprKernelStream.h"
 #include "velox/experimental/wave/exec/WaveCore.cuh"
-#include <assert.h>
 
 DEFINE_bool(kernel_gdb, false, "Run kernels sequentially for debugging");
 
 namespace facebook::velox::wave {
-
 
 void __global__ setupAggregationKernel(AggregationControl op) {
   assert(!op.oldBuckets);
@@ -34,7 +33,7 @@ void __global__ setupAggregationKernel(AggregationControl op) {
   data->singleRow = reinterpret_cast<char*>(data + 1);
   memset(data->singleRow, 0, op.rowSize);
 }
-  
+
 void WaveKernelStream::setupAggregation(
     AggregationControl& op,
     int32_t entryPoint,

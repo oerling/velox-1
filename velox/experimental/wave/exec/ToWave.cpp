@@ -48,6 +48,7 @@ CompileState::CompileState(
       operands_(runtime_->operands),
       operatorStates_(runtime_->states) {
   setDevice(getDevice());
+  pool_ = driver_.driverCtx()->task->pool();
 }
 
 common::Subfield* CompileState::toSubfield(const Expr& expr) {
@@ -126,7 +127,6 @@ AbstractState* CompileState::newState(
   return state;
 }
 
-
 bool maybeNotNull(const AbstractOperand* op) {
   if (!op) {
     return true;
@@ -162,7 +162,6 @@ void CompileState::setConditionalNullable(AbstractOperand* op) {
   if (op->inputs.empty()) {
     return;
   }
-  bool allMaybeNonNull = false;
   for (auto* input : op->inputs) {
     if (!maybeNotNull(input)) {
       return;
@@ -180,39 +179,32 @@ bool CompileState::reserveMemory() {
   }
   auto* allocator = getAllocator(getDevice());
   arena_ =
-      std::make_unique<GpuArena>(FLAGS_velox_wave_arena_unit_size, allocator);
+      std::make_shared<GpuArena>(FLAGS_velox_wave_arena_unit_size, allocator);
   return true;
 }
-
-
 
 bool CompileState::compile() {
   auto operators = driver_.operators();
 
   int32_t first = 0;
   int32_t operatorIndex = 0;
-  int32_t nodeIndex = 0;
   RowTypePtr outputType;
   // Make sure operator states are initialized.  We will need to inspect some of
   // them during the transformation.
   driver_.initializeOperators();
   RowTypePtr inputType;
   std::vector<OperandId> resultOrder;
-    outputType = makeOperators(operatorIndex, resultOrder);
-    if (operators_.empty()) {
-      return false;
-    }
+  outputType = makeOperators(operatorIndex, resultOrder);
+  if (operators_.empty()) {
+    return false;
+  }
 
   for (auto& op : operators_) {
     op->finalize(*this);
   }
-  instructionStatus_.gridStateSize = instructionStatus_.gridState;
-  for (auto* status : allStatuses_) {
-    status->gridStateSize = instructionStatus_.gridState;
+  if (!reserveMemory()) {
+    VELOX_FAIL("Failed to reserve unified memory for Wave");
   }
-    if (!reserveMemory()) {
-      VELOX_FAIL("Failed to reserve unified memory for Wave");
-    }
   auto waveOpUnique = std::make_unique<WaveDriver>(
       driver_.driverCtx(),
       outputType,
@@ -221,8 +213,7 @@ bool CompileState::compile() {
       std::move(arena_),
       std::move(operators_),
       std::move(resultOrder),
-      runtime_,
-      instructionStatus_);
+      runtime_);
   auto waveOp = waveOpUnique.get();
   waveOp->initialize();
   std::vector<std::unique_ptr<exec::Operator>> added;

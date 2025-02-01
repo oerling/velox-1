@@ -29,8 +29,21 @@
 
 #include <folly/executors/CPUThreadPoolExecutor.h>
 
+#include <iostream>
+
 DECLARE_bool(wave_timing);
 DECLARE_bool(wave_transfer_timing);
+DECLARE_bool(wave_trace_stream);
+
+#define TR(str, msg)                                                 \
+  if (FLAGS_wave_trace_stream) {                                     \
+    (std::cout << fmt::format("St{}: {}\n", str->streamIdx(), msg)); \
+  }
+
+#define TR1(msg)                 \
+  if (FLAGS_wave_trace_stream) { \
+    std::cout << msg;            \
+  }
 
 namespace facebook::velox::wave {
 
@@ -40,9 +53,14 @@ class PrintTime {
   PrintTime(const char* title);
   ~PrintTime();
 
+  void setComment(std::string comment) {
+    comment_ = std::move(comment);
+  }
+
  private:
   const char* title_;
   uint64_t start_;
+  std::string comment_;
 };
 
 /// A host side time point for measuring wait and launch prepare latency. Counts
@@ -219,6 +237,9 @@ class Program;
 /// repartition output. Can be scoped to a Task pipeline (all Drivers),
 /// WaveStream or to a Program.
 struct OperatorState {
+  OperatorState() = default;
+  OperatorState(std::shared_ptr<GpuArena> arena) : arena(std::move(arena)) {}
+
   virtual ~OperatorState() = default;
 
   template <typename T>
@@ -239,6 +260,10 @@ struct OperatorState {
 
   int32_t id;
 
+  // Arena holding all memory for the resource if the resource is shared between
+  // WaveDrivers.
+  std::shared_ptr<GpuArena> arena;
+
   /// Owns the device side data. Starting address of first is passed to the
   /// kernel. Layout depends on operator.
   std::vector<WaveBufferPtr> buffers;
@@ -247,6 +272,9 @@ struct OperatorState {
 };
 
 struct AggregateOperatorState : public OperatorState {
+  AggregateOperatorState(std::shared_ptr<GpuArena> arena)
+      : OperatorState(std::move(arena)) {}
+
   void allocateAggregateHeader(int32_t size, GpuArena& arena);
 
   /// Sets the sizes in allocators so that the rows run out before the
@@ -258,7 +286,9 @@ struct AggregateOperatorState : public OperatorState {
     return alignedHead;
   }
 
-  AbstractAggregation* instruction{nullptr};
+  bool isGrouped{false};
+  int32_t rowSize;
+  int32_t maxReadStreams{1};
 
   /// Mutex to serialize allocating row ranges to different Drivers in a
   /// multi-driver read.
@@ -303,6 +333,7 @@ struct AggregateOperatorState : public OperatorState {
 };
 
 struct OperatorStateMap {
+  std::mutex mutex;
   folly::F14FastMap<int32_t, std::shared_ptr<OperatorState>> states;
 };
 
@@ -376,7 +407,6 @@ struct Executable {
   // Map from wrapAt in AbstractOperand to device side 'indices' with one
   // int32_t* per thread block.
   folly::F14FastMap<int32_t, int32_t**> wraps;
-
 
   // Backing memory for intermediate Operands. Free when 'this' arrives. If
   // scheduling follow up work that is synchronized with arrival of 'this', the
@@ -604,7 +634,6 @@ class Program : public std::enable_shared_from_this<Program> {
   std::string toString() const;
 
  private:
-
   std::unique_ptr<CompiledKernel> kernel_;
 
   GpuArena* arena_{nullptr};
@@ -687,13 +716,13 @@ class WaveStream {
   };
 
   WaveStream(
-      GpuArena& arena,
+      std::shared_ptr<GpuArena> arena,
       GpuArena& deviceArena,
       const std::vector<std::unique_ptr<AbstractOperand>>* operands,
       OperatorStateMap* stateMap,
       InstructionStatus state,
       int16_t streamIdx)
-      : arena_(arena),
+      : arena_(std::move(arena)),
         deviceArena_(deviceArena),
         operands_(operands),
         taskStateMap_(stateMap),
@@ -712,7 +741,7 @@ class WaveStream {
       folly::Range<int32_t*> sizes);
 
   GpuArena& arena() {
-    return arena_;
+    return *arena_;
   }
 
   GpuArena& deviceArena() {
@@ -941,6 +970,7 @@ class WaveStream {
   void releaseStreamsAndEvents();
 
   void setError() {
+    TR(this, "Setting error.");
     hasError_ = true;
   }
 
@@ -1002,9 +1032,20 @@ class WaveStream {
   /// statuses.
   void checkBlockStatuses() const;
 
+  /// calls 'action' on the error on 'this' if the error is non-empty.
+  void throwIfError(std::function<void(const KernelError*)> action);
+
   /// Returns the Executable associated with 'this' whose Program contains
   /// 'instruction'. nullptr if not found.
   Executable* executableByInstruction(const AbstractInstruction* instruction);
+
+  OperatorStateMap* taskStateMap() const {
+    return taskStateMap_;
+  }
+
+  const std::shared_ptr<GpuArena>& arenaShared() const {
+    return arena_;
+  }
 
  private:
   // true if 'op' is nullable in the context of 'this'.
@@ -1031,7 +1072,7 @@ class WaveStream {
       std::unique_ptr<folly::CPUThreadPoolExecutor>& ptr);
 
   // Unified memory.
-  GpuArena& arena_;
+  std::shared_ptr<GpuArena> arena_;
 
   // Device memory.
   GpuArena& deviceArena_;

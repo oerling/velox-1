@@ -18,6 +18,10 @@
 #include <iostream>
 #include "velox/experimental/wave/exec/Vectors.h"
 
+DEFINE_int32(
+    wave_rows_per_thread,
+    4,
+    "Number of rows per thread in generated kernels");
 DEFINE_bool(wave_timing, true, "Enable Wave perf timers");
 DEFINE_bool(
     wave_print_time,
@@ -30,6 +34,13 @@ DEFINE_bool(
     "Enables measuring host to device transfer latency separet "
     "from wait time for compute");
 
+DEFINE_bool(wave_trace_stream, false, "Enable trace of streams and drivers");
+
+DEFINE_int32(
+    wave_init_group_by_buckets,
+    2048,
+    "Initial buckets in group by hash table (4 slots/bucket)");
+
 namespace facebook::velox::wave {
 
 PrintTime::PrintTime(const char* title)
@@ -38,7 +49,8 @@ PrintTime::PrintTime(const char* title)
 
 PrintTime::~PrintTime() {
   if (FLAGS_wave_print_time) {
-    std::cout << title_ << "=" << getCurrentTimeMicro() - start_ << std::endl;
+    std::cout << title_ << "=" << getCurrentTimeMicro() - start_ << " "
+              << comment_ << std::endl;
   }
 }
 
@@ -151,12 +163,8 @@ WaveVector* Executable::operandVector(OperandId id, const TypePtr& type) {
 }
 
 WaveStream::~WaveStream() {
-  if (!hasError_) {
-    VELOX_CHECK(
-        state_ == State::kHost || state_ == State::kNotRunning,
-        "Bad state at ~WaveStream: {}",
-        static_cast<int32_t>(state_));
-  }
+  // Wait for device side activity. Memory accessed from device is live until
+  // the streams are deleted, so block here.
   for (auto& stream : streams_) {
     stream->wait();
   }
@@ -746,10 +754,12 @@ LaunchControl* WaveStream::prepareProgramLaunch(
     int32_t nthLaunch,
     int32_t inputRows,
     folly::Range<Executable**> exes,
-    int32_t blocksPerExe,
+    int32_t inputBlocksPerExe,
     const LaunchControl* inputControl,
     Stream* stream) {
   static_assert(Operand::kPointersInOperand * sizeof(void*) == sizeof(Operand));
+  auto rowsPerThread = FLAGS_wave_rows_per_thread;
+  int32_t blocksPerExe = bits::roundUp(inputBlocksPerExe, rowsPerThread);
   auto& controlVector = launchControl_[key];
   LaunchControl* controlPtr;
   if (controlVector.size() > nthLaunch) {
@@ -759,17 +769,30 @@ LaunchControl* WaveStream::prepareProgramLaunch(
     controlVector[nthLaunch] = std::make_unique<LaunchControl>(key, inputRows);
     controlPtr = controlVector[nthLaunch].get();
   }
+  // tru if not first launch.
   bool isContinue = false;
+  // true if redoing selected lanes of a previous launch. Requires using the
+  // same control block as in the previous launch.
+  bool isRetry = false;
   auto& control = *controlPtr;
   if (control.programInfo.empty()) {
     control.programInfo.resize(exes.size());
   } else {
     VELOX_CHECK_EQ(exes.size(), control.programInfo.size());
     for (auto& info : control.programInfo) {
+      if (info.advance.empty()) {
+        continue;
+      }
+      isContinue = true;
       if (info.advance.isRetry) {
         isContinue = true;
+        isRetry = true;
         checkBlockStatuses();
         break;
+      } else {
+        numRows_ = info.advance.numRows;
+        inputBlocksPerExe = bits::roundUp(numRows_, kBlockSize) / kBlockSize;
+        blocksPerExe = bits::roundUp(inputBlocksPerExe, rowsPerThread);
       }
     }
   }
@@ -806,39 +829,48 @@ LaunchControl* WaveStream::prepareProgramLaunch(
   }
   size += operandBytes;
   int32_t statusOffset = 0;
+  int32_t statusBytes = 0;
   if (!inputControl) {
     statusOffset = size;
     //  Pointer to return block for each tB.
-    size += bits::roundUp(blocksPerExe * sizeof(BlockStatus), 8);
-    size += bits::roundUp(
+    statusBytes = bits::roundUp(blocksPerExe * sizeof(BlockStatus), 8);
+    statusBytes += bits::roundUp(
         instructionStatus_.gridStateSize +
             instructionStatus_.blockState * numBlocks,
         8);
+    size += statusBytes;
   }
   // 1 pointer per exe and an exe-dependent data area.
   int32_t operatorStateOffset = size;
   size += exes.size() * sizeof(void*) + operatorStateBytes;
-  auto buffer = arena_.allocate<char>(size);
+  WaveBufferPtr buffer;
+  if (isRetry) {
+    buffer = std::move(control.deviceData);
+  } else {
+    buffer = arena_->allocate<char>(size);
+  }
   if (stream) {
     stream->prefetch(nullptr, buffer->as<char>(), buffer->size());
   }
   // Zero initialization is expected, for example for operands and arrays in
   // Operand::indices.
-  memset(buffer->as<char>(), 0, size);
-
+  if (!isRetry) {
+    memset(buffer->as<char>(), 0, size);
+  }
   control.sharedMemorySize = shared;
   // Now we fill in the various arrays and put their start addresses in
   // 'control'.
   auto start = buffer->as<int32_t>();
   control.params.blockBase = start;
   control.params.programIdx = start + numBlocks;
+  control.params.numRowsPerThread = FLAGS_wave_rows_per_thread;
   control.params.operands = addBytes<Operand***>(
       control.params.programIdx, numBlocks * sizeof(int32_t));
   control.params.startPC = isContinue
       ? addBytes<int32_t*>(control.params.operands, exes.size() * sizeof(void*))
       : nullptr;
 
-  if (!inputControl) {
+  if (!inputControl && !isRetry) {
     // If the launch produces new statuses (as opposed to updating status of a
     // previous launch), there is an array with a status for each TB. If there
     // are multiple exes, they all share the same error codes. A launch can have
@@ -848,11 +880,14 @@ LaunchControl* WaveStream::prepareProgramLaunch(
     control.params.status = addBytes<BlockStatus*>(start, statusOffset);
     deviceBlockStatus_ = control.params.status;
     // Memory is already set to all 0.
-    for (auto i = 0; i < blocksPerExe; ++i) {
+    for (auto i = 0; i < inputBlocksPerExe; ++i) {
       auto status = &control.params.status[i];
       status->numRows =
-          i == blocksPerExe - 1 ? inputRows % kBlockSize : kBlockSize;
+          i == inputBlocksPerExe - 1 ? inputRows % kBlockSize : kBlockSize;
     }
+  } else if (!inputControl) {
+    // No input control and retry. the statuses are as left by the previous try.
+    ;
   } else {
     control.params.status = inputControl->params.status;
   }
@@ -865,7 +900,7 @@ LaunchControl* WaveStream::prepareProgramLaunch(
         control.params.startPC[i] = -1;
       } else {
         control.params.startPC[i] =
-            control.programInfo[i].advance.instructionIdx;
+            control.programInfo[i].advance.continueLabel;
       }
     }
     auto operandPtrs = fillOperands(*exes[i], operandStart, info[i]);
@@ -897,7 +932,7 @@ LaunchControl* WaveStream::prepareProgramLaunch(
       ++stateFill;
     }
   }
-  control.params.numBlocks = blocksPerExe;
+  control.params.numBlocks = inputBlocksPerExe;
   control.params.streamIdx = streamIdx_;
   if (!exes.empty()) {
     ++stats_.numKernels;
@@ -970,7 +1005,7 @@ void WaveStream::makeAggregate(
   auto stream = streamFromReserve();
   if (inst.keys.empty()) {
     int32_t size = inst.rowSize() + sizeof(DeviceAggregation);
-    state.allocateAggregateHeader(size, arena_);
+    state.allocateAggregateHeader(size, *arena_);
     control.head = state.alignedHead;
     control.headSize = size;
     control.rowSize = inst.rowSize();
@@ -980,15 +1015,15 @@ void WaveStream::makeAggregate(
     const int32_t numPartitions = 1;
     int32_t size = sizeof(DeviceAggregation) + sizeof(GpuHashTableBase) +
         sizeof(HashPartitionAllocator) * numPartitions;
-    state.allocateAggregateHeader(size, arena_);
+    state.allocateAggregateHeader(size, *arena_);
     auto* header = state.alignedHead;
     auto* hashTable = reinterpret_cast<GpuHashTableBase*>(header + 1);
     HashPartitionAllocator* allocators =
         reinterpret_cast<HashPartitionAllocator*>(hashTable + 1);
-    int32_t numBuckets = 2048;
+    int32_t numBuckets = bits::nextPowerOfTwo(FLAGS_wave_init_group_by_buckets);
     header->table = hashTable;
     WaveBufferPtr table =
-        arena_.allocate<char>(sizeof(GpuBucketMembers) * numBuckets);
+        arena_->allocate<char>(sizeof(GpuBucketMembers) * numBuckets);
     state.buffers.push_back(table);
 
     new (hashTable) GpuHashTableBase(
@@ -998,7 +1033,7 @@ void WaveStream::makeAggregate(
         reinterpret_cast<RowAllocator*>(allocators));
     auto rowSize = inst.rowSize();
     auto numRows = numBuckets * GpuBucketMembers::kNumSlots;
-    WaveBufferPtr rows = arena_.allocate<char>(rowSize * numRows);
+    WaveBufferPtr rows = arena_->allocate<char>(rowSize * numRows);
     state.buffers.push_back(rows);
     new (allocators) HashPartitionAllocator(
         rows->as<char>(), rows->size(), rows->size(), rowSize);
@@ -1036,6 +1071,17 @@ void WaveStream::checkExecutables() const {
         checkOperand(op);
       }
     }
+  }
+}
+
+void WaveStream::throwIfError(std::function<void(const KernelError*)> action) {
+  auto numBlocks = bits::roundUp(numRows_, kBlockSize) / kBlockSize;
+  auto hostSide = hostBlockStatus();
+  int32_t errorOffset = bits::roundUp(numBlocks * sizeof(BlockStatus), 8);
+  auto error = addBytes<KernelError*>(hostSide, errorOffset);
+  if (error->messageEnum) {
+    setError();
+    action(error);
   }
 }
 
@@ -1109,12 +1155,23 @@ void Program::getOperatorStates(WaveStream& stream, std::vector<void*>& ptrs) {
   ptrs.resize(operatorStates_.size());
   for (auto i = 0; i < operatorStates_.size(); ++i) {
     auto& operatorState = *operatorStates_[i];
-    auto* state = stream.operatorState(operatorState.stateId);
-    if (!state) {
-      VELOX_CHECK_NOT_NULL(operatorState.create);
-      state = stream.newState(operatorState);
+    if (operatorState.isGlobal) {
+      auto* taskStates = stream.taskStateMap();
+      std::lock_guard<std::mutex> l(taskStates->mutex);
+      auto* state = stream.operatorState(operatorState.stateId);
+      if (!state) {
+        VELOX_CHECK_NOT_NULL(operatorState.create);
+        state = stream.newState(operatorState);
+      }
+      ptrs[i] = state->devicePtr();
+    } else {
+      auto* state = stream.operatorState(operatorState.stateId);
+      if (!state) {
+        VELOX_CHECK_NOT_NULL(operatorState.create);
+        state = stream.newState(operatorState);
+      }
+      ptrs[i] = state->devicePtr();
     }
-    ptrs[i] = state->devicePtr();
   }
 }
 
@@ -1136,6 +1193,7 @@ AdvanceResult Program::canAdvance(
     }
     auto result = instruction->canAdvance(stream, control, state, i);
     if (!result.empty()) {
+      result.instructionIdx = i;
       result.programIdx = programIdx;
       return result;
     }
@@ -1148,8 +1206,6 @@ void Program::callUpdateStatus(WaveStream& stream, AdvanceResult& advance) {
     advance.updateStatus(stream, *instructions_[advance.instructionIdx]);
   }
 }
-
-
 
 std::unique_ptr<Executable> Program::getExecutable(
     int32_t maxRows,
@@ -1227,7 +1283,5 @@ std::string Program::toString() const {
   out << "}" << std::endl;
   return out.str();
 }
-
-
 
 } // namespace facebook::velox::wave

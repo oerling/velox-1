@@ -34,6 +34,10 @@ struct DeviceAggregation {
   /// hash table, nullptr if no grouping keys.
   GpuHashTableBase* table{nullptr};
 
+  /// Device side atomic counting thread blocks working on the state. Assert
+  /// this is 0 at rehash or resupply of allocators.
+  uint32_t debugActiveBlockCounter{0};
+
   // Byte size of a rowm rounded to next 8.
   int32_t rowSize = 0;
 
@@ -69,12 +73,10 @@ struct AggregationControl {
   int32_t rowSize{0};
 };
 
-
 struct AggregateReturn {
   /// Count of rows in the table. Triggers rehash when high enough.
   int64_t numDistinct;
 };
-
 
 /// Thread block wide status in Wave kernels
 struct WaveShared {
@@ -108,9 +110,14 @@ struct WaveShared {
   /// '&blockStatus[numBlocks']
   int32_t numBlocks;
 
+  // The branch of a multibranch kernel this block is doing.
+  int16_t programIdx;
+
   /// Number of items in blockStatus covered by each TB.
   int16_t numRowsPerThread;
 
+  /// Iteration counter, =0; < numRowsPerThread.
+  int16_t nthBlock;
   int16_t streamIdx;
 
   // Scratch data area. Size depends on shared memory size for instructions.

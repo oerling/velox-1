@@ -175,7 +175,11 @@ struct AdvanceResult {
   /// The ordinal of the program in the launch.
   int32_t programIdx{0};
 
-  /// The instruction where to pick up. If not 0, must have 'isRetry' true.
+  /// The label where to pick up.
+  int32_t continueLabel{0};
+
+  // The instruction index in host side Program where to pick up. If not 0, must
+  // have 'isRetry' true.
   int32_t instructionIdx{0};
 
   /// True if continuing execution of a partially executed instruction. false if
@@ -275,7 +279,6 @@ struct AbstractInstruction {
   int32_t serial{-1};
 };
 
-
   enum class StateKind : uint8_t { kGroupBy, kHashBuild };
 
 /// Represents a shared state operated on by instructions. For example, a
@@ -354,7 +357,6 @@ struct AbstractAggregation : public AbstractOperator {
 
   int32_t rowSize() {
     return roundedRowSize;
-    // return aggregates.back().accumulatorOffset + sizeof(int64_t);
   }
 
   bool isSink() const override {
@@ -380,22 +382,26 @@ struct AbstractAggregation : public AbstractOperator {
   std::vector<AbstractOperand*> keys;
   std::vector<AbstractField> keyFields;
   std::vector<AbstractAggInstruction> aggregates;
-  int32_t stateId;
 
   /// Prepare up to this many result reading streams.
   int16_t maxReadStreams{1};
 
   int32_t roundedRowSize{0};
+  int32_t continueLabel{-1};
 };
 
 struct AbstractReadAggregation : public AbstractOperator {
-  AbstractReadAggregation(int32_t serial, AbstractAggregation* aggregation)
+  AbstractReadAggregation(
+      int32_t serial,
+      AbstractAggregation* aggregation,
+      int32_t continueLabel)
       : AbstractOperator(
             OpCode::kReadAggregate,
             serial,
             aggregation->state,
             aggregation->outputType),
-        aggregation(aggregation) {}
+        aggregation(aggregation),
+        continueLabel(continueLabel) {}
 
   AdvanceResult canAdvance(
       WaveStream& stream,
@@ -405,6 +411,7 @@ struct AbstractReadAggregation : public AbstractOperator {
 
   AbstractAggregation* aggregation;
   int32_t literalOffset{0};
+  int32_t continueLabel{-1};
 };
 
 struct AbstractHashBuild : public AbstractOperator {

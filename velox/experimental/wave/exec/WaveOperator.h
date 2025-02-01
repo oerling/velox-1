@@ -97,6 +97,18 @@ class WaveOperator {
     VELOX_FAIL("Only Project supports callUpdateStatus()");
   }
 
+  /// InstructionStatus that describes the extra statuses returned
+  /// from device for the pipeline that begins with 'this'. Must be
+  /// set for the head of each pipeline.
+  const InstructionStatus& instructionStatus() const {
+    VELOX_CHECK_NE(instructionStatus_.gridStateSize, 0);
+    return instructionStatus_;
+  }
+
+  void setInstructionStatus(InstructionStatus status) {
+    instructionStatus_ = status;
+  }
+
   virtual std::string toString() const;
 
   AbstractOperand* definesSubfield(
@@ -213,6 +225,10 @@ class WaveOperator {
   // operands etc. referenced from these.  This does not include buffers for
   // intermediate results.
   std::vector<WaveBufferPtr> executableMemory_;
+
+  // The total size of grid and block level statuses for the pipeline. This must
+  // be set for the first operator of any pipeline.
+  InstructionStatus instructionStatus_;
 };
 
 class WaveSourceOperator : public WaveOperator {
