@@ -71,7 +71,7 @@ bool waitForBool(folly::SemiFuture<bool> future) {
 }
 
 #if !defined(__APPLE__)
-#define VELOX_CHECK_TID(n) VEOX_CHECK(n)
+#define VELOX_CHECK_TID(n) VELOX_CHECK(n)
 #else
 #define VELOX_CHECK_TID()
 #endif
