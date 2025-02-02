@@ -66,6 +66,7 @@ void restockAllocator(
   // If we can get rows by raising the row limit we do this first.
   int32_t adjustedSize = size - allocator->raiseRowLimits(size);
   if (adjustedSize <= 0) {
+    TR1(fmt::format("Found {} rows of existing space", size / allocator->rowSize));
     return;
   }
   if (allocator->ranges[0].fixedFull) {
@@ -79,6 +80,7 @@ void restockAllocator(
       size,
       size,
       allocator->rowSize);
+  TR1(fmt::format("Made range of {} rows", size / allocator->rowSize));
   if (allocator->ranges[0].empty()) {
     allocator->ranges[0] = std::move(newRange);
   } else {
@@ -97,6 +99,7 @@ void AggregateOperatorState::setSizesToSafe() {
   for (auto i = 0; i < numPartitions; ++i) {
     auto availableInAllocator = allocators[i].availableFixed() / rowSize;
     if (availableInAllocator > allowedPerPartition) {
+      TR1(fmt::format("Trim avail from {} to {} rows\n", availableInAllocator, allowedPerPartition));
       allocators[i].trimRows(allowedPerPartition * rowSize);
     }
   }
