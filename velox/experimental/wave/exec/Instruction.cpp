@@ -62,6 +62,7 @@ void restockAllocator(
     AggregateOperatorState& state,
     int32_t size,
     HashPartitionAllocator* allocator) {
+  VELOX_CHECK_LT(0, size);
   // If we can get rows by raising the row limit we do this first.
   int32_t adjustedSize = size - allocator->raiseRowLimits(size);
   if (adjustedSize <= 0) {
@@ -124,7 +125,7 @@ void resupplyHashTable(WaveStream& stream, AbstractInstruction& inst) {
       bits::nextPowerOfTwo(numFailed + hashTable->numDistinct * 2);
   int64_t increment =
       rowSize * (newSize - hashTable->numDistinct) / numPartitions;
-  TR1(fmt::format(
+  TR(&stream, fmt::format(
       "resupply: size={} newSize={} increment={} numFailed={} ht={}\n",
       numSlots(hashTable),
       newSize,
@@ -175,7 +176,7 @@ void resupplyHashTable(WaveStream& stream, AbstractInstruction& inst) {
   }
   deviceStream->wait();
   if (rehash) {
-    TR1(fmt::format("rehashed {}\n", (void*)hashTable));
+    TR(&stream, fmt::format("rehashed {}\n", (void*)hashTable));
   }
   WaveStream::releaseStream(std::move(deviceStream));
 }
@@ -194,6 +195,7 @@ AdvanceResult AbstractAggregation::canAdvance(
     return {};
   }
   if (gridState->numDistinct) {
+    TR(&stream, fmt::format("agg need retry: card={}", gridState->numDistinct));
     stream.checkBlockStatuses();
     stream.clearGridStatus<AggregateReturn>(instructionStatus);
     // The hash table needs memory or rehash. Request a Task-wide break to
