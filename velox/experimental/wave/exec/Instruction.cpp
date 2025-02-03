@@ -105,8 +105,11 @@ void AggregateOperatorState::setSizesToSafe() {
   }
 }
 
-void resupplyHashTable(WaveStream& stream, AbstractInstruction& inst) {
+  void resupplyHashTable(WaveStream& stream, const std::vector<WaveStream*>& otherStreams, AbstractInstruction& inst) {
   auto* agg = &inst.as<AbstractAggregation>();
+  if (stream.exclusiveProcessed()) {
+    stream.exclusiveProcessed() = false;
+  }
   auto deviceStream = WaveStream::streamFromReserve();
   auto stateId = agg->state->id;
   auto* state = stream.operatorState(stateId)->as<AggregateOperatorState>();

@@ -1043,6 +1043,11 @@ class WaveStream {
     return taskStateMap_;
   }
 
+  /// Returns a flag to indicate 
+  bool& mutableExclusiveProcessed() {
+    return exclusiveProcessed_;
+  }
+
   const std::shared_ptr<GpuArena>& arenaShared() const {
     return arena_;
   }

@@ -159,6 +159,7 @@ void WaveBarrier::maybeReleaseAcquireLocked() {
     auto promise = std::move(exclusivePromises_.back());
     exclusivePromises_.pop_back();
     exclusiveTokens_.pop_back();
+    exclPipelines_.pop_back();
     promise.setValue(true);
   }
 }
@@ -172,7 +173,7 @@ void WaveBarrier::leave() {
   maybeReleaseAcquireLocked();
 }
 
-void WaveBarrier::acquire(void* reason, std::function<void()> preWait) {
+  void WaveBarrier::acquire(Pipeline* stream, void* reason, std::function<void()> preWait) {
   folly::SemiFuture<bool> future(false);
   {
     std::lock_guard<std::mutex> l(mutex_);
@@ -191,6 +192,7 @@ void WaveBarrier::acquire(void* reason, std::function<void()> preWait) {
     future = promise.getSemiFuture();
     exclusivePromises_.push_back(std::move(promise));
     exclusiveTokens_.push_back(reason);
+    exclpipelines_.push_back(pipeline);
     waitingForExcl_.push_back(getTid());
     maybeReleaseAcquireLocked();
   }
@@ -217,6 +219,7 @@ void WaveBarrier::release() {
         promise.setValue();
       }
       waitingForExclDone_.clear();
+      waitingPipelines_.clear();
       promises_.clear();
       return;
     }
@@ -232,7 +235,7 @@ void WaveBarrier::release() {
   VELOX_CHECK_TID(isTidNotIn(waitingForExclDone_, mutex_));
 }
 
-void WaveBarrier::mayYield(std::function<void()> preWait) {
+  void WaveBarrier::mayYield(Pipeline* pipeline, std::function<void()> preWait) {
   ContinueFuture waitFuture;
   folly::Promise<bool> exclPromise;
   {
@@ -252,6 +255,7 @@ void WaveBarrier::mayYield(std::function<void()> preWait) {
     promises_.push_back(std::move(promise));
     waitFuture = std::move(future);
     ++numInArrive_;
+    waitingPipelines_.push_back(pipeline);
     waitingForExclDone_.push_back(getTid());
     if (numJoined_ - numInArrive_ == exclusivePromises_.size() &&
         !exclusivePromises_.empty()) {
@@ -259,6 +263,7 @@ void WaveBarrier::mayYield(std::function<void()> preWait) {
       exclPromise = std::move(exclusivePromises_.back());
       exclusivePromises_.pop_back();
       exclusiveTokens_.pop_back();
+      exclpipelines_.pop_back();
       waitingForExcl_.pop_back();
     }
   }
@@ -494,7 +499,8 @@ void WaveDriver::prepareAdvance(
       waitForArrival(pipeline);
     } else {
       // No sync, like adding memory to string pool for func.
-      pipeline.operators[from]->callUpdateStatus(stream, advance);
+      std::vector<WaveStream*> empty;
+      pipeline.operators[from]->callUpdateStatus(stream, empty,advance);
     }
   }
   if (driversToken) {
