@@ -14,18 +14,13 @@
 
 add_subdirectory(utils)
 
-<<<<<<< HEAD
-add_executable(velox_wave_exec_test FilterProjectTest.cpp TableScanTest.cpp
-                                    AggregationTest.cpp HashJoinTest.cpp Main.cpp)
-=======
 add_executable(
   velox_wave_exec_test
   FilterProjectTest.cpp
   TableScanTest.cpp
-  AggregationTest.cpp
+  HashJoinTest.cpp
   BarrierTest.cpp
   Main.cpp)
->>>>>>> bmkit-dev
 
 target_link_libraries(
   velox_wave_exec_test

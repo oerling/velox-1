@@ -279,159 +279,158 @@ Segment& CompileState::addSegment(
   return last;
 }
 
-  void CompileState::tryFilter(const Expr& expr, const RowTypePtr& outputType) {
-    auto& last = addSegment(BoundaryType::kExpr, nullptr, nullptr);
-    last.topLevelDefined.push_back(exprToOperand(expr, &topScope_));
-  }
+void CompileState::tryFilter(const Expr& expr, const RowTypePtr& outputType) {
+  auto& last = addSegment(BoundaryType::kExpr, nullptr, nullptr);
+  last.topLevelDefined.push_back(exprToOperand(expr, &topScope_));
+}
 
-  std::vector<AbstractOperand*> CompileState::tryExprSet(
-							 const exec::ExprSet& exprSet,
-							 int32_t begin,
-							 int32_t end,
-							 const std::vector<exec::IdentityProjection>* resultProjections,
-							 const RowTypePtr& outputType) {
-    auto& exprs = exprSet.exprs();
-    std::vector<AbstractOperand*> result;
-    std::vector<Subfield*> resultSubfield;
-    for (auto i = begin; i < end; ++i) {
-      result.push_back(exprToOperand(*exprs[i], &topScope_));
-      int32_t outputIdx = -1;
-      for (auto& projection : *resultProjections) {
-	if (projection.inputChannel == i) {
-	  outputIdx = projection.outputChannel;
-	  break;
-	}
+std::vector<AbstractOperand*> CompileState::tryExprSet(
+    const exec::ExprSet& exprSet,
+    int32_t begin,
+    int32_t end,
+    const std::vector<exec::IdentityProjection>* resultProjections,
+    const RowTypePtr& outputType) {
+  auto& exprs = exprSet.exprs();
+  std::vector<AbstractOperand*> result;
+  std::vector<Subfield*> resultSubfield;
+  for (auto i = begin; i < end; ++i) {
+    result.push_back(exprToOperand(*exprs[i], &topScope_));
+    int32_t outputIdx = -1;
+    for (auto& projection : *resultProjections) {
+      if (projection.inputChannel == i) {
+        outputIdx = projection.outputChannel;
+        break;
       }
-      VELOX_CHECK_NE(-1, outputIdx);
-      auto* subfield = toSubfield(outputType->nameOf(outputIdx));
-      resultSubfield.push_back(subfield);
     }
-    for (auto i = 0; i < result.size(); ++i) {
-      topScope_.operandMap[Value(resultSubfield[i])] = result[i];
-      segments_.back().projectedName.push_back(resultSubfield[i]);
-      segments_.back().topLevelDefined.push_back(result[i]);
-    }
-    return result;
+    VELOX_CHECK_NE(-1, outputIdx);
+    auto* subfield = toSubfield(outputType->nameOf(outputIdx));
+    resultSubfield.push_back(subfield);
   }
+  for (auto i = 0; i < result.size(); ++i) {
+    topScope_.operandMap[Value(resultSubfield[i])] = result[i];
+    segments_.back().projectedName.push_back(resultSubfield[i]);
+    segments_.back().topLevelDefined.push_back(result[i]);
+  }
+  return result;
+}
 
-  std::unordered_map<std::string, std::string> makeRenames(
-							   const std::vector<exec::IdentityProjection>& identities,
-							   const RowTypePtr inputType,
-							   const RowTypePtr& outputType) {
-    std::unordered_map<std::string, std::string> map;
-    for (auto p : identities) {
-      map[outputType->nameOf(p.outputChannel)] =
+std::unordered_map<std::string, std::string> makeRenames(
+    const std::vector<exec::IdentityProjection>& identities,
+    const RowTypePtr inputType,
+    const RowTypePtr& outputType) {
+  std::unordered_map<std::string, std::string> map;
+  for (auto p : identities) {
+    map[outputType->nameOf(p.outputChannel)] =
         inputType->nameOf(p.inputChannel);
-    }
-    return map;
   }
+  return map;
+}
 
-  void CompileState::tryFilterProject(
-				      exec::Operator* op,
-				      RowTypePtr& outputType,
-				      int32_t& nodeIndex) {
-    auto inputType = outputType;
-    auto filterProject = reinterpret_cast<exec::FilterProject*>(op);
+void CompileState::tryFilterProject(
+    exec::Operator* op,
+    RowTypePtr& outputType,
+    int32_t& nodeIndex) {
+  auto inputType = outputType;
+  auto filterProject = reinterpret_cast<exec::FilterProject*>(op);
+  outputType = driverFactory_.planNodes[nodeIndex]->outputType();
+  auto data = filterProject->exprsAndProjection();
+  auto& identityProjections = filterProject->identityProjections();
+  int32_t firstProjection = 0;
+  if (data.hasFilter) {
+    tryFilter(*data.exprs->exprs()[0], outputType);
+    auto filterOp = segments_.back().topLevelDefined[0];
+    addSegment(BoundaryType::kFilter, nullptr, outputType);
+    auto filterStep = makeStep<Filter>();
+    filterStep->flag = filterOp;
+    filterStep->nthWrap = wrapId_++;
+    filterStep->indices = newOperand(INTEGER(), "indices");
+    filterStep->indices->notNull = true;
+
+    segments_.back().steps.push_back(filterStep);
+    // If no projections, filter only. Done. Else take the output type
+    // from the project node that follows and place the exprs.
+    if (data.resultProjections->empty()) {
+      return;
+    }
+    firstProjection = 1;
+    ++nodeIndex;
     outputType = driverFactory_.planNodes[nodeIndex]->outputType();
-    auto data = filterProject->exprsAndProjection();
-    auto& identityProjections = filterProject->identityProjections();
-    int32_t firstProjection = 0;
-    if (data.hasFilter) {
-      tryFilter(*data.exprs->exprs()[0], outputType);
-      auto filterOp = segments_.back().topLevelDefined[0];
-      addSegment(BoundaryType::kFilter, nullptr, outputType);
-      auto filterStep = makeStep<Filter>();
-      filterStep->flag = filterOp;
-      filterStep->nthWrap = wrapId_++;
-      filterStep->indices = newOperand(INTEGER(), "indices");
-      filterStep->indices->notNull = true;
-
-      segments_.back().steps.push_back(filterStep);
-      // If no projections, filter only. Done. Else take the output type
-      // from the project node that follows and place the exprs.
-      if (data.resultProjections->empty()) {
-	return;
-      }
-      firstProjection = 1;
-      ++nodeIndex;
-      outputType = driverFactory_.planNodes[nodeIndex]->outputType();
-      segments_.back().outputType = outputType;
-    } else {
-      addSegment(BoundaryType::kExpr, nullptr, nullptr);
-    }
-
-    auto operands = tryExprSet(
-			       *data.exprs,
-			       firstProjection,
-			       data.exprs->exprs().size(),
-			       data.resultProjections,
-			       outputType);
-    renames_.push_back(makeRenames(identityProjections, inputType, outputType));
-    topScopes_.push_back(std::move(topScope_));
+    segments_.back().outputType = outputType;
+  } else {
+    addSegment(BoundaryType::kExpr, nullptr, nullptr);
   }
 
-  bool CompileState::tryPlanOperator(
-				     exec::Operator* op,
-				     int32_t& nodeIndex,
-				     RowTypePtr& outputType) {
-    auto& name = op->operatorType();
-    if (name == "Values" || name == "TableScan") {
-      auto node = driverFactory_.planNodes[nodeIndex];
-      outputType = driverFactory_.planNodes[nodeIndex]->outputType();
-      addSegment(BoundaryType::kSource, node.get(), outputType);
-      if (name == "TableScan") {
-	auto step = makeStep<TableScanStep>();
-	step->node = dynamic_cast<const core::TableScanNode*>(node.get());
-	step->results = rowTypeToOperands(node->outputType(), &step->defines);
-	segments_.back().steps.push_back(step);
-      } else {
-	auto step = makeStep<ValuesStep>();
-	step->node = dynamic_cast<const core::ValuesNode*>(node.get());
-	step->results = rowTypeToOperands(node->outputType());
-	segments_.back().steps.push_back(step);
-      }
-    } else if (name == "FilterProject") {
-      tryFilterProject(op, outputType, nodeIndex);
-    } else if (name == "Aggregation") {
-      auto* node = dynamic_cast<const core::AggregationNode*>(
-							      driverFactory_.planNodes[nodeIndex].get());
-      VELOX_CHECK_NOT_NULL(node);
-      addSegment(BoundaryType::kAggregation, node, nullptr);
-      auto step = makeStep<AggregateProbe>();
-      auto* state = newState(StateKind::kGroupBy, node->id(), "");
-      auto aggregationStep = node->step();
-      step->state = state;
-      step->rows = newOperand(BIGINT(), "rows");
-      std::vector<AbstractOperand*> aggResults;
-      for (auto& key : node->groupingKeys()) {
-	step->keys.push_back(fieldToOperand(*key, &topScope_));
-      }
-      std::vector<const AggregateUpdate*> allUpdates;
-      auto& output = node->outputType();
-      for (auto i = 0; i < node->aggregates().size(); ++i) {
-	auto& agg = node->aggregates()[i];
-	std::vector<AbstractOperand*> args;
-	for (auto& expr : agg.call->inputs()) {
-	  args.push_back(fieldToOperand(
-					*std::dynamic_pointer_cast<const core::FieldAccessTypedExpr>(expr),
-					&topScope_));
-	}
+  auto operands = tryExprSet(
+      *data.exprs,
+      firstProjection,
+      data.exprs->exprs().size(),
+      data.resultProjections,
+      outputType);
+  renames_.push_back(makeRenames(identityProjections, inputType, outputType));
+  topScopes_.push_back(std::move(topScope_));
+}
 
-	auto* func = makeStep<AggregateUpdate>();
-	func->step = aggregationStep;
-	func->name = agg.call->name();
-	func->accumulatorIdx = i;
-	func->rows = step->rows;
-	func->signature = agg.rawInputTypes;
-	func->generator = aggregateRegistry().getGenerator(*func);
-	func->args = std::move(args);
-	allUpdates.push_back(func);
-      }
-      step->updates = allUpdates;
+bool CompileState::tryPlanOperator(
+    exec::Operator* op,
+    int32_t& nodeIndex,
+    RowTypePtr& outputType) {
+  auto& name = op->operatorType();
+  if (name == "Values" || name == "TableScan") {
+    auto node = driverFactory_.planNodes[nodeIndex];
+    outputType = driverFactory_.planNodes[nodeIndex]->outputType();
+    addSegment(BoundaryType::kSource, node.get(), outputType);
+    if (name == "TableScan") {
+      auto step = makeStep<TableScanStep>();
+      step->node = dynamic_cast<const core::TableScanNode*>(node.get());
+      step->results = rowTypeToOperands(node->outputType(), &step->defines);
       segments_.back().steps.push_back(step);
-    } else if (name == "FilterProject") {
+    } else {
+      auto step = makeStep<ValuesStep>();
+      step->node = dynamic_cast<const core::ValuesNode*>(node.get());
+      step->results = rowTypeToOperands(node->outputType());
+      segments_.back().steps.push_back(step);
+    }
+  } else if (name == "FilterProject") {
     tryFilterProject(op, outputType, nodeIndex);
-  } else if (name == "Aggregation") {
+  } else if (name == "HashBuild") {
+	auto* node = dynamic_cast<const core::HashJoinNode*>(
+							     driverFactory_.planNodes[nodeIndex].get());
+      VELOX_CHECK_NOT_NULL(node);
+      auto step = makeStep<HashBuild>();
+      auto* state = newState(StateKind::kHashBuild, node->id(), "");
+      auto& keys = node->rightKeys();
+      for (auto i = 0; i < keys.size(); ++i) {
+	step->keys.push_back(
+			     fieldToOperand(*toSubfield(keys(i)), &topScope_));
+      }
+      auto& rightType = node->sources()[1]->outputType();
+      for (auto i : build->dependentChannels()) {
+	auto& name = rightType->nameOf(i);
+	step->dependent.push_back(fieldToOperand(toSubfield(name))); 
+      }
+      segments_.back().steps.push_back(step);
+  } else if (name == "HashProbe") {
+  auto* node = dynamic_cast<const core::HashJoinNode*>(
+						       driverFactory_.planNodes[nodeIndex].get());
+  VELOX_CHECK_NOT_NULL(node);
+
+  auto step = makeStep<HashProbe>();
+  auto* state = newState(StateKind::kGroupBy, node->id(), "");
+  auto& keys = node->leftKeys();
+  for (auto& key : keys) {
+    step->keys.push_back(
+			 fieldToOperand(*toSubfield(keys(i)), &topScope_));
+  }
+  segments_.back().steps.push_back(step);
+  addSegment(BoundaryType::kJoin, node, node->outputType());
+  auto filter = node->filter();
+  if (filter) {
+    auto expr =makeStep<JoinFilter>();
+    segments_.back().steps.push_back(expr);
+  }
+  auto expand = makeStep<joinExpand>();
+  
+ } else if (name == "Aggregation") {
     auto* node = dynamic_cast<const core::AggregationNode*>(
         driverFactory_.planNodes[nodeIndex].get());
     VELOX_CHECK_NOT_NULL(node);
@@ -972,6 +971,40 @@ void CompileState::planPipelines() {
   }
 }
 
+void CompileState::markWraps(int32_t pipelineIdx) {
+  auto& pipeline = selectedPipelines_[pipelineIdx];
+  auto hasContinue = false;
+  for (auto i kernelSeq = pipeline.steps.size() - 1; i >= 0; --i) {
+    auto& boxes = pipeline[stepIdx];
+    if (boxes.size() > 1) {
+      for (auto j = 0; j < boxes.size(); ++j) {
+	for (auto& step : boxes[j]) {
+	  if (step->continueLabel.has_value()) {
+	    hasContinue = true;
+	    break;
+	  }
+	}
+      }
+    } else {
+      auto& box = boxes[0];
+      for (int32_t stepIdx = box.steps.size() - 1; stepIdx >= 0; --stepIdx) {
+	auto* step = box.steps[i];
+	if (step->isWrap() != AbstractOperand::kNoWrap) {
+	  hasWrap = true;
+	  wrapKernel = kernelSeq;
+	  wrapStep = stepIdx;
+	}
+	if (step->continueLabel.has_value()) {
+	  if (hasWrap) {
+	    pipeline.steps[kernelSeq][0].steps[wrapStep]->wrapInfo()->needRewind = true;
+	    hasWrap = false;
+	  }
+	}
+      }
+    }
+  }
+}
+  
 RowTypePtr CompileState::makeOperators(
     int32_t& operatorIndex,
     std::vector<OperandId>& resultOrder) {

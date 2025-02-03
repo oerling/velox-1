@@ -66,6 +66,25 @@ enum class StepKind : int8_t {
 
 class CompileState;
 
+  /// Describes the wrapped parameters in a filter, join or other wrap.
+  struct WrapInfo {
+    /// true if a restart point followed by another wrap follows. If true, the wrap made here must be rewindable. The rewind sets 'firstWrapped' to have no wrap and 'rewrapped' to  backup.
+    bool needRewind{false};
+
+    // Representative of the operands that get their first wrap here.
+    AbstractOperand* wrappedHere{nullptr};
+
+    /// One Representatives of operands that are wrapped upstream and re-wrapped here.
+    std::vector<AbstractOperand*> rewrapped;
+
+    /// Vector with one pointer for each block to back up wraps before rewrap. 1:1 to 'rewrapped'.
+    std::vector<AbstractOperand*> wrapBackup;
+
+    ///  Wrap indices to compose from existing wrap and wrap introduced here. 1:1 to 'rewrapped'.
+    std::vector<AbstractOperand*> wrapIndices;
+
+  };
+  
 struct KernelStep {
   virtual ~KernelStep() = default;
   virtual StepKind kind() const = 0;
@@ -242,6 +261,10 @@ struct Filter : public KernelStep {
     return nthWrap;
   }
 
+  virtual WrapInfo* wrapInfo() const override {
+    return nullptr;
+  }
+
   bool isBarrier() const override {
     return true;
   }
@@ -265,6 +288,8 @@ struct Filter : public KernelStep {
   AbstractOperand* flag;
   AbstractOperand* indices;
   int32_t nthWrap{-1};
+
+  WrapInfo wrapInfo;
 };
 
 struct AggregateUpdate;
@@ -411,6 +436,10 @@ struct AggregateProbe : public KernelStep {
     return continueLabelN;
   }
 
+  WrapInfo* wrapInfo() const override {
+    return &wrapInfo;
+  }
+  
   bool isBarrier() const override {
     return true;
   }
@@ -530,6 +559,15 @@ struct JoinProbe : public KernelStep {
   StepKind kind() const override {
     return StepKind::kJoinProbe;
   }
+
+  std::optional<int32_t> continueLabel() const override {
+    return continueLabelN;
+  }
+
+  WrapInfo* wrapInfo() const override {
+    return &wrapInfo;
+  }
+
   int32_t isWrap() const override {
     return nthWrap;
   }
@@ -538,6 +576,8 @@ struct JoinProbe : public KernelStep {
   std::vector<AbstractOperand*> keys;
   AbstractOperand* hits;
   int32_t nthWrap{-1};
+  WrapInfo wrapInfo;
+  int32_t continueLabelN;
 };
 
 struct JoinExpand : public KernelStep {
