@@ -151,13 +151,8 @@ TEST_F(ArrayHasDuplicatesTest, json) {
   auto result = evaluate(
       "array_has_duplicates(C0)",
       makeRowVector({makeNullableArrayVector<StringView>(
-          {{R"({"key":"value"})", R"({"key":"value"})"}}, ARRAY(JSON()))}));
-  assertEqualVectors(makeFlatVector<bool>(true), result);
-
-  result = evaluate(
-      "array_has_duplicates(C0)",
-      makeRowVector({makeNullableArrayVector<StringView>(
-          {{R"({"key":"value"})", R"({"key":"another_value"})"},
+          {{R"({"key":"value"})", R"({"key":"value"})"},
+           {R"({"key":"value"})", R"({"key":"another_value"})"},
            {R"({"key":"value"})"},
            {R"({"key":"same_value"})",
             R"({"key":"another_value"})",
@@ -182,6 +177,16 @@ TEST_F(ArrayHasDuplicatesTest, json) {
           ARRAY(JSON()))}));
   assertEqualVectors(
       makeFlatVector<bool>(
-          {false, false, true, true, false, true, true, true, true, true}),
+          {true,
+           false,
+           false,
+           true,
+           true,
+           false,
+           true,
+           true,
+           true,
+           true,
+           true}),
       result);
 }

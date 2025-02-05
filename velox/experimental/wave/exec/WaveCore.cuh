@@ -361,7 +361,7 @@ __device__ void __forceinline__ wrapKernel(
       op->indices[blockBase / kBlockSize] = nullptr;
     }
     __syncthreads();
-return;
+    return;
   }
 
   struct WrapState {
@@ -377,7 +377,8 @@ return;
                                        : shared->extraWraps + column - numWraps;
       auto* op = operands[opIndex];
       int32_t** opIndices = &op->indices[blockBase / kBlockSize];
-      // If there is no indirection or if this is column 0 whose indirection is inited here, use the filter rows.
+      // If there is no indirection or if this is column 0 whose indirection is
+      // inited here, use the filter rows.
       if (!*opIndices || column == 0) {
         *opIndices = filterIndices + blockBase;
         state->indices = nullptr;

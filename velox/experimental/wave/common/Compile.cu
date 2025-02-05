@@ -26,15 +26,7 @@
 #include <filesystem>
 #include "velox/experimental/wave/jit/Headers.h"
 #include "velox/external/jitify/jitify.hpp"
-DEFINE_bool(
-    cuda_G,
-#ifndef NDEBUG
-    true
-#else
-    false
-#endif
-    ,
-    "Enable -G for NVRTC");
+DEFINE_bool(cuda_G, false, "Enable -G for NVRTC");
 
 DEFINE_int32(
     cuda_O,
@@ -277,11 +269,11 @@ void ensureInit() {
     makeNTS(str);
     waveNvrtcFlagsString.push_back(str.data());
   }
-  printf("\nNVRTC flags: ");
+  LOG(INFO) << "NVRTC flags: ";
   for (auto i = 0; i < waveNvrtcFlagsString.size(); ++i) {
-    printf("%s ", waveNvrtcFlagsString[i]);
+    LOG(INFO) << waveNvrtcFlagsString[i];
   }
-  printf("\nDevice=%s\n", device->toString().c_str());
+  LOG(INFO) << "device=" << device->toString();
   inited = true;
 }
 
