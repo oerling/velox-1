@@ -354,10 +354,38 @@ struct KernelEntry {
   const void* func;
 };
 
+void __global__ fillDevice(uint64_t* ptr, int32_t numWords, int32_t seed) {
+  auto end = ptr + numWords;
+  for (auto* address = ptr + threadIdx.x + blockIdx.x * blockDim.x; address < end; address += gridDim.x * blockDim.x) {
+    *address = seed * reinterpret_cast<uint64_t>(address);
+  }
+  __syncthreads();
+}
+
 int32_t numKernelEntries = 0;
 KernelEntry kernelEntries[200];
 } // namespace
 
+  void fillMemory(uint64_t* ptr, int32_t numWords, int32_t seed, bool isDevice) {
+  if (isDevice) {
+    static std::unique_ptr<Stream> fillStream;
+    static std::mutex initMutex;
+    if (!fillStream) {
+      std::lock_guard<std::mutex> l(initMutex);
+      if (!fillStream) {
+	fillStream = std::make_unique<Stream>();
+      }
+    }
+    int32_t numBlocks = std::min<int32_t>(numWords / 32, 200);
+    fillDevice<<<numBlocks, 256, 0, fillStream->stream()->stream>>>(ptr, numWords, seed);
+    fillStream->wait();
+  } else {
+    for (auto i = 0; i < numWords; ++i) {
+      ptr[i] = seed * reinterpret_cast<uint64_t>(ptr + i);
+    }
+  }
+}
+ 
 bool registerKernel(const char* name, const void* func) {
   kernelEntries[numKernelEntries].name = name;
   kernelEntries[numKernelEntries].func = func;

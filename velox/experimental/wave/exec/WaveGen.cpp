@@ -471,11 +471,15 @@ int32_t CompileState::nextWrapId() {
 }
 
 int32_t CompileState::wrapLiteral(int32_t nthWrap) {
-  // We take one Operand of each group of Operands that shares a wrappedAt such
-  // that the Operand's lifetime crosses the filter.
+  // We take one Operand of each group of Operands that shares a
+  // wrappedAt such that the Operand's lifetime crosses the
+  // filter. The wrap that is initialized here is first in the indices
+  // list. Like this the code can init this to nullptr without relying
+  // on the host inniting this.
   CodePosition filter(kernelSeq_, 0, stepIdx_);
   std::unordered_set<int32_t> wraps;
   std::vector<OperandIndex> ordinals;
+  int32_t initializedWrap = -1;
   for (auto& op : operands_) {
     auto& flags = currentCandidate_->flags(op.get());
     if (!flags.lastUse.empty() && !flags.definedIn.empty() &&
@@ -491,10 +495,17 @@ int32_t CompileState::wrapLiteral(int32_t nthWrap) {
       }
       wraps.insert(wrappedAt);
       ordinals.push_back(ordinal(*op));
+      if (wrappedAt == nthWrap) {
+	initializedWrap = ordinals.back();
+      }
     }
   }
   generated_ << fmt::format("const OperandIndex wraps{}[] = {{", nthWrap);
+  generated_ << initializedWrap << (ordinals.size() > 1 ? "," : "");
   for (auto i = 0; i < ordinals.size(); ++i) {
+    if (ordinals[i] == initializedWrap)  {
+      continue;
+    }
     generated_ << ordinals[i];
     if (i < ordinals.size() - 1) {
       generated_ << ", ";
