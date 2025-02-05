@@ -26,8 +26,10 @@ DEFINE_bool(
     false,
     "Use buffer  end guard to detect overruns");
 
-DEFINE_int32(wave_random_fill, 0,
-	     "If non-0 initialize allocated and freed from this seed");
+DEFINE_int32(
+    wave_random_fill,
+    0,
+    "If non-0 initialize allocated and freed from this seed");
 
 namespace facebook::velox::wave {
 
@@ -326,7 +328,11 @@ WaveBufferPtr GpuArena::getBuffer(void* ptr, size_t capacity, size_t size) {
   result->size_ = size;
   result->capacity_ = capacity;
   if (FLAGS_wave_random_fill) {
-    fillMemory(result->as<uint64_t>(), result->size() / sizeof(uint64_t), FLAGS_wave_random_fill, allocator_->isDevice());
+    fillMemory(
+        result->as<uint64_t>(),
+        result->size() / sizeof(uint64_t),
+        FLAGS_wave_random_fill,
+        allocator_->isDevice());
   }
   result->setMagic();
   return result;
@@ -377,9 +383,13 @@ void GpuArena::free(Buffer* buffer) {
   VELOX_CHECK_EQ(0, buffer->referenceCount_);
   VELOX_CHECK_EQ(0, buffer->pinCount_);
   if (FLAGS_wave_random_fill) {
-    fillMemory(buffer->as<uint64_t>(), buffer->size() / sizeof(uint64_t), FLAGS_wave_random_fill + 0xdd, allocator_->isDevice());
+    fillMemory(
+        buffer->as<uint64_t>(),
+        buffer->size() / sizeof(uint64_t),
+        FLAGS_wave_random_fill + 0xdd,
+        allocator_->isDevice());
   }
-    std::lock_guard<std::mutex> l(mutex_);
+  std::lock_guard<std::mutex> l(mutex_);
   VELOX_CHECK(!arenas_.empty());
 
   auto iter = arenas_.lower_bound(addressU64);

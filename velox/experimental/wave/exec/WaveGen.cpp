@@ -496,14 +496,14 @@ int32_t CompileState::wrapLiteral(int32_t nthWrap) {
       wraps.insert(wrappedAt);
       ordinals.push_back(ordinal(*op));
       if (wrappedAt == nthWrap) {
-	initializedWrap = ordinals.back();
+        initializedWrap = ordinals.back();
       }
     }
   }
   generated_ << fmt::format("const OperandIndex wraps{}[] = {{", nthWrap);
   generated_ << initializedWrap << (ordinals.size() > 1 ? "," : "");
   for (auto i = 0; i < ordinals.size(); ++i) {
-    if (ordinals[i] == initializedWrap)  {
+    if (ordinals[i] == initializedWrap) {
       continue;
     }
     generated_ << ordinals[i];

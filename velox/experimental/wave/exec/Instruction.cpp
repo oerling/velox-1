@@ -66,7 +66,8 @@ void restockAllocator(
   // If we can get rows by raising the row limit we do this first.
   int32_t adjustedSize = size - allocator->raiseRowLimits(size);
   if (adjustedSize <= 0) {
-    TR1(fmt::format("Found {} rows of existing space", size / allocator->rowSize));
+    TR1(fmt::format(
+        "Found {} rows of existing space", size / allocator->rowSize));
     return;
   }
   if (allocator->ranges[0].fixedFull) {
@@ -99,7 +100,10 @@ void AggregateOperatorState::setSizesToSafe() {
   for (auto i = 0; i < numPartitions; ++i) {
     auto availableInAllocator = allocators[i].availableFixed() / rowSize;
     if (availableInAllocator > allowedPerPartition) {
-      TR1(fmt::format("Trim avail from {} to {} rows\n", availableInAllocator, allowedPerPartition));
+      TR1(fmt::format(
+          "Trim avail from {} to {} rows\n",
+          availableInAllocator,
+          allowedPerPartition));
       allocators[i].trimRows(allowedPerPartition * rowSize);
     }
   }
@@ -128,13 +132,14 @@ void resupplyHashTable(WaveStream& stream, AbstractInstruction& inst) {
       bits::nextPowerOfTwo(numFailed + hashTable->numDistinct * 2);
   int64_t increment =
       rowSize * (newSize - hashTable->numDistinct) / numPartitions;
-  TR(&stream, fmt::format(
-      "resupply: size={} newSize={} increment={} numFailed={} ht={}\n",
-      numSlots(hashTable),
-      newSize,
-      increment,
-      numFailed,
-      (void*)hashTable));
+  TR(&stream,
+     fmt::format(
+         "resupply: size={} newSize={} increment={} numFailed={} ht={}\n",
+         numSlots(hashTable),
+         newSize,
+         increment,
+         numFailed,
+         (void*)hashTable));
   for (auto i = 0; i < numPartitions; ++i) {
     auto* allocator =
         &reinterpret_cast<HashPartitionAllocator*>(hashTable + 1)[i];
