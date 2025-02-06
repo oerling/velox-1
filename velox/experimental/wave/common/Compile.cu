@@ -26,15 +26,7 @@
 #include <filesystem>
 #include "velox/experimental/wave/jit/Headers.h"
 #include "velox/external/jitify/jitify.hpp"
-DEFINE_bool(
-    cuda_G,
-#ifndef NDEBUG
-    true
-#else
-    false
-#endif
-    ,
-    "Enable -G for NVRTC");
+DEFINE_bool(cuda_G, false, "Enable -G for NVRTC");
 
 DEFINE_int32(
     cuda_O,
@@ -149,6 +141,31 @@ std::mutex initMutex;
 std::vector<std::string> waveNvrtcFlags;
 std::vector<const char*> waveNvrtcFlagsString;
 
+  bool readSystemHeaders(std::map<std::string, std::string>& headers) {
+    std::ifstream in("/tmp/wavesystemheaders.txt");
+    std::string  path;
+    while (std::getline(in, path)) {
+      std::string size;
+      getline(in, size);
+      int32_t bytes = atoi(size.c_str());
+      std::string text;
+      text.resize(bytes);
+      in.read(text.data(), bytes);
+      headers[path] = text;
+    }
+    return !headers.empty();
+  }
+
+  void saveSystemHeaders(std::map<std::string, std::string>& map) {
+    std::ofstream out(fmt::format("/tmp/h.{}", getpid()));
+    for (auto& pair : map) {
+      out << pair.first << std::endl << pair.second.size() << std::endl << pair.second;
+    }
+    out.close();
+    system(fmt::format(" mv /tmp/h.{} /tmp/wavesystemheaders.txt", getpid()).c_str());
+  }
+
+  
 // Adds a trailing zero to make the string.data() a C char*.
 void makeNTS(std::string& string) {
   string.resize(string.size() + 1);
@@ -238,22 +255,25 @@ void ensureInit() {
         "--gpu-architecture=compute_{}{}", device->major, device->minor));
   }
   ::jitify::detail::detect_and_add_cuda_arch(waveNvrtcFlags);
-
-  static jitify::JitCache kernel_cache;
-
-  auto program = kernel_cache.program(sampleText, {}, waveNvrtcFlags);
-
-  initializeWaveHeaders(program._impl->_config->sources, "sample");
+  std::map<std::string, std::string> headers;
+  if (!readSystemHeaders(headers)) {
+    static jitify::JitCache kernel_cache;
+    
+    auto program = kernel_cache.program(sampleText, {}, waveNvrtcFlags);
+    headers = program._impl->_config->sources;
+    saveSystemHeaders(headers);
+  }
+  initializeWaveHeaders(headers, "sample");
 
   for (auto& str : waveNvrtcFlags) {
     makeNTS(str);
     waveNvrtcFlagsString.push_back(str.data());
   }
-  printf("\nNVRTC flags: ");
+  LOG(INFO) << "NVRTC flags: ";
   for (auto i = 0; i < waveNvrtcFlagsString.size(); ++i) {
-    printf("%s ", waveNvrtcFlagsString[i]);
+    LOG(INFO) << waveNvrtcFlagsString[i];
   }
-  printf("\nDevice=%s\n", device->toString().c_str());
+  LOG(INFO) << "device=" << device->toString();
   inited = true;
 }
 

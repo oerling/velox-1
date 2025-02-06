@@ -455,7 +455,7 @@ exec::BlockingReason WaveDriver::processArrived(Pipeline& pipeline) {
 
         runOperators(
             pipeline, *pipeline.arrived[streamIdx], i, advance[0].numRows);
-        TR(pipeline.arrived[streamIdx], fmt::format("running from {} rows={}", i, advance[0].numRows));
+        TR(pipeline.arrived[streamIdx], "running");
         moveTo(pipeline.arrived, streamIdx, pipeline.running, true);
         continued = true;
         break;

@@ -356,6 +356,11 @@ __device__ void __forceinline__ wrapKernel(
   if (filterIndices[blockBase + shared->numRows - 1] ==
       shared->numRows + blockBase - 1) {
     // There is no cardinality change.
+    if (threadIdx.x == 0) {
+      auto* op = operands[wraps[0]];
+      op->indices[blockBase / kBlockSize] = nullptr;
+    }
+    __syncthreads();
     return;
   }
 
@@ -372,7 +377,9 @@ __device__ void __forceinline__ wrapKernel(
                                        : shared->extraWraps + column - numWraps;
       auto* op = operands[opIndex];
       int32_t** opIndices = &op->indices[blockBase / kBlockSize];
-      if (!*opIndices) {
+      // If there is no indirection or if this is column 0 whose indirection is
+      // inited here, use the filter rows.
+      if (!*opIndices || column == 0) {
         *opIndices = filterIndices + blockBase;
         state->indices = nullptr;
       } else {
