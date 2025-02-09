@@ -173,7 +173,10 @@ void WaveBarrier::leave() {
   maybeReleaseAcquireLocked();
 }
 
-  void WaveBarrier::acquire(Pipeline* pipeline, void* reason, std::function<void()> preWait) {
+void WaveBarrier::acquire(
+    Pipeline* pipeline,
+    void* reason,
+    std::function<void()> preWait) {
   folly::SemiFuture<bool> future(false);
   {
     std::lock_guard<std::mutex> l(mutex_);
@@ -235,7 +238,7 @@ void WaveBarrier::release() {
   VELOX_CHECK_TID(isTidNotIn(waitingForExclDone_, mutex_));
 }
 
-  void WaveBarrier::mayYield(Pipeline* pipeline, std::function<void()> preWait) {
+void WaveBarrier::mayYield(Pipeline* pipeline, std::function<void()> preWait) {
   ContinueFuture waitFuture;
   folly::Promise<bool> exclPromise;
   {
@@ -276,17 +279,17 @@ void WaveBarrier::release() {
 
 std::vector<WaveStream*> WaveBarrier::waitingStreams() const {
   std::vector<WaveStream*> result;
-    for (auto& pipeline : exclPipelines_) {
-      for (auto& s : pipeline->arrived) {
-	result.push_back(s.get());
-      }
+  for (auto& pipeline : exclPipelines_) {
+    for (auto& s : pipeline->arrived) {
+      result.push_back(s.get());
     }
-    for (auto& pipeline : waitingPipelines_) {
-      for (auto& s : pipeline->arrived) {
-	result.push_back(s.get());
-      }
+  }
+  for (auto& pipeline : waitingPipelines_) {
+    for (auto& s : pipeline->arrived) {
+      result.push_back(s.get());
     }
-    return result;
+  }
+  return result;
 }
 
 WaveDriver::WaveDriver(
@@ -520,7 +523,8 @@ void WaveDriver::prepareAdvance(
   }
   if (driversToken) {
     TR((&stream), "acquire");
-    barrier_->acquire(&pipeline, driversToken, [&]() { waitForArrival(pipeline); });
+    barrier_->acquire(
+        &pipeline, driversToken, [&]() { waitForArrival(pipeline); });
     auto guard = folly::makeGuard([&]() {
       TR((&stream), "release");
       barrier_->release();
@@ -529,7 +533,7 @@ void WaveDriver::prepareAdvance(
     waitForArrival(pipeline);
     auto otherStreams = barrier_->waitingStreams();
     pipeline.operators[from]->callUpdateStatus(
-					       stream, otherStreams, advanceVector[exclusiveIndex]);
+        stream, otherStreams, advanceVector[exclusiveIndex]);
   }
 }
 

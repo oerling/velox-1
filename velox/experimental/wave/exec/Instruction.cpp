@@ -109,7 +109,10 @@ void AggregateOperatorState::setSizesToSafe() {
   }
 }
 
-  void resupplyHashTable(WaveStream& stream, const std::vector<WaveStream*>& otherStreams, AbstractInstruction& inst) {
+void resupplyHashTable(
+    WaveStream& stream,
+    const std::vector<WaveStream*>& otherStreams,
+    AbstractInstruction& inst) {
   auto* agg = &inst.as<AbstractAggregation>();
   if (stream.mutableExclusiveProcessed()) {
     stream.mutableExclusiveProcessed() = false;

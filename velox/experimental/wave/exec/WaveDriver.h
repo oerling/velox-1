@@ -25,35 +25,34 @@ DECLARE_int32(max_streams_per_driver);
 namespace facebook::velox::wave {
 enum class Advance { kBlocked, kResult, kFinished };
 
-  struct Pipeline {
-    // Wave operators replacing 'cpuOperators_' on GPU path.
-    std::vector<std::unique_ptr<WaveOperator>> operators;
+struct Pipeline {
+  // Wave operators replacing 'cpuOperators_' on GPU path.
+  std::vector<std::unique_ptr<WaveOperator>> operators;
 
-    // The set of currently pending kernel DAGs for this Pipeline.  If the
-    // source operator can produce multiple consecutive batches before the batch
-    // is executed to completion, multiple such batches can be on device
-    // independently of each other. Limited by max_streams_per_driver.
-    std::vector<std::unique_ptr<WaveStream>> running;
+  // The set of currently pending kernel DAGs for this Pipeline.  If the
+  // source operator can produce multiple consecutive batches before the batch
+  // is executed to completion, multiple such batches can be on device
+  // independently of each other. Limited by max_streams_per_driver.
+  std::vector<std::unique_ptr<WaveStream>> running;
 
-    std::vector<std::unique_ptr<WaveStream>> arrived;
+  std::vector<std::unique_ptr<WaveStream>> arrived;
 
-    /// Streams ready to recycle. A stream's device side resources are usually
-    /// reusable for a new batch from the source operator.
-    std::vector<std::unique_ptr<WaveStream>> finished;
+  /// Streams ready to recycle. A stream's device side resources are usually
+  /// reusable for a new batch from the source operator.
+  std::vector<std::unique_ptr<WaveStream>> finished;
 
-    /// True if status copy to host is needed after the last kernel. True if
-    /// returns vectors to host or if can produce multiple batches of output for
-    /// one input.
-    bool needStatus{false};
-    bool sinkFull{false};
+  /// True if status copy to host is needed after the last kernel. True if
+  /// returns vectors to host or if can produce multiple batches of output for
+  /// one input.
+  bool needStatus{false};
+  bool sinkFull{false};
 
-    /// True if produces Batches in RowVectors.
-    bool makesHostResult{false};
-    bool canAdvance{false};
-    bool noMoreInput{false};
-  };
+  /// True if produces Batches in RowVectors.
+  bool makesHostResult{false};
+  bool canAdvance{false};
+  bool noMoreInput{false};
+};
 
-  
 /// Synchronizes between WaveDrivers on different Drivers of a Task
 /// pipeline. All threads inside WaveDriver::getOutput are the
 /// coordinated set. One or more of these cn acquire the barrier in
@@ -94,7 +93,7 @@ class WaveBarrier {
   void mayYield(Pipeline* pipeline, std::function<void()> preWait);
 
   std::vector<WaveStream*> waitingStreams() const;
-  
+
   static std::shared_ptr<WaveBarrier>
   get(const std::string& taskId, int32_t driverId, int32_t operatorId);
 
@@ -129,7 +128,7 @@ class WaveBarrier {
 
   // Streams waiting for excl. 1:1 to 'exclusiveTokens_'.
   std::vector<Pipeline*> exclPipelines_;
-  
+
   // Number of threads to coordinate.
   int32_t numJoined_{0};
 

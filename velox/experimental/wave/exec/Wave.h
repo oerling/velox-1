@@ -35,9 +35,9 @@ DECLARE_bool(wave_timing);
 DECLARE_bool(wave_transfer_timing);
 DECLARE_bool(wave_trace_stream);
 
-#define TR(str, msg)                                                 \
-  if (FLAGS_wave_trace_stream) {                                     \
-    (std::cout << fmt::format("St{}: {}\n", (str)->streamIdx(), msg));  \
+#define TR(str, msg)                                                   \
+  if (FLAGS_wave_trace_stream) {                                       \
+    (std::cout << fmt::format("St{}: {}\n", (str)->streamIdx(), msg)); \
   }
 
 #define TR1(msg)                 \
@@ -605,7 +605,10 @@ class Program : public std::enable_shared_from_this<Program> {
 
   /// Runs the update callback in 'advance' with the right instruction.  E.g.
   /// rehash device side table,. Caller synchronizes.
-  void callUpdateStatus(WaveStream& stream, const std::vector<WaveStream*>& otherStreams, AdvanceResult& result);
+  void callUpdateStatus(
+      WaveStream& stream,
+      const std::vector<WaveStream*>& otherStreams,
+      AdvanceResult& result);
 
   CompiledKernel* kernel() const {
     return kernel_.get();
@@ -1043,7 +1046,7 @@ class WaveStream {
     return taskStateMap_;
   }
 
-  /// Mutable reference to flag indicating that 
+  /// Mutable reference to flag indicating that
   bool& mutableExclusiveProcessed() {
     return exclusiveProcessed_;
   }
@@ -1163,7 +1166,7 @@ class WaveStream {
   // another WaveStream has processed it. If so, the exclusive section
   // of'this' ends without more action and the flag is reset.
   bool exclusiveProcessed_{false};
-  
+
   bool hasError_{false};
 
   WaveStats stats_;
