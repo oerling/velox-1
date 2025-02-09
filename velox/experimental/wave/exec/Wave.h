@@ -995,6 +995,7 @@ class WaveStream {
   template <typename T>
   T* gridStatus(const InstructionStatus& status) {
     if (!hostBlockStatus_) {
+      VELOX_CHECK_NULL(deviceBlockStatus_);
       return nullptr;
     }
     auto numBlocks = bits::roundUp(numRows_, kBlockSize) / kBlockSize;

@@ -134,16 +134,23 @@ void resupplyHashTable(
   std::vector<WaveStream*> allStreams = {&stream};
   allStreams.insert(allStreams.end(), otherStreams.begin(), otherStreams.end());
   int32_t numFailed = 0;
+  bool first = true;
   for (auto* stream : allStreams) {
     auto* gridState = stream->gridStatus<AggregateReturn>(*inst.mutableInstructionStatus());
-    VELOX_CHECK_NOT_NULL(gridState);
+    if (!gridState) {
+      TR(stream, "Does not yet have grid State");
+      continue;
+    }
     bool hasRetries = gridState->numDistinct != 0;
     auto* blockStatus = stream->hostBlockStatus();
     int32_t numBlocks = bits::roundUp(stream->numRows(), kBlockSize) / kBlockSize;
     auto numRetry = countErrors(blockStatus, numBlocks, ErrorCode::kInsufficientMemory);
     VELOX_CHECK_EQ(hasRetries, numRetry != 0);
     numFailed += numRetry;
-    stream->mutableExclusiveProcessed() = true;
+    if (!first) {
+      stream->mutableExclusiveProcessed() = true;
+    }
+    first = false;
   }
   int32_t rowSize = agg->rowSize();
   int32_t numPartitions = hashTable->partitionMask + 1;
