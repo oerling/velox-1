@@ -136,15 +136,18 @@ void resupplyHashTable(
   int32_t numFailed = 0;
   bool first = true;
   for (auto* stream : allStreams) {
-    auto* gridState = stream->gridStatus<AggregateReturn>(*inst.mutableInstructionStatus());
+    auto* gridState =
+        stream->gridStatus<AggregateReturn>(*inst.mutableInstructionStatus());
     if (!gridState) {
       TR(stream, "Does not yet have grid State");
       continue;
     }
     bool hasRetries = gridState->numDistinct != 0;
     auto* blockStatus = stream->hostBlockStatus();
-    int32_t numBlocks = bits::roundUp(stream->numRows(), kBlockSize) / kBlockSize;
-    auto numRetry = countErrors(blockStatus, numBlocks, ErrorCode::kInsufficientMemory);
+    int32_t numBlocks =
+        bits::roundUp(stream->numRows(), kBlockSize) / kBlockSize;
+    auto numRetry =
+        countErrors(blockStatus, numBlocks, ErrorCode::kInsufficientMemory);
     VELOX_CHECK_EQ(hasRetries, numRetry != 0);
     numFailed += numRetry;
     if (!first) {
@@ -154,10 +157,11 @@ void resupplyHashTable(
   }
   int32_t rowSize = agg->rowSize();
   int32_t numPartitions = hashTable->partitionMask + 1;
-  int64_t newTableSize = bits::nextPowerOfTwo((numFailed + hashTable->numDistinct) / kLoadFactor);
+  int64_t newTableSize =
+      bits::nextPowerOfTwo((numFailed + hashTable->numDistinct) / kLoadFactor);
   int64_t newMaxDistinct = newTableSize * kLoadFactor;
-    int64_t increment = 
-      (rowSize * (newMaxDistinct - hashTable->numDistinct) ) / (numPartitions == 1 ? 1.0 : numPartitions * 0.8); 
+  int64_t increment = (rowSize * (newMaxDistinct - hashTable->numDistinct)) /
+      (numPartitions == 1 ? 1.0 : numPartitions * 0.8);
   TR(&stream,
      fmt::format(
          "resupply: size={} newSize={} increment={} numFailed={} ht={}\n",
