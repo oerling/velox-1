@@ -373,6 +373,38 @@ TEST_F(JsonFunctionsTest, jsonParse) {
 
     velox::test::assertEqualVectors(expected, result);
   }
+
+  // Test try with invalid escape sequence.
+  {
+    auto data = makeRowVector({makeFlatVector<StringView>({
+        // The logic for sorting keys checks the validity of escape sequences
+        // and will throw a user error in this case.
+        "{\"k\\i\":\"abc\",\"k2\":\"xyz\"}", // invalid json
+        // Add a second value to ensure the state is cleared.
+        R"([{"k1": "v1" }, {"k2": "v2" }])" // valid json
+    })});
+
+    auto result = evaluate("try(json_parse(c0))", data);
+
+    auto expected = makeNullableFlatVector<StringView>(
+        {std::nullopt, R"([{"k1":"v1"},{"k2":"v2"}])"}, JSON());
+
+    velox::test::assertEqualVectors(expected, result);
+  }
+
+  // Test try with invalid escape sequence going through fast path for
+  // constants.
+  {
+    auto data =
+        makeRowVector({makeConstant("{\"k\\i\":\"abc\",\"k2\":\"xyz\"}", 3)});
+
+    auto result = evaluate("try(json_parse(c0))", data);
+
+    auto expected = makeNullableFlatVector<StringView>(
+        {std::nullopt, std::nullopt, std::nullopt}, JSON());
+
+    velox::test::assertEqualVectors(expected, result);
+  }
 }
 
 TEST_F(JsonFunctionsTest, canonicalization) {
@@ -883,6 +915,19 @@ TEST_F(JsonFunctionsTest, jsonExtract) {
 
   EXPECT_EQ("[]", jsonExtract(R"({"a": [{"b": 123}]})", "$.a[*].c"));
   EXPECT_EQ(std::nullopt, jsonExtract(R"({"a": [{"b": 123}]})", "$.a[0].c"));
+
+  // Wildcard on empty object and array
+  EXPECT_EQ("[]", jsonExtract("{\"a\": {}", "$.a.[*]"));
+  EXPECT_EQ("[]", jsonExtract("{\"a\": []}", "$.a.[*]"));
+
+  // Calling wildcard on a scalar
+  EXPECT_EQ("[]", jsonExtract(R"({"a": {"b": [123, 456]}})", "$.a.b.[0].[*]"));
+
+  // non-definite paths that end up being evaluated vs. not evaluated
+  EXPECT_EQ(
+      "[123,456]", jsonExtract(R"({"a": {"b": [123, 456]}})", "$.a.b[*]"));
+  EXPECT_EQ(
+      std::nullopt, jsonExtract(R"({"a": {"b": [123, 456]}})", "$.a.c[*]"));
 
   // TODO The following paths are supported by Presto via Jayway, but do not
   // work in Velox yet. Figure out how to add support for these.
