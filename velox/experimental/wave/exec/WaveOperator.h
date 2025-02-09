@@ -93,7 +93,7 @@ class WaveOperator {
     return false;
   }
 
-  virtual void callUpdateStatus(WaveStream& stream, AdvanceResult& advance) {
+  virtual void callUpdateStatus(WaveStream& stream, const std::vector<WaveStream*>& otherStreams, AdvanceResult& advance) {
     VELOX_FAIL("Only Project supports callUpdateStatus()");
   }
 

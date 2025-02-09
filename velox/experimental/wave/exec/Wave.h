@@ -605,7 +605,7 @@ class Program : public std::enable_shared_from_this<Program> {
 
   /// Runs the update callback in 'advance' with the right instruction.  E.g.
   /// rehash device side table,. Caller synchronizes.
-  void callUpdateStatus(WaveStream& stream, AdvanceResult& result);
+  void callUpdateStatus(WaveStream& stream, const std::vector<WaveStream*>& otherStreams, AdvanceResult& result);
 
   CompiledKernel* kernel() const {
     return kernel_.get();
@@ -1043,7 +1043,7 @@ class WaveStream {
     return taskStateMap_;
   }
 
-  /// Returns a flag to indicate 
+  /// Mutable reference to flag indicating that 
   bool& mutableExclusiveProcessed() {
     return exclusiveProcessed_;
   }
@@ -1159,6 +1159,11 @@ class WaveStream {
 
   State state_{State::kNotRunning};
 
+  // set to true if 'this' has an exclusieve section coming and
+  // another WaveStream has processed it. If so, the exclusive section
+  // of'this' ends without more action and the flag is reset.
+  bool exclusiveProcessed_{false};
+  
   bool hasError_{false};
 
   WaveStats stats_;

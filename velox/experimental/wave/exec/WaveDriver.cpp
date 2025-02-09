@@ -173,7 +173,7 @@ void WaveBarrier::leave() {
   maybeReleaseAcquireLocked();
 }
 
-  void WaveBarrier::acquire(Pipeline* stream, void* reason, std::function<void()> preWait) {
+  void WaveBarrier::acquire(Pipeline* pipeline, void* reason, std::function<void()> preWait) {
   folly::SemiFuture<bool> future(false);
   {
     std::lock_guard<std::mutex> l(mutex_);
@@ -192,7 +192,7 @@ void WaveBarrier::leave() {
     future = promise.getSemiFuture();
     exclusivePromises_.push_back(std::move(promise));
     exclusiveTokens_.push_back(reason);
-    exclpipelines_.push_back(pipeline);
+    exclPipelines_.push_back(pipeline);
     waitingForExcl_.push_back(getTid());
     maybeReleaseAcquireLocked();
   }
@@ -263,7 +263,7 @@ void WaveBarrier::release() {
       exclPromise = std::move(exclusivePromises_.back());
       exclusivePromises_.pop_back();
       exclusiveTokens_.pop_back();
-      exclpipelines_.pop_back();
+      exclPipelines_.pop_back();
       waitingForExcl_.pop_back();
     }
   }
@@ -272,6 +272,21 @@ void WaveBarrier::release() {
   }
   waitFor(std::move(waitFuture));
   VELOX_CHECK_TID(isTidNotIn(waitingForExclDone_, mutex_));
+}
+
+std::vector<WaveStream*> WaveBarrier::waitingStreams() const {
+  std::vector<WaveStream*> result;
+    for (auto& pipeline : exclPipelines_) {
+      for (auto& s : pipeline->arrived) {
+	result.push_back(s.get());
+      }
+    }
+    for (auto& pipeline : waitingPipelines_) {
+      for (auto& s : pipeline->arrived) {
+	result.push_back(s.get());
+      }
+    }
+    return result;
 }
 
 WaveDriver::WaveDriver(
@@ -500,20 +515,21 @@ void WaveDriver::prepareAdvance(
     } else {
       // No sync, like adding memory to string pool for func.
       std::vector<WaveStream*> empty;
-      pipeline.operators[from]->callUpdateStatus(stream, empty,advance);
+      pipeline.operators[from]->callUpdateStatus(stream, empty, advance);
     }
   }
   if (driversToken) {
     TR((&stream), "acquire");
-    barrier_->acquire(driversToken, [&]() { waitForArrival(pipeline); });
+    barrier_->acquire(&pipeline, driversToken, [&]() { waitForArrival(pipeline); });
     auto guard = folly::makeGuard([&]() {
       TR((&stream), "release");
       barrier_->release();
     });
 
     waitForArrival(pipeline);
+    auto otherStreams = barrier_->waitingStreams();
     pipeline.operators[from]->callUpdateStatus(
-        stream, advanceVector[exclusiveIndex]);
+					       stream, otherStreams, advanceVector[exclusiveIndex]);
   }
 }
 
@@ -523,7 +539,7 @@ void WaveDriver::runOperators(
     int32_t from,
     int32_t numRows) {
   // Pause here if other WaveDrivers need exclusive access.
-  barrier_->mayYield([&]() { waitForArrival(pipeline); });
+  barrier_->mayYield(&pipeline, [&]() { waitForArrival(pipeline); });
   // The stream is in 'host' state for any host to device data
   // transfer, then in parallel state after first kernel launch.
   ++stream.stats().numWaves;

@@ -63,10 +63,10 @@ std::vector<AdvanceResult> Project::canAdvance(WaveStream& stream) {
   return {};
 }
 
-void Project::callUpdateStatus(WaveStream& stream, AdvanceResult& advance) {
+  void Project::callUpdateStatus(WaveStream& stream, const std::vector<WaveStream*>& otherStreams, AdvanceResult& advance) {
   if (advance.updateStatus) {
     levels_[advance.nthLaunch][advance.programIdx]->callUpdateStatus(
-        stream, advance);
+								     stream, otherStreams, advance);
   }
 }
 

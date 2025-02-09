@@ -93,9 +93,7 @@ class WaveBarrier {
   /// 'preWait' is called before the wait.
   void mayYield(Pipeline* pipeline, std::function<void()> preWait);
 
-  std::vector<Pipeline*> waitingPipelines() {
-    
-  }
+  std::vector<WaveStream*> waitingStreams() const;
   
   static std::shared_ptr<WaveBarrier>
   get(const std::string& taskId, int32_t driverId, int32_t operatorId);
