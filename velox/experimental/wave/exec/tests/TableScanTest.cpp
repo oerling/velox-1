@@ -42,6 +42,8 @@ DEFINE_int32(wt_num_batches, 3, "Number of batches of test data");
 
 DEFINE_int32(wt_batch_size, 20'000, "Batch size  in test data");
 
+DEFINE_bool(extended, true, "Run extra permutations of drivers/streams");
+
 using namespace facebook::velox;
 using namespace facebook::velox::core;
 using namespace facebook::velox::exec;
@@ -56,18 +58,30 @@ struct WaveScanTestParam {
 };
 
 std::vector<WaveScanTestParam> waveScanTestParams() {
-  return {
-      WaveScanTestParam{},
-      WaveScanTestParam{.numStreams = 4, .rowsPerTB = 4096, .makeDict = true},
-      WaveScanTestParam{
-          .numStreams = 4, .batchSize = 1111, .numDrivers = FLAGS_max_drivers},
-      WaveScanTestParam{
-          .numStreams = 9,
-          .batchSize = 16500,
-          .makeDict = true,
-          .numDrivers = FLAGS_max_drivers},
-      WaveScanTestParam{
-          .numStreams = 2, .batchSize = 20000, .rowsPerTB = 20480}};
+  if (FLAGS_extended) {
+    return {
+        WaveScanTestParam{},
+        WaveScanTestParam{.numStreams = 4, .rowsPerTB = 4096, .makeDict = true},
+        WaveScanTestParam{
+            .numStreams = 4,
+            .batchSize = 1111,
+            .numDrivers = FLAGS_max_drivers},
+        WaveScanTestParam{
+            .numStreams = 9,
+            .batchSize = 16500,
+            .makeDict = true,
+            .numDrivers = FLAGS_max_drivers},
+        WaveScanTestParam{
+            .numStreams = 2, .batchSize = 20000, .rowsPerTB = 20480}};
+  } else {
+    return {
+        WaveScanTestParam{},
+        WaveScanTestParam{.numStreams = 4, .rowsPerTB = 4096, .makeDict = true},
+        WaveScanTestParam{
+            .numStreams = 4,
+            .batchSize = 1111,
+            .numDrivers = FLAGS_max_drivers}};
+  }
 }
 
 class TableScanTest : public virtual HiveConnectorTestBase,

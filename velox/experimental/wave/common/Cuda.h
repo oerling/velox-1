@@ -227,6 +227,11 @@ GpuAllocator::UniquePtr<T[]> GpuAllocator::allocate(size_t n) {
   return UniquePtr<T[]>(ptr, Deleter(this, bytes));
 }
 
+/// Bulk fill 'numWords' int64s starting at 'ptr' with deterministic
+/// random from 'seed.' If 'isDevice' is true, 'ptr' is a device or
+/// unified pointer and the fill is done on current device.
+void fillMemory(uint64_t* ptr, int32_t numWords, int32_t seed, bool isDevice);
+
 /// Info on kernel occupancy limits.
 struct KernelInfo {
   int32_t numRegs{0};

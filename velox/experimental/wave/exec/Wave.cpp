@@ -1201,9 +1201,13 @@ AdvanceResult Program::canAdvance(
   return {};
 }
 
-void Program::callUpdateStatus(WaveStream& stream, AdvanceResult& advance) {
+void Program::callUpdateStatus(
+    WaveStream& stream,
+    const std::vector<WaveStream*>& otherStreams,
+    AdvanceResult& advance) {
   if (advance.updateStatus) {
-    advance.updateStatus(stream, *instructions_[advance.instructionIdx]);
+    advance.updateStatus(
+        stream, otherStreams, *instructions_[advance.instructionIdx]);
   }
 }
 

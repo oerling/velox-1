@@ -51,7 +51,7 @@ struct TestParam {
 using SplitInput =
     std::unordered_map<core::PlanNodeId, std::vector<exec::Split>>;
 
-inline std::function<void(Task* task)> makeAddSplit(
+std::function<void(Task* task)> makeAddSplit(
     bool& noMoreSplits,
     SplitInput splits) {
   return [&](Task* task) {
@@ -69,7 +69,7 @@ inline std::function<void(Task* task)> makeAddSplit(
 }
 
 // Returns aggregated spilled stats by build and probe operators from 'task'.
-inline std::pair<common::SpillStats, common::SpillStats> taskSpilledStats(
+std::pair<common::SpillStats, common::SpillStats> taskSpilledStats(
     const exec::Task& task) {
   common::SpillStats buildStats;
   common::SpillStats probeStats;
@@ -96,7 +96,7 @@ inline std::pair<common::SpillStats, common::SpillStats> taskSpilledStats(
 
 // Returns aggregated spilled runtime stats by build and probe operators from
 // 'task'.
-inline void verifyTaskSpilledRuntimeStats(const exec::Task& task, bool expectedSpill) {
+void verifyTaskSpilledRuntimeStats(const exec::Task& task, bool expectedSpill) {
   auto stats = task.taskStats();
   for (auto& pipeline : stats.pipelineStats) {
     for (auto op : pipeline.operatorStats) {
@@ -155,7 +155,7 @@ inline void verifyTaskSpilledRuntimeStats(const exec::Task& task, bool expectedS
   }
 }
 
-inline static uint64_t getOutputPositions(
+static uint64_t getOutputPositions(
     const std::shared_ptr<Task>& task,
     const std::string& operatorType) {
   uint64_t count = 0;
@@ -170,7 +170,7 @@ inline static uint64_t getOutputPositions(
 }
 
 // Returns the max hash build spill level by 'task'.
-inline int32_t maxHashBuildSpillLevel(const exec::Task& task) {
+int32_t maxHashBuildSpillLevel(const exec::Task& task) {
   int32_t maxSpillLevel = -1;
   for (auto& pipelineStat : task.taskStats().pipelineStats) {
     for (auto& operatorStat : pipelineStat.operatorStats) {
@@ -186,7 +186,7 @@ inline int32_t maxHashBuildSpillLevel(const exec::Task& task) {
   return maxSpillLevel;
 }
 
-inline std::pair<int32_t, int32_t> numTaskSpillFiles(const exec::Task& task) {
+std::pair<int32_t, int32_t> numTaskSpillFiles(const exec::Task& task) {
   int32_t numBuildFiles = 0;
   int32_t numProbeFiles = 0;
   for (auto& pipelineStat : task.taskStats().pipelineStats) {
@@ -401,6 +401,11 @@ class HashJoinBuilder {
     return *this;
   }
 
+  HashJoinBuilder& injectTaskCancellation(bool injectTaskCancellation) {
+    injectTaskCancellation_ = injectTaskCancellation;
+    return *this;
+  }
+
   HashJoinBuilder& maxSpillLevel(int32_t maxSpillLevel) {
     maxSpillLevel_ = maxSpillLevel;
     return *this;
@@ -515,11 +520,6 @@ class HashJoinBuilder {
     }
   }
 
-  HashJoinBuilder& dependentType(const TypePtr& type) {
-    dependentType_ = type;
-    return *this;
-  }
-  
  private:
   // NOTE: if 'vectorSize' is 0, then 'numVectors' is ignored and the function
   // returns a single empty batch.
@@ -570,7 +570,7 @@ class HashJoinBuilder {
     names.push_back(fmt::format("{}data", namePrefix));
 
     std::vector<TypePtr> types = keyTypes;
-    types.push_back(dependentType_);
+    types.push_back(VARCHAR());
 
     return ROW(std::move(names), std::move(types));
   }
@@ -670,6 +670,11 @@ class HashJoinBuilder {
         memory::spillMemoryPool()->stats().peakBytes;
     TestScopedSpillInjection scopedSpillInjection(spillPct);
     auto task = builder.assertResults(referenceQuery_);
+
+    if (injectTaskCancellation_) {
+      task->requestCancel();
+    }
+
     // Wait up to 5 seconds for all the task background activities to complete.
     // Then we can collect the stats from all the operators.
     //
@@ -763,6 +768,7 @@ class HashJoinBuilder {
   std::optional<bool> runParallelProbe_;
   std::optional<bool> runParallelBuild_;
 
+  bool injectTaskCancellation_{false};
   bool injectSpill_{true};
   // If not set, then the test will run the test with different settings:
   // 0, 2.
@@ -779,14 +785,13 @@ class HashJoinBuilder {
   std::unordered_map<std::string, std::string> configs_;
 
   JoinResultsVerifier testVerifier_{};
-  TypePtr dependentType_{VARCHAR()};
 };
 
-class HashJoinTestBase : public HiveConnectorTestBase {
+class HashJoinTest : public HiveConnectorTestBase {
  protected:
-  HashJoinTestBase() : HashJoinTestBase(TestParam(1)) {}
+  HashJoinTest() : HashJoinTest(TestParam(1)) {}
 
-  explicit HashJoinTestBase(const TestParam& param)
+  explicit HashJoinTest(const TestParam& param)
       : numDrivers_(param.numDrivers) {}
 
   void SetUp() override {
@@ -847,158 +852,9 @@ class HashJoinTestBase : public HiveConnectorTestBase {
 
     std::shared_ptr<TempFilePath> buildFile = TempFilePath::create();
     writeToFile(buildFile->getPath(), buildVectors);
-
-    createDuckDbTable("t", probeVectors);
-    createDuckDbTable("u", buildVectors);
-
-    // Lazy vector is part of the filter but never gets loaded.
-    auto planNodeIdGenerator = std::make_shared<core::PlanNodeIdGenerator>();
-    core::PlanNodeId probeScanId;
-    core::PlanNodeId buildScanId;
-    auto op = PlanBuilder(planNodeIdGenerator)
-                  .tableScan(asRowType(probeVectors[0]->type()))
-                  .capturePlanNodeId(probeScanId)
-                  .hashJoin(
-                      {"c0"},
-                      {"c0"},
-                      PlanBuilder(planNodeIdGenerator)
-                          .tableScan(asRowType(buildVectors[0]->type()))
-                          .capturePlanNodeId(buildScanId)
-                          .planNode(),
-                      filter,
-                      outputLayout,
-                      joinType)
-                  .planNode();
-    SplitInput splitInput = {
-        {probeScanId,
-         {exec::Split(makeHiveConnectorSplit(probeFile->getPath()))}},
-        {buildScanId,
-         {exec::Split(makeHiveConnectorSplit(buildFile->getPath()))}},
-    };
-    HashJoinBuilder(*pool_, duckDbQueryRunner_, driverExecutor_.get())
-        .planNode(std::move(op))
-        .inputSplits(splitInput)
-        .checkSpillStats(false)
-        .referenceQuery(referenceQuery)
-        .run();
   }
 
-  static uint64_t getInputPositions(
-      const std::shared_ptr<Task>& task,
-      int operatorIndex) {
-    auto stats = task->taskStats().pipelineStats.front().operatorStats;
-    return stats[operatorIndex].inputPositions;
-  }
-
-  static uint64_t getOutputPositions(
-      const std::shared_ptr<Task>& task,
-      const std::string& operatorType) {
-    uint64_t count = 0;
-    for (const auto& pipelineStat : task->taskStats().pipelineStats) {
-      for (const auto& operatorStat : pipelineStat.operatorStats) {
-        if (operatorStat.operatorType == operatorType) {
-          count += operatorStat.outputPositions;
-        }
-      }
-    }
-    return count;
-  }
-
-  static RuntimeMetric getFiltersProduced(
-      const std::shared_ptr<Task>& task,
-      int operatorIndex) {
-    return getOperatorRuntimeStats(
-        task, operatorIndex, "dynamicFiltersProduced");
-  }
-
-  static RuntimeMetric getFiltersAccepted(
-      const std::shared_ptr<Task>& task,
-      int operatorIndex) {
-    return getOperatorRuntimeStats(
-        task, operatorIndex, "dynamicFiltersAccepted");
-  }
-
-  static RuntimeMetric getReplacedWithFilterRows(
-      const std::shared_ptr<Task>& task,
-      int operatorIndex) {
-    return getOperatorRuntimeStats(
-        task, operatorIndex, "replacedWithDynamicFilterRows");
-  }
-
-  static RuntimeMetric getOperatorRuntimeStats(
-      const std::shared_ptr<Task>& task,
-      int32_t operatorIndex,
-      const std::string& statsName) {
-    auto stats = task->taskStats().pipelineStats.front().operatorStats;
-    return stats[operatorIndex].runtimeStats[statsName];
-  }
-
-  // Get the operator index from the plan node id. Only used in the probe-side
-  // pipeline. The plan node id starts from "1" and the operator index starts
-  // from 0. Plan node IDs map to operators 1:1.
-  static int32_t getOperatorIndex(const core::PlanNodeId& planNodeId) {
-    return folly::to<int32_t>(planNodeId) - 1;
-  }
-
-  static core::JoinType flipJoinType(core::JoinType joinType) {
-    switch (joinType) {
-      case core::JoinType::kInner:
-        return joinType;
-      case core::JoinType::kLeft:
-        return core::JoinType::kRight;
-      case core::JoinType::kRight:
-        return core::JoinType::kLeft;
-      case core::JoinType::kFull:
-        return joinType;
-      case core::JoinType::kLeftSemiFilter:
-        return core::JoinType::kRightSemiFilter;
-      case core::JoinType::kLeftSemiProject:
-        return core::JoinType::kRightSemiProject;
-      case core::JoinType::kRightSemiFilter:
-        return core::JoinType::kLeftSemiFilter;
-      case core::JoinType::kRightSemiProject:
-        return core::JoinType::kLeftSemiProject;
-      default:
-        VELOX_FAIL("Cannot flip join type: {}", core::joinTypeName(joinType));
-    }
-  }
-
-  static core::PlanNodePtr flipJoinSides(const core::PlanNodePtr& plan) {
-    auto joinNode = std::dynamic_pointer_cast<const core::HashJoinNode>(plan);
-    VELOX_CHECK_NOT_NULL(joinNode);
-    return std::make_shared<core::HashJoinNode>(
-        joinNode->id(),
-        flipJoinType(joinNode->joinType()),
-        joinNode->isNullAware(),
-        joinNode->rightKeys(),
-        joinNode->leftKeys(),
-        joinNode->filter(),
-        joinNode->sources()[1],
-        joinNode->sources()[0],
-        joinNode->outputType());
-  }
-
-  const int32_t numDrivers_;
-
-  // The default left and right table types used for test.
-  RowTypePtr probeType_;
-  RowTypePtr buildType_;
-  VectorFuzzer::Options fuzzerOpts_;
-
-  memory::MemoryReclaimer::Stats reclaimerStats_;
-  friend class HashJoinBuilder;
 };
+}
 
-class MultiThreadedHashJoinTestBase
-    : public HashJoinTestBase,
-      public testing::WithParamInterface<TestParam> {
- public:
-  MultiThreadedHashJoinTestBase() : HashJoinTestBase(GetParam()) {}
-
-  static std::vector<TestParam> getTestParams() {
-    return std::vector<TestParam>({TestParam{1}, TestParam{3}});
-  }
-};
-
- }
 
