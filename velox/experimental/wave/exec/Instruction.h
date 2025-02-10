@@ -147,6 +147,12 @@ struct AbstractOperand {
   /// Bit field in register with null flags.
   int32_t registerNullBit{kNoNullBit};
 
+  /// If the value is in a hash table row, this is the operand with the row.
+  AbstractOperand* containerRow{nullptr};
+
+  /// If 'containerRow' is set, this is the field on the row.
+  std::string containerField;
+  
   std::string toString() const;
 };
 
@@ -430,7 +436,7 @@ struct AbstractHashBuild : public AbstractOperator {
 
 };
   
-struct AbstractHashProe : public AbstractOperator {
+struct AbstractHashExpand : public AbstractOperator {
     AdvanceResult canAdvance(
       WaveStream& stream,
       LaunchControl* control,
@@ -439,13 +445,11 @@ struct AbstractHashProe : public AbstractOperator {
     
   void reserveState(InstructionStatus& state) override;
 
+  InstructionStatus status;
 
+  AbstractOperand* indices;
 };
 
-
-};
-
-  
 /// Serializes 'row' to characters interpretable on device.
 std::string rowTypeString(const RowTypePtr& row);
 

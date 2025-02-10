@@ -396,6 +396,7 @@ bool CompileState::tryPlanOperator(
 	auto* node = dynamic_cast<const core::HashJoinNode*>(
 							     driverFactory_.planNodes[nodeIndex].get());
       VELOX_CHECK_NOT_NULL(node);
+      addSegment(BoundaryType::kHashBuild, node->outputType());
       auto step = makeStep<HashBuild>();
       auto* state = newState(StateKind::kHashBuild, node->id(), "");
       auto& keys = node->rightKeys();
@@ -408,29 +409,36 @@ bool CompileState::tryPlanOperator(
 	auto& name = rightType->nameOf(i);
 	step->dependent.push_back(fieldToOperand(toSubfield(name))); 
       }
+      step->joinType = join->joinType();
       segments_.back().steps.push_back(step);
   } else if (name == "HashProbe") {
-  auto* node = dynamic_cast<const core::HashJoinNode*>(
-						       driverFactory_.planNodes[nodeIndex].get());
-  VELOX_CHECK_NOT_NULL(node);
-
-  auto step = makeStep<HashProbe>();
-  auto* state = newState(StateKind::kGroupBy, node->id(), "");
-  auto& keys = node->leftKeys();
-  for (auto& key : keys) {
-    step->keys.push_back(
-			 fieldToOperand(*toSubfield(keys(i)), &topScope_));
-  }
-  segments_.back().steps.push_back(step);
-  addSegment(BoundaryType::kJoin, node, node->outputType());
-  auto filter = node->filter();
-  if (filter) {
-    auto expr =makeStep<JoinFilter>();
-    segments_.back().steps.push_back(expr);
-  }
-  auto expand = makeStep<joinExpand>();
-  
- } else if (name == "Aggregation") {
+    auto* probe = reinterpret_cast<HashProbe*>(op);
+    auto* node = dynamic_cast<const core::HashJoinNode*>(
+							 driverFactory_.planNodes[nodeIndex].get());
+    VELOX_CHECK_NOT_NULL(node);
+    addSegment(BoundaryType::kJoin, node->outputType());
+    auto step = makeStep<HashProbe>();
+    auto* state = newState(StateKind::kGroupBy, node->id(), "");
+    step->hits = newOperand(BIGINT(), "hits");
+    auto& keys = node->leftKeys();
+    for (auto& key : keys) {
+      step->keys.push_back(
+			   fieldToOperand(*toSubfield(keys(i)), &topScope_));
+    }
+    segments_.back().steps.push_back(step);
+    auto expand = makeStep<joinExpand>();
+    expand->tableType = HashProbe::makeTableType(node->sources()[0], node->rightKeys());
+    for (auto& projection : probe->tableOutputProjections()) {
+      auto& name = expand->tableType->nameOf(projection.inputChannel);
+      expand->dependent.push_back(fieldToOperand(toSubfield(name)));
+    }
+    auto* filter = probe->filterExprSet();
+    if (filter) {
+      expand->filter = exprToOperand(*filter->exprAt(0);, &clauseScope);
+    }
+  expand->hits = probe->hits;
+  expand->indices = newOperand(INTEGER(), "join_rows");
+  } else if (name == "Aggregation") {
     auto* node = dynamic_cast<const core::AggregationNode*>(
         driverFactory_.planNodes[nodeIndex].get());
     VELOX_CHECK_NOT_NULL(node);
@@ -848,7 +856,20 @@ void CompileState::planSegment(
       }
       break;
     }
-    case BoundaryType::kAggregation: {
+    case BoundaryType::kJoin: {
+      auto& probe = segment.steps[0]->as<JoinProbe>();
+      for (auto& key : probe.keys) {
+	placeExpr(candidate, key, true);
+      candidate.currentBox->steps.push_back(&probe);
+      auto& expand = segment.steps[1]->as<JoinExpand>();
+      if (expand.filter) {
+	placeExpr(candidate, expand.filter, false);;
+      }
+      candidate.currentBox->steps.push_back(&expand);
+      
+      break;
+    }
+  case BoundaryType::kAggregation: {
       // If there are many parallel column groups, bring them to one.
       if (candidate.steps.back().size() > 1) {
         newKernel(candidate);

@@ -261,8 +261,8 @@ struct Filter : public KernelStep {
     return nthWrap;
   }
 
-  virtual WrapInfo* wrapInfo() const override {
-    return nullptr;
+  WrapInfo* wrapInfo() const override {
+    return &wrapInfo_;
   }
 
   bool isBarrier() const override {
@@ -289,7 +289,7 @@ struct Filter : public KernelStep {
   AbstractOperand* indices;
   int32_t nthWrap{-1};
 
-  WrapInfo wrapInfo;
+  WrapInfo wrapInfo_;
 };
 
 struct AggregateUpdate;
@@ -437,7 +437,7 @@ struct AggregateProbe : public KernelStep {
   }
 
   WrapInfo* wrapInfo() const override {
-    return &wrapInfo;
+    return &wrapInfo_;
   }
   
   bool isBarrier() const override {
@@ -553,6 +553,7 @@ struct JoinBuild : public KernelStep {
   AbstractState* state;
   std::vector<AbstractOperand*> keys;
   std::vector<AbstractOperand*> dependent;
+  core::JoinType joinType;
 };
 
 struct JoinProbe : public KernelStep {
@@ -574,9 +575,12 @@ struct JoinProbe : public KernelStep {
 
   AbstractState* state;
   std::vector<AbstractOperand*> keys;
+  std::vector<AbstractOperand*> keys;
+  std::vector<AbstractOperand*> filterDependent;
   AbstractOperand* hits;
-  int32_t nthWrap{-1};
-  WrapInfo wrapInfo;
+  // Build side accessed by join filter.
+  std::vector<AbstractOperand*> filterDependent;
+  core::JoinType joinType;
   int32_t continueLabelN;
 };
 
@@ -589,9 +593,12 @@ struct JoinExpand : public KernelStep {
   }
 
   AbstractOperand* hits;
-  std::vector<int32_t> columns;
-  std::vector<AbstractOperand*> extract;
+  AbstractOperand* indices;
+  std::vector<AbstractOpernad*> dependent;
+  AbstractOperand* filter;
+  InstructionStatus status;
   int32_t nthWrap{-1};
+  WrapState wrapState_;
 };
 
 struct KernelBox {
@@ -722,13 +729,13 @@ enum class BoundaryType {
   kExpr,
   // Filter in join or standalone
   kFilter,
+  // hash join build
+  kHashBuild,
   // n:Guaranteed 1 join, e.g, semi/antijoin.
   kReducingJoin,
   // Join that can produce multiple hits
   kJoin,
 
-  // Filter associated to non-inner join.
-  kJoinFilter,
   kAggregation
 };
 

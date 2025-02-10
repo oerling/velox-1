@@ -83,6 +83,18 @@ class HashProbe : public Operator {
   const std::vector<IdentityProjection>& tableOutputProjections() const {
     return tableOutputProjections_;
   }
+
+  ExprSet* filterExprSet() const {
+    fliter_.get();
+  }
+
+  /// Returns the type for the hash table row. Build side keys first,
+  /// then dependent build side columns.
+
+static   RowTypePtr HashProbe::makeTableType(
+				      const RowType* type,
+				      const std::vector<std::shared_ptr<const core::FieldAccessTypedExpr>>&
+				      keys);
   
  private:
   // Indicates if the join type includes misses from the left side in the

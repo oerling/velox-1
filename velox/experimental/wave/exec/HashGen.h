@@ -24,6 +24,8 @@ namespace facebook::velox::wave {
 void makeKeyMembers(
     const std::vector<AbstractOperand*>& keys,
     std::stringstream& out);
+
+
 /// Emits code for loading hash lookup operands and computing a hash
 /// number. 'nullableKeys' is true for group by and false for join. If
 /// 'nullableKeys' is true, 'anyNullCode' is emitted for the case of
@@ -35,7 +37,7 @@ void makeHash(
     std::string anyNullCode = "");
 
 /// Emits a lambda for comparing hash table row with probe keys. 'nullableKeys'
-/// is true for group by. Te signature is [&](HashRow* row) -> bool.
+/// is true for group by. The signature is [&](HashRow* row) -> bool.
 void makeCompareLambda(
     CompileState& state,
     const std::vector<AbstractOperand*>& keys,
