@@ -215,7 +215,7 @@ struct AdvanceResult {
 };
 /// Opcodes for abstract instructions that have a host side representation and
 /// status.
-enum class OpCode { kAggregate, kReadAggregate };
+  enum class OpCode { kAggregate, kReadAggregate, kHashBuild, kHashJoinExpand };
 
 struct AbstractInstruction {
   AbstractInstruction(OpCode opCode, int32_t serial = -1)
@@ -324,7 +324,7 @@ struct AbstractOperator : public AbstractInstruction {
       OpCode opCode,
       int32_t serial,
       AbstractState* state,
-      RowTypePtr outputType)
+      RowTypePtr outputType = nullptr)
       : AbstractInstruction(opCode, serial),
         state(state),
         outputType(outputType) {}
@@ -425,6 +425,9 @@ struct AbstractReadAggregation : public AbstractOperator {
 };
 
 struct AbstractHashBuild : public AbstractOperator {
+  AbstractHashBuild(int32_t serial, AbstractState* state)
+    : AbstractOperator(OpCode::kHashBuild, serial, state) {}
+
   AdvanceResult canAdvance(
       WaveStream& stream,
       LaunchControl* control,
@@ -432,10 +435,19 @@ struct AbstractHashBuild : public AbstractOperator {
       int32_t instructionIdx) const override;
 
   void reserveState(InstructionStatus& state) override;
+
+  AbstractState* state;
+  InstructionStatus status;
 };
 
-struct AbstractHashExpand : public AbstractOperator {
-  AdvanceResult canAdvance(
+
+struct AbstractHashJoinExpand : public AbstractOperator {
+    AbstractHashJoinExpand(
+		       int32_t serial,
+		       AbstractState* state)
+      : AbstractOperator(OpCode::kHashBuild, 0, state) {}
+
+    AdvanceResult canAdvance(
       WaveStream& stream,
       LaunchControl* control,
       OperatorState* state,
@@ -443,9 +455,8 @@ struct AbstractHashExpand : public AbstractOperator {
 
   void reserveState(InstructionStatus& state) override;
 
-  InstructionStatus status;
-
-  AbstractOperand* indices;
+    AbstractState* state;
+    InstructionStatus status;
 };
 
 /// Serializes 'row' to characters interpretable on device.

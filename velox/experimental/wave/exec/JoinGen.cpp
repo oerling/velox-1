@@ -111,11 +111,11 @@ void makeBuildOps(CompileState& state, const JoinBuild& build) {
   state.addInclude("velox/experimental/wave/common/HashTable.cuh");
   auto& out = state.inlines();
   out << makeJoinRow(
-      state, build.keys, build.dependent, build.joinType, build.id);
+		     state, build.keys, build.dependent, build.joinType, build.id, true);
   auto id = build.id;
   out << "struct HashOps" << id << " {\n"
       << "  BuildOps" << id
-      << "() = default;\n"
+      << "() = default;\n";
 
       makeRowHash(state, build.keys, false, id);
   makeRowRowCompare(state, build.keys, id);
@@ -135,6 +135,7 @@ void makeBuildOps(CompileState& state, const JoinBuild& build) {
 }
 
 std::string JoinBuild::toString() const {
+
   std::stringstream out;
   out << "JoinBuild {";
   for (auto& key : keys) {
@@ -147,26 +148,24 @@ std::string JoinBuild::toString() const {
   out << std::endl;
   return out.str();
 }
-return out.str();
-} // namespace facebook::velox::wave
 
 void JoinBuild::generateMain(CompileState& state, int32_t syncLabel) {
-  makeJoinOps(state, *this, false);
+  makeBuildOps(state, *this);
   auto& out = state.generated();
 
   out << "  if (laneStatus == ErrorCode::kOk) {\n"
          "    BuildOps"
       << id
       << " ops;\n"
-         "    auto* table  = reinterpret_cast>GpuHashTable*>(shared->state["
-      << stateId
+         "    auto* table  = reinterpret_cast>GpuHashTable*>(shared->states["
+      << state.stateOrdinal(*this->state)
       << "]);\n"
-         "    if (!table->addRow("
-      << makeBuildInit(state, build)
-      << ")) {\n"
+    "    if (!table->addRow(";
+  makeInitJoinRow(state, keys, dependent, id, false);
+  out << ")) {\n"
          "     laneStatus = ErrorCode::kInsufficientMemory;\n"
          "      shared->hasContinue = true;\n"
-         "    }\n"
+    "    }\n";
 }
 
 std::string JoinBuild::preContinueCode(CompileState& state) {
@@ -175,7 +174,8 @@ std::string JoinBuild::preContinueCode(CompileState& state) {
 }
 
 void JoinProbe::generateMain(CompileState& state, int32_t syncLabel) {
-  makeJoinOps(state, *this, false);
+  makeJoinRow(
+	      state, keys, dependent, joinType, id, true);
   makeJoinProbe(state, *this, syncLabel);
 }
 
@@ -184,11 +184,10 @@ std::string JoinProbe::preContinueCode(CompileState& state) {
          "      ? ErrorCode::kOk : ErrorCode::kInactive;\n";
 }
 
-std::unique_ptr<AbstractInstruction> JoinProbe::addInstruction(
+std::unique_ptr<AbstractInstruction> JoinExpand::addInstruction(
     CompileState& state) {
   RowTypePtr type;
-  static std::vector<AbstractAggInstruction> empty;
-  auto agg = std::make_unique<AbstractAggregation>(
+  auto result = std::make_unique<AbstractJoinExpand>(
       state.nextSerial(), keys, empty, this->state, type);
   int32_t offset =
       sizeof(int32_t) + bits::roundUp(keys.size() + updates.size(), 32) / 8;

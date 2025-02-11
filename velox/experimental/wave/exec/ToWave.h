@@ -555,6 +555,22 @@ struct JoinBuild : public KernelStep {
   StepKind kind() const override {
     return StepKind::kJoinBuild;
   }
+  void visitReferences(
+      std::function<void(AbstractOperand*)> visitor) const override;
+  
+  void visitStates(std::function<void(AbstractState*)> visitor) const override {
+    visitor(state);
+  }
+
+  std::unique_ptr<AbstractInstruction> addInstruction(
+      CompileState& state) override;
+
+  void generateMain(CompileState& state, int32_t syncLabel) override;
+
+  std::string preContinueCode(CompileState& state) override;
+
+  std::string toString() const override;
+
   AbstractState* state;
   std::vector<AbstractOperand*> keys;
   std::vector<AbstractOperand*> dependent;
@@ -567,6 +583,21 @@ struct JoinProbe : public KernelStep {
     return StepKind::kJoinProbe;
   }
 
+  void visitReferences(
+      std::function<void(AbstractOperand*)> visitor) const override;
+
+    void visitResults(
+      std::function<void(AbstractOperand*)> visitor) const override;
+
+  void visitStates(std::function<void(AbstractState*)> visitor) const override {
+    visitor(state);
+  }
+
+    void generateMain(CompileState& state, int32_t syncLabel) override;
+
+  std::string preContinueCode(CompileState& state) override;
+
+  
   AbstractState* state;
   std::vector<AbstractOperand*> keys;
   std::vector<AbstractOperand*> filterDependent;
@@ -595,6 +626,16 @@ struct JoinExpand : public KernelStep {
   bool isBarrier() const override {
     return true;
   }
+
+  void visitReferences(
+      std::function<void(AbstractOperand*)> visitor) const override;
+
+  void visitResults(
+      std::function<void(AbstractOperand*)> visitor) const override;
+ 
+    void generateMain(CompileState& state, int32_t syncLabel) override;
+
+  std::string preContinueCode(CompileState& state) override;
 
   AbstractOperand* hits;
   AbstractOperand* indices;
