@@ -96,7 +96,7 @@ void makeCompareLambda(
   out << "  return true;\n}\n";
 }
 
-std::string nullsInit(
+std::string initRowNullFlags(
     CompileState& state,
     int32_t begin,
     int32_t end,
@@ -140,7 +140,7 @@ void makeInitGroupRow(
   }
   out << fmt::format(
       "  asDeviceAtomic<uint32_t>(&row->nulls0)->store(keyNulls = {}, cuda::memory_order_release);\n",
-      nullsInit(state, 0, keys.size(), keys));
+      initRowNullFlags(state, 0, keys.size(), keys));
   out << "}\n";
 }
 

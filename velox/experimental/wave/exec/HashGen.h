@@ -66,4 +66,13 @@ std::string extractColumn(
     int32_t ordinal,
     const AbstractOperand& result);
 
+/// Makes an expression to init null flags for a set of Operands, one
+/// bit per Operand. 'begin' and 'end' are indices into 'keys'. The
+/// range should be <= 32 elements of 'keys'.
+std::string initRowNullFlags(
+    CompileState& state,
+    int32_t begin,
+    int32_t end,
+    const OpVector& keys);
+ 
 } // namespace facebook::velox::wave

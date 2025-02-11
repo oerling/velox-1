@@ -88,10 +88,16 @@ class CompileState;
 struct KernelStep {
   virtual ~KernelStep() = default;
   virtual StepKind kind() const = 0;
+
   virtual int32_t isWrap() const {
     return AbstractOperand::kNoWrap;
   }
 
+  virtual WrapInfo* wrapInfo() {
+
+    return nullptr;
+  }
+  
   virtual bool isSink() const {
     return false;
   }
@@ -261,7 +267,7 @@ struct Filter : public KernelStep {
     return nthWrap;
   }
 
-  WrapInfo* wrapInfo() const override {
+  WrapInfo* wrapInfo() override {
     return &wrapInfo_;
   }
 
@@ -436,10 +442,6 @@ struct AggregateProbe : public KernelStep {
     return continueLabelN;
   }
 
-  WrapInfo* wrapInfo() const override {
-    return &wrapInfo_;
-  }
-  
   bool isBarrier() const override {
     return true;
   }
@@ -554,6 +556,7 @@ struct JoinBuild : public KernelStep {
   std::vector<AbstractOperand*> keys;
   std::vector<AbstractOperand*> dependent;
   core::JoinType joinType;
+  int32_t id{-1};
 };
 
 struct JoinProbe : public KernelStep {
@@ -561,44 +564,46 @@ struct JoinProbe : public KernelStep {
     return StepKind::kJoinProbe;
   }
 
-  std::optional<int32_t> continueLabel() const override {
-    return continueLabelN;
-  }
-
-  WrapInfo* wrapInfo() const override {
-    return &wrapInfo;
-  }
-
-  int32_t isWrap() const override {
-    return nthWrap;
-  }
-
   AbstractState* state;
-  std::vector<AbstractOperand*> keys;
   std::vector<AbstractOperand*> keys;
   std::vector<AbstractOperand*> filterDependent;
   AbstractOperand* hits;
-  // Build side accessed by join filter.
-  std::vector<AbstractOperand*> filterDependent;
   core::JoinType joinType;
-  int32_t continueLabelN;
+  int32_t id{-1};
 };
 
 struct JoinExpand : public KernelStep {
   StepKind kind() const override {
     return StepKind::kJoinExpand;
   }
+
   int32_t isWrap() const override {
     return nthWrap;
   }
 
+    WrapInfo* wrapInfo() override {
+    return &wrapInfo_;
+  }
+
+  std::optional<int32_t> continueLabel() const override {
+    return continueLabel_;
+  }
+
+  
+  bool isBarrier() const override {
+    return true;
+  }
+
+
   AbstractOperand* hits;
   AbstractOperand* indices;
-  std::vector<AbstractOpernad*> dependent;
+  std::vector<AbstractOperand*> dependent;
   AbstractOperand* filter;
   InstructionStatus status;
   int32_t nthWrap{-1};
-  WrapState wrapState_;
+  WrapInfo wrapInfo_;
+  int32_t continueLabel_{-1};
+  int32_t id{-1};
 };
 
 struct KernelBox {

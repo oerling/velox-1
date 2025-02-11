@@ -856,7 +856,18 @@ void CompileState::planSegment(
       }
       break;
     }
-    case BoundaryType::kJoin: {
+  case BoundaryType::kHashBuild: {
+    auto& build = segment.steps[0]->as<HashBuild>();
+    for (auto* op : build.keys) {
+      placeExpr(candidate,  op, true);
+    }
+    for (auto* op : build.dependent) {
+      placeExpr(candidate,  op, true);
+    }
+    candidate.currentBox->steps.push_back(&build);
+    break;
+  }
+  case BoundaryType::kJoin: {
       auto& probe = segment.steps[0]->as<JoinProbe>();
       for (auto& key : probe.keys) {
 	placeExpr(candidate, key, true);

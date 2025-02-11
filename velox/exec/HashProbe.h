@@ -85,13 +85,13 @@ class HashProbe : public Operator {
   }
 
   ExprSet* filterExprSet() const {
-    fliter_.get();
+    filter_.get();
   }
 
   /// Returns the type for the hash table row. Build side keys first,
   /// then dependent build side columns.
 
-static   RowTypePtr HashProbe::makeTableType(
+static   RowTypePtr makeTableType(
 				      const RowType* type,
 				      const std::vector<std::shared_ptr<const core::FieldAccessTypedExpr>>&
 				      keys);
