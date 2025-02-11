@@ -93,7 +93,7 @@ class HashBuild final : public Operator {
   const std::vector<column_index_t>& dependentChannels() const {
     return dependentChannels_;
   }
-  
+
  private:
   void setState(State state);
   void checkStateTransition(State state);

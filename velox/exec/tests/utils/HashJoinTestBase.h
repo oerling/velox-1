@@ -34,13 +34,11 @@
 #include "velox/exec/tests/utils/VectorTestUtil.h"
 #include "velox/vector/fuzzer/VectorFuzzer.h"
 
-
 namespace facebook::velox::exec::test {
 
-  using namespace facebook::velox::common::testutil;
+using namespace facebook::velox::common::testutil;
 
 using facebook::velox::test::BatchMaker;
-
 
 struct TestParam {
   int numDrivers;
@@ -853,8 +851,5 @@ class HashJoinTest : public HiveConnectorTestBase {
     std::shared_ptr<TempFilePath> buildFile = TempFilePath::create();
     writeToFile(buildFile->getPath(), buildVectors);
   }
-
 };
-}
-
-
+} // namespace facebook::velox::exec::test

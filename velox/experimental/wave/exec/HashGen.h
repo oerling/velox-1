@@ -25,7 +25,6 @@ void makeKeyMembers(
     const std::vector<AbstractOperand*>& keys,
     std::stringstream& out);
 
-
 /// Emits code for loading hash lookup operands and computing a hash
 /// number. 'nullableKeys' is true for group by and false for join. If
 /// 'nullableKeys' is true, 'anyNullCode' is emitted for the case of
@@ -74,5 +73,5 @@ std::string initRowNullFlags(
     int32_t begin,
     int32_t end,
     const OpVector& keys);
- 
+
 } // namespace facebook::velox::wave

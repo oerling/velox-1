@@ -66,25 +66,29 @@ enum class StepKind : int8_t {
 
 class CompileState;
 
-  /// Describes the wrapped parameters in a filter, join or other wrap.
-  struct WrapInfo {
-    /// true if a restart point followed by another wrap follows. If true, the wrap made here must be rewindable. The rewind sets 'firstWrapped' to have no wrap and 'rewrapped' to  backup.
-    bool needRewind{false};
+/// Describes the wrapped parameters in a filter, join or other wrap.
+struct WrapInfo {
+  /// true if a restart point followed by another wrap follows. If true, the
+  /// wrap made here must be rewindable. The rewind sets 'firstWrapped' to have
+  /// no wrap and 'rewrapped' to  backup.
+  bool needRewind{false};
 
-    // Representative of the operands that get their first wrap here.
-    AbstractOperand* wrappedHere{nullptr};
+  // Representative of the operands that get their first wrap here.
+  AbstractOperand* wrappedHere{nullptr};
 
-    /// One Representatives of operands that are wrapped upstream and re-wrapped here.
-    std::vector<AbstractOperand*> rewrapped;
+  /// One Representatives of operands that are wrapped upstream and re-wrapped
+  /// here.
+  std::vector<AbstractOperand*> rewrapped;
 
-    /// Vector with one pointer for each block to back up wraps before rewrap. 1:1 to 'rewrapped'.
-    std::vector<AbstractOperand*> wrapBackup;
+  /// Vector with one pointer for each block to back up wraps before rewrap. 1:1
+  /// to 'rewrapped'.
+  std::vector<AbstractOperand*> wrapBackup;
 
-    ///  Wrap indices to compose from existing wrap and wrap introduced here. 1:1 to 'rewrapped'.
-    std::vector<AbstractOperand*> wrapIndices;
+  ///  Wrap indices to compose from existing wrap and wrap introduced here. 1:1
+  ///  to 'rewrapped'.
+  std::vector<AbstractOperand*> wrapIndices;
+};
 
-  };
-  
 struct KernelStep {
   virtual ~KernelStep() = default;
   virtual StepKind kind() const = 0;
@@ -94,10 +98,9 @@ struct KernelStep {
   }
 
   virtual WrapInfo* wrapInfo() {
-
     return nullptr;
   }
-  
+
   virtual bool isSink() const {
     return false;
   }
@@ -581,7 +584,7 @@ struct JoinExpand : public KernelStep {
     return nthWrap;
   }
 
-    WrapInfo* wrapInfo() override {
+  WrapInfo* wrapInfo() override {
     return &wrapInfo_;
   }
 
@@ -589,11 +592,9 @@ struct JoinExpand : public KernelStep {
     return continueLabel_;
   }
 
-  
   bool isBarrier() const override {
     return true;
   }
-
 
   AbstractOperand* hits;
   AbstractOperand* indices;

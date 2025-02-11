@@ -152,7 +152,7 @@ struct AbstractOperand {
 
   /// If 'containerRow' is set, this is the field on the row.
   std::string containerField;
-  
+
   std::string toString() const;
 };
 
@@ -289,7 +289,7 @@ struct AbstractInstruction {
   int32_t serial{-1};
 };
 
-  enum class StateKind : uint8_t { kGroupBy, kHashBuild };
+enum class StateKind : uint8_t { kGroupBy, kHashBuild };
 
 /// Represents a shared state operated on by instructions. For example, a
 /// join/group by table, destination buffers for repartition etc. Device side
@@ -425,24 +425,22 @@ struct AbstractReadAggregation : public AbstractOperator {
 };
 
 struct AbstractHashBuild : public AbstractOperator {
-    AdvanceResult canAdvance(
+  AdvanceResult canAdvance(
       WaveStream& stream,
       LaunchControl* control,
       OperatorState* state,
       int32_t instructionIdx) const override;
-    
+
   void reserveState(InstructionStatus& state) override;
-
-
 };
-  
+
 struct AbstractHashExpand : public AbstractOperator {
-    AdvanceResult canAdvance(
+  AdvanceResult canAdvance(
       WaveStream& stream,
       LaunchControl* control,
       OperatorState* state,
       int32_t instructionIdx) const override;
-    
+
   void reserveState(InstructionStatus& state) override;
 
   InstructionStatus status;
