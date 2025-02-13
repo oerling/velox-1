@@ -62,13 +62,13 @@ struct WarpScan {
     exclusive_output = initial_value + inclusive_output - input;
   }
 
-  __device__ __forceinline__ void ExclusiveSum(
+  __device__ __forceinline__ void exclusiveSum(
       T input,
       T& exclusive_output,
       T initial_value,
       T& warp_aggregate) {
     T inclusive_output;
-    Inclusivesum(input, inclusive_output);
+    inclusivesum(input, inclusive_output);
     warp_aggregate = __shfl_sync(member_mask, inclusive_output, kNumLanes - 1);
     exclusive_output = initial_value + inclusive_output - input;
   }
@@ -121,7 +121,7 @@ inline __device__ T exclusiveSum(T input, T* total, T* temp) {
   using Scan = WarpScan<T>;
   T sum;
   Scan()
-      .ExclusiveSum(input, sum);
+      .exclusiveSum(input, sum);
   if (kBlockSize == kWarpThreads) {
     if (total) {
       if (threadIdx.x == kWarpThreads - 1) {
@@ -139,7 +139,7 @@ inline __device__ T exclusiveSum(T input, T* total, T* temp) {
   T warpSum = threadIdx.x < kNumWarps ? temp[threadIdx.x] : 0;
   T blockSum;
   InnerScan()
-      .ExclusiveSum(warpSum, blockSum);
+      .exclusiveSum(warpSum, blockSum);
   if (threadIdx.x < kNumWarps) {
     temp[threadIdx.x] = blockSum;
     if (total && threadIdx.x == kNumWarps - 1) {
@@ -160,7 +160,7 @@ inline __device__ T inclusiveSum(T input, T* total, T* temp) {
   using Scan = WarpScan<T>;
   T sum;
   Scan()
-      .InclusiveSum(input, sum);
+      .inclusiveSum(input, sum);
   if (kBlockSize <= kWarpThreads) {
     if (total != nullptr) {
       if (threadIdx.x == kBlockSize - 1) {
@@ -179,7 +179,7 @@ inline __device__ T inclusiveSum(T input, T* total, T* temp) {
   T warpSum = threadIdx.x < kInnerWidth ? temp[threadIdx.x] : 0;
   T blockSum;
   InnerScan()
-      .ExclusiveSum(warpSum, blockSum);
+      .exclusiveSum(warpSum, blockSum);
   if (threadIdx.x < kInnerWidth) {
     temp[threadIdx.x] = blockSum;
   }

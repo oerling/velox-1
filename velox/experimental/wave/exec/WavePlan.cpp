@@ -23,6 +23,8 @@
 #include "velox/expression/ConstantExpr.h"
 #include "velox/expression/FieldReference.h"
 #include "velox/expression/ScopedVarSetter.h"
+#include "velox/exec/HashBuild.h"
+#include "velox/exec/HashProbe.h"
 
 DEFINE_int32(ld_cost, 10, "Cost of load from memory");
 DEFINE_int32(st_cost, 40, "Cost of store to memory");
@@ -396,46 +398,50 @@ bool CompileState::tryPlanOperator(
     auto* node = dynamic_cast<const core::HashJoinNode*>(
         driverFactory_.planNodes[nodeIndex].get());
     VELOX_CHECK_NOT_NULL(node);
-    addSegment(BoundaryType::kHashBuild, node->outputType());
-    auto step = makeStep<HashBuild>();
+    addSegment(BoundaryType::kHashBuild, node, node->outputType());
+    auto step = makeStep<JoinBuild>();
     auto* state = newState(StateKind::kHashBuild, node->id(), "");
     auto& keys = node->rightKeys();
     for (auto i = 0; i < keys.size(); ++i) {
-      step->keys.push_back(fieldToOperand(*toSubfield(keys(i)), &topScope_));
+      step->keys.push_back(fieldToOperand(*toSubfield(keys[i]->name()), &topScope_));
     }
     auto& rightType = node->sources()[1]->outputType();
+    auto* build = dynamic_cast<exec::HashBuild*>(op);
     for (auto i : build->dependentChannels()) {
       auto& name = rightType->nameOf(i);
-      step->dependent.push_back(fieldToOperand(toSubfield(name)));
+      step->dependent.push_back(fieldToOperand(*toSubfield(name), &topScope_));
     }
-    step->joinType = join->joinType();
+    step->joinType = node->joinType();
     segments_.back().steps.push_back(step);
   } else if (name == "HashProbe") {
-    auto* probe = reinterpret_cast<HashProbe*>(op);
+    auto* probe = reinterpret_cast<exec::HashProbe*>(op);
     auto* node = dynamic_cast<const core::HashJoinNode*>(
         driverFactory_.planNodes[nodeIndex].get());
     VELOX_CHECK_NOT_NULL(node);
-    addSegment(BoundaryType::kJoin, node->outputType());
-    auto step = makeStep<HashProbe>();
-    auto* state = newState(StateKind::kGroupBy, node->id(), "");
+    addSegment(BoundaryType::kJoin, node, node->outputType());
+    auto step = makeStep<JoinProbe>();
+    auto* state = newState(StateKind::kHashBuild, node->id(), "");
     step->hits = newOperand(BIGINT(), "hits");
     auto& keys = node->leftKeys();
     for (auto& key : keys) {
-      step->keys.push_back(fieldToOperand(*toSubfield(keys(i)), &topScope_));
+      step->keys.push_back(fieldToOperand(*toSubfield(key->name()), &topScope_));
     }
+    step->id = atoi(node->id().c_str());
     segments_.back().steps.push_back(step);
-    auto expand = makeStep<joinExpand>();
+    auto expand = makeStep<JoinExpand>();
+    step->expand = expand;
+    expand->id = step->id;
     expand->tableType =
-        HashProbe::makeTableType(node->sources()[0], node->rightKeys());
+      exec::HashProbe::makeTableType(node->sources()[1]->outputType().get(), node->rightKeys());
     for (auto& projection : probe->tableOutputProjections()) {
       auto& name = expand->tableType->nameOf(projection.inputChannel);
-      expand->dependent.push_back(fieldToOperand(toSubfield(name)));
+      expand->dependent.push_back(fieldToOperand(*toSubfield(name), &topScope_));
     }
     auto* filter = probe->filterExprSet();
     if (filter) {
-      expand->filter = exprToOperand(*filter->exprAt(0);, &clauseScope);
+      expand->filter = exprToOperand(*filter->exprs()[0], &topScope_);
     }
-    expand->hits = probe->hits;
+    expand->hits = step->hits;
     expand->indices = newOperand(INTEGER(), "join_rows");
   } else if (name == "Aggregation") {
     auto* node = dynamic_cast<const core::AggregationNode*>(
@@ -856,7 +862,7 @@ void CompileState::planSegment(
       break;
     }
     case BoundaryType::kHashBuild: {
-      auto& build = segment.steps[0]->as<HashBuild>();
+      auto& build = segment.steps[0]->as<JoinBuild>();
       for (auto* op : build.keys) {
         placeExpr(candidate, op, true);
       }
@@ -870,15 +876,16 @@ void CompileState::planSegment(
       auto& probe = segment.steps[0]->as<JoinProbe>();
       for (auto& key : probe.keys) {
         placeExpr(candidate, key, true);
-        candidate.currentBox->steps.push_back(&probe);
-        auto& expand = segment.steps[1]->as<JoinExpand>();
-        if (expand.filter) {
-          placeExpr(candidate, expand.filter, false);
-          ;
-        }
-        candidate.currentBox->steps.push_back(&expand);
+      }
+      candidate.currentBox->steps.push_back(&probe);
+      auto& expand = segment.steps[1]->as<JoinExpand>();
+      if (expand.filter) {
+	placeExpr(candidate, expand.filter, false);
+	;
+      }
+      candidate.currentBox->steps.push_back(&expand);
 
-        break;
+      break;
       }
       case BoundaryType::kAggregation: {
         // If there are many parallel column groups, bring them to one.

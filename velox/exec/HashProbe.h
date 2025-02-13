@@ -85,7 +85,7 @@ class HashProbe : public Operator {
   }
 
   ExprSet* filterExprSet() const {
-    filter_.get();
+    return filter_.get();
   }
 
   /// Returns the type for the hash table row. Build side keys first,

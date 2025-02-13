@@ -56,18 +56,16 @@ gridStatus(const WaveShared* shared, const InstructionStatus& status) {
 template <typename T>
 inline T* __device__ blockStatus(
     const WaveShared* shared,
-    int32_t gridStateSize,
+    int32_t gridStatusSize,
     int32_t blockStatusOffset,
     	    int32_t blockStatusSize) {
-
-
   return reinterpret_cast<T*>(
       roundUp(
           reinterpret_cast<uintptr_t>(shared->status) +
               shared->numBlocks * sizeof(BlockStatus),
           8) +
-      (gridStateSize * shared->numBlocks) + (blockStateOffset * shared->numBlocks) +
-      		     (blockstateSize * (shared->blockOffset / kBlockSize)))
+      gridStatusSize + (blockStatusOffset * shared->numBlocks) +
+      		     (blockStatusSize * (shared->blockBase / kBlockSize)));
 }
 
 inline bool __device__ laneActive(ErrorCode code) {

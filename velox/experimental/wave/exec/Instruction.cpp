@@ -392,14 +392,15 @@ AdvanceResult AbstractReadAggregation::canAdvance(
   return {};
 }
 
-  AdvanceResult HashJoinExpand::canAdvance(
+  AdvanceResult AbstractHashJoinExpand::canAdvance(
       WaveStream& stream,
       LaunchControl* control,
       OperatorState* state,
-      int32_t instructionIdx) const override {
+      int32_t instructionIdx) const {
+    return {};
   }
   
-  void reserveState(InstructionStatus& state)  {
+  void AbstractHashJoinExpand::reserveState(InstructionStatus& state)  {
     // 8 bytes per grid.
     status.gridState = state.gridState;
     state.gridState += 8;
@@ -410,7 +411,11 @@ AdvanceResult AbstractReadAggregation::canAdvance(
 
 
 
-  void HashJoinExpand::reserveState(InstructionStatus& state) {
+  void AbstractHashBuild::reserveState(InstructionStatus& state) {
+    // 8 bytes per grid.
+    status.gridState = state.gridState;
+    state.gridState += 8;
+
   }
 
   

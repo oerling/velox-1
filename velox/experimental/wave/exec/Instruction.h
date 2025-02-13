@@ -443,9 +443,8 @@ struct AbstractHashBuild : public AbstractOperator {
 
 struct AbstractHashJoinExpand : public AbstractOperator {
     AbstractHashJoinExpand(
-		       int32_t serial,
-		       AbstractState* state)
-      : AbstractOperator(OpCode::kHashBuild, 0, state) {}
+		       int32_t serial)
+      : AbstractOperator(OpCode::kHashJoinExpand, 0, nullptr) {}
 
     AdvanceResult canAdvance(
       WaveStream& stream,
@@ -455,8 +454,8 @@ struct AbstractHashJoinExpand : public AbstractOperator {
 
   void reserveState(InstructionStatus& state) override;
 
-    AbstractState* state;
     InstructionStatus status;
+  int32_t continueLabel;
 };
 
 /// Serializes 'row' to characters interpretable on device.

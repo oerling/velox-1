@@ -578,6 +578,8 @@ struct JoinBuild : public KernelStep {
   int32_t id{-1};
 };
 
+    struct JoinExpand;
+
 struct JoinProbe : public KernelStep {
   StepKind kind() const override {
     return StepKind::kJoinProbe;
@@ -597,12 +599,14 @@ struct JoinProbe : public KernelStep {
 
   std::string preContinueCode(CompileState& state) override;
 
-  
+  std::string toString() const override;
+
   AbstractState* state;
   std::vector<AbstractOperand*> keys;
   std::vector<AbstractOperand*> filterDependent;
   AbstractOperand* hits;
   core::JoinType joinType;
+  JoinExpand* expand;
   int32_t id{-1};
 };
 
@@ -632,10 +636,15 @@ struct JoinExpand : public KernelStep {
 
   void visitResults(
       std::function<void(AbstractOperand*)> visitor) const override;
- 
+
+  std::unique_ptr<AbstractInstruction> addInstruction(
+      CompileState& state) override;
+  
     void generateMain(CompileState& state, int32_t syncLabel) override;
 
   std::string preContinueCode(CompileState& state) override;
+
+    std::string toString() const override;
 
   AbstractOperand* hits;
   AbstractOperand* indices;
@@ -646,6 +655,7 @@ struct JoinExpand : public KernelStep {
   WrapInfo wrapInfo_;
   int32_t continueLabel_{-1};
   int32_t id{-1};
+  RowTypePtr tableType;
 };
 
 struct KernelBox {
@@ -736,6 +746,8 @@ struct PipelineCandidate {
 
   void makeOperandSets(int32_t kernelSeq);
 
+  void markWraps(int32_t pipelineIdx);
+  
   void markParams(
       KernelBox& box,
       int32_t kernelSeq,

@@ -171,27 +171,27 @@ std::string JoinBuild::preContinueCode(CompileState& state) {
          "      ? ErrorCode::kOk : ErrorCode::kInactive;\n";
 }
 
-char* probeBoilerPlate =
-    "  table$I$ = reinterpret_cast<GpuHashTable*>(shared->states[$SI$];\n"
+const char* probeBoilerPlate =
+    "  table$I$ = reinterpret_cast<GpuHashTable*>(shared->states[$SI$]);\n"
     "  hit$I$ = table$I$->joinProbe(hash$I$, ";
 
 void JoinProbe::generateMain(CompileState& state, int32_t syncLabel) {
-  makeJoinRow(state, keys, dependent, joinType, id, true);
+  makeJoinRow(state, keys, expand->dependent, joinType, id, true);
 
   auto& out = state.generated();
   state.declareNamed(fmt::format("bool nullProbe{};", id));
   state.declareNamed(fmt::format("uint64_t hash{};", id));
 
-  auto stateOrd = state.stateOrdinal(this->state);
+  auto stateOrd = state.stateOrdinal(*this->state);
   state.declareNamed(fmt::format("  GpuHashTable* table{};", id));
   state.declareNamed(fmt::format("  HashRow{}* hit{};", id, id));
   out << fmt::format("  nullProbe{} = false;\n", id);
   makeHash(state, keys, false, fmt::format("  nullProbe{} = true;", id), id);
   auto temp = replaceAll(probeBoilerPlate, "$I$", fmt::format("{}", id));
-  out << replaceAll(temp, "$SI$", fmt::format(?\"{}", stateOrd));
-  makeCompareLambda(keys, false, id);
+  out << replaceAll(temp, "$SI$", fmt::format("{}", stateOrd));
+  makeCompareLambda(state, keys, false, id);
   out << ");\n";
-  out << fmt::format("  continue{}: ;\n", expand->continueLabelN);
+  out << fmt::format("  continue{}: ;\n", expand->continueLabel_);
 }
 
 void JoinExpand::generateMain(CompileState& state, int32_t syncLabel) {}
@@ -203,11 +203,10 @@ std::string JoinExpand::preContinueCode(CompileState& state) {
 
 std::unique_ptr<AbstractInstruction> JoinExpand::addInstruction(
     CompileState& state) {
-  RowTypePtr type;
-  auto result = std::make_unique<AbstractJoinExpand>(
-      state.nextSerial(), keys, empty, this->state, type);
-  agg->continueLabel = continueLabelN;
-  return agg;
+  auto result = std::make_unique<AbstractHashJoinExpand>(
+							 state.nextSerial());
+  result->continueLabel = continueLabel_;
+  return result;
 }
 
 std::string JoinProbe::toString() const {
