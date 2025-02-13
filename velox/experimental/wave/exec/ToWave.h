@@ -1107,7 +1107,7 @@ class CompileState {
   void markOutputStored(PipelineCandidate& candidate, Segment& segment);
 
   void markWraps(int32_t pipelineIdx);
-  
+
   // Partitions the Driver's Operators into segments, one per cardinality
   // change. 'operatorIndex' is the index of the first considered operator and
   // is set to one after the last converted operator.

@@ -28,12 +28,12 @@
 #include "velox/exec/PlanNodeStats.h"
 #include "velox/exec/tests/utils/ArbitratorTestUtil.h"
 #include "velox/exec/tests/utils/AssertQueryBuilder.h"
+#include "velox/exec/tests/utils/HashJoinTestBase.h"
 #include "velox/exec/tests/utils/HiveConnectorTestBase.h"
 #include "velox/exec/tests/utils/PlanBuilder.h"
 #include "velox/exec/tests/utils/TempDirectoryPath.h"
 #include "velox/exec/tests/utils/VectorTestUtil.h"
 #include "velox/vector/fuzzer/VectorFuzzer.h"
-#include "velox/exec/tests/utils/HashJoinTestBase.h"
 
 using namespace facebook::velox;
 using namespace facebook::velox::exec;
@@ -44,22 +44,18 @@ using facebook::velox::test::BatchMaker;
 
 namespace {
 
-  class HashJoinTest : public HashJoinTestBase {
-  public:
-    HashJoinTest() : HashJoinTestBase(TestParam(1)) {}
+class HashJoinTest : public HashJoinTestBase {
+ public:
+  HashJoinTest() : HashJoinTestBase(TestParam(1)) {}
 
-  explicit HashJoinTest(const TestParam& param)
-    : HashJoinTestBase(param) {}
-  };
+  explicit HashJoinTest(const TestParam& param) : HashJoinTestBase(param) {}
+};
 
-  class MultiThreadedHashJoinTest : public MultiThreadedHashJoinTestBase {
-  public:
-    MultiThreadedHashJoinTest() : MultiThreadedHashJoinTestBase() {}
+class MultiThreadedHashJoinTest : public MultiThreadedHashJoinTestBase {
+ public:
+  MultiThreadedHashJoinTest() : MultiThreadedHashJoinTestBase() {}
+};
 
-  };
-
-  
-  
 TEST_P(MultiThreadedHashJoinTest, bigintArray) {
   HashJoinBuilder(*pool_, duckDbQueryRunner_, driverExecutor_.get())
       .numDrivers(numDrivers_)

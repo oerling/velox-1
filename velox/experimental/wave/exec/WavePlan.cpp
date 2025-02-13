@@ -1016,7 +1016,8 @@ void CompileState::planPipelines() {
 void CompileState::markWraps(int32_t pipelineIdx) {
   auto& pipeline = selectedPipelines_[pipelineIdx];
   auto hasContinue = false;
-  for (int32_t kernelSeq = pipeline.steps.size() - 1; kernelSeq >= 0; --kernelSeq) {
+  for (int32_t kernelSeq = pipeline.steps.size() - 1; kernelSeq >= 0;
+       --kernelSeq) {
     auto& boxes = pipeline.steps[kernelSeq];
     if (boxes.size() > 1) {
       // If many parallel sequences: Will introduce no wraps but may
