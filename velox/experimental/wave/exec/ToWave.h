@@ -557,7 +557,7 @@ struct JoinBuild : public KernelStep {
   }
   void visitReferences(
       std::function<void(AbstractOperand*)> visitor) const override;
-  
+
   void visitStates(std::function<void(AbstractState*)> visitor) const override {
     visitor(state);
   }
@@ -578,7 +578,7 @@ struct JoinBuild : public KernelStep {
   int32_t id{-1};
 };
 
-    struct JoinExpand;
+struct JoinExpand;
 
 struct JoinProbe : public KernelStep {
   StepKind kind() const override {
@@ -588,14 +588,14 @@ struct JoinProbe : public KernelStep {
   void visitReferences(
       std::function<void(AbstractOperand*)> visitor) const override;
 
-    void visitResults(
+  void visitResults(
       std::function<void(AbstractOperand*)> visitor) const override;
 
   void visitStates(std::function<void(AbstractState*)> visitor) const override {
     visitor(state);
   }
 
-    void generateMain(CompileState& state, int32_t syncLabel) override;
+  void generateMain(CompileState& state, int32_t syncLabel) override;
 
   std::string preContinueCode(CompileState& state) override;
 
@@ -639,12 +639,12 @@ struct JoinExpand : public KernelStep {
 
   std::unique_ptr<AbstractInstruction> addInstruction(
       CompileState& state) override;
-  
-    void generateMain(CompileState& state, int32_t syncLabel) override;
+
+  void generateMain(CompileState& state, int32_t syncLabel) override;
 
   std::string preContinueCode(CompileState& state) override;
 
-    std::string toString() const override;
+  std::string toString() const override;
 
   AbstractOperand* hits;
   AbstractOperand* indices;
@@ -747,7 +747,7 @@ struct PipelineCandidate {
   void makeOperandSets(int32_t kernelSeq);
 
   void markWraps(int32_t pipelineIdx);
-  
+
   void markParams(
       KernelBox& box,
       int32_t kernelSeq,

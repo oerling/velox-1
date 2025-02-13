@@ -203,8 +203,7 @@ std::string JoinExpand::preContinueCode(CompileState& state) {
 
 std::unique_ptr<AbstractInstruction> JoinExpand::addInstruction(
     CompileState& state) {
-  auto result = std::make_unique<AbstractHashJoinExpand>(
-							 state.nextSerial());
+  auto result = std::make_unique<AbstractHashJoinExpand>(state.nextSerial());
   result->continueLabel = continueLabel_;
   return result;
 }

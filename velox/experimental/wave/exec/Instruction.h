@@ -215,7 +215,7 @@ struct AdvanceResult {
 };
 /// Opcodes for abstract instructions that have a host side representation and
 /// status.
-  enum class OpCode { kAggregate, kReadAggregate, kHashBuild, kHashJoinExpand };
+enum class OpCode { kAggregate, kReadAggregate, kHashBuild, kHashJoinExpand };
 
 struct AbstractInstruction {
   AbstractInstruction(OpCode opCode, int32_t serial = -1)
@@ -426,7 +426,7 @@ struct AbstractReadAggregation : public AbstractOperator {
 
 struct AbstractHashBuild : public AbstractOperator {
   AbstractHashBuild(int32_t serial, AbstractState* state)
-    : AbstractOperator(OpCode::kHashBuild, serial, state) {}
+      : AbstractOperator(OpCode::kHashBuild, serial, state) {}
 
   AdvanceResult canAdvance(
       WaveStream& stream,
@@ -440,13 +440,11 @@ struct AbstractHashBuild : public AbstractOperator {
   InstructionStatus status;
 };
 
-
 struct AbstractHashJoinExpand : public AbstractOperator {
-    AbstractHashJoinExpand(
-		       int32_t serial)
+  AbstractHashJoinExpand(int32_t serial)
       : AbstractOperator(OpCode::kHashJoinExpand, 0, nullptr) {}
 
-    AdvanceResult canAdvance(
+  AdvanceResult canAdvance(
       WaveStream& stream,
       LaunchControl* control,
       OperatorState* state,
@@ -454,7 +452,7 @@ struct AbstractHashJoinExpand : public AbstractOperator {
 
   void reserveState(InstructionStatus& state) override;
 
-    InstructionStatus status;
+  InstructionStatus status;
   int32_t continueLabel;
 };
 

@@ -15,6 +15,8 @@
  */
 
 #include "velox/exec/FilterProject.h"
+#include "velox/exec/HashBuild.h"
+#include "velox/exec/HashProbe.h"
 #include "velox/experimental/wave/exec/Project.h"
 #include "velox/experimental/wave/exec/TableScan.h"
 #include "velox/experimental/wave/exec/ToWave.h"
@@ -23,8 +25,6 @@
 #include "velox/expression/ConstantExpr.h"
 #include "velox/expression/FieldReference.h"
 #include "velox/expression/ScopedVarSetter.h"
-#include "velox/exec/HashBuild.h"
-#include "velox/exec/HashProbe.h"
 
 DEFINE_int32(ld_cost, 10, "Cost of load from memory");
 DEFINE_int32(st_cost, 40, "Cost of store to memory");
@@ -403,7 +403,8 @@ bool CompileState::tryPlanOperator(
     auto* state = newState(StateKind::kHashBuild, node->id(), "");
     auto& keys = node->rightKeys();
     for (auto i = 0; i < keys.size(); ++i) {
-      step->keys.push_back(fieldToOperand(*toSubfield(keys[i]->name()), &topScope_));
+      step->keys.push_back(
+          fieldToOperand(*toSubfield(keys[i]->name()), &topScope_));
     }
     auto& rightType = node->sources()[1]->outputType();
     auto* build = dynamic_cast<exec::HashBuild*>(op);
@@ -424,18 +425,20 @@ bool CompileState::tryPlanOperator(
     step->hits = newOperand(BIGINT(), "hits");
     auto& keys = node->leftKeys();
     for (auto& key : keys) {
-      step->keys.push_back(fieldToOperand(*toSubfield(key->name()), &topScope_));
+      step->keys.push_back(
+          fieldToOperand(*toSubfield(key->name()), &topScope_));
     }
     step->id = atoi(node->id().c_str());
     segments_.back().steps.push_back(step);
     auto expand = makeStep<JoinExpand>();
     step->expand = expand;
     expand->id = step->id;
-    expand->tableType =
-      exec::HashProbe::makeTableType(node->sources()[1]->outputType().get(), node->rightKeys());
+    expand->tableType = exec::HashProbe::makeTableType(
+        node->sources()[1]->outputType().get(), node->rightKeys());
     for (auto& projection : probe->tableOutputProjections()) {
       auto& name = expand->tableType->nameOf(projection.inputChannel);
-      expand->dependent.push_back(fieldToOperand(*toSubfield(name), &topScope_));
+      expand->dependent.push_back(
+          fieldToOperand(*toSubfield(name), &topScope_));
     }
     auto* filter = probe->filterExprSet();
     if (filter) {
@@ -880,32 +883,32 @@ void CompileState::planSegment(
       candidate.currentBox->steps.push_back(&probe);
       auto& expand = segment.steps[1]->as<JoinExpand>();
       if (expand.filter) {
-	placeExpr(candidate, expand.filter, false);
-	;
+        placeExpr(candidate, expand.filter, false);
+        ;
       }
       candidate.currentBox->steps.push_back(&expand);
 
       break;
-      }
-      case BoundaryType::kAggregation: {
-        // If there are many parallel column groups, bring them to one.
-        if (candidate.steps.back().size() > 1) {
-          newKernel(candidate);
-        }
-        // Append the aggregate probe and updates. May inline all or have a
-        // wider kernel for updates if many updates and few top level rows.
-        placeAggregation(candidate, segment);
-        break;
-      }
-      default:
-        VELOX_NYI();
     }
-      if (segmentIdx == segments_.size() - 1) {
-        recordCandidate(candidate, segmentIdx);
-        return;
+    case BoundaryType::kAggregation: {
+      // If there are many parallel column groups, bring them to one.
+      if (candidate.steps.back().size() > 1) {
+        newKernel(candidate);
       }
+      // Append the aggregate probe and updates. May inline all or have a
+      // wider kernel for updates if many updates and few top level rows.
+      placeAggregation(candidate, segment);
+      break;
+    }
+    default:
+      VELOX_NYI();
+  }
+  if (segmentIdx == segments_.size() - 1) {
+    recordCandidate(candidate, segmentIdx);
+    return;
+  }
 
-      planSegment(candidate, inputBatch, segmentIdx + 1);
+  planSegment(candidate, inputBatch, segmentIdx + 1);
 }
 
 void CompileState::pickBest() {

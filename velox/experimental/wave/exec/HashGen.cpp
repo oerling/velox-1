@@ -44,10 +44,10 @@ void makeHash(
     const std::vector<AbstractOperand*>& keys,
     bool nullableKeys,
     std::string nullCode,
-	      int32_t id) {
+    int32_t id) {
   auto& out = state.generated();
   std::string idStr;
-  if (id !=-1) {
+  if (id != -1) {
     idStr = fmt::format("{}", id);
   }
   out << "  hash" << idStr << " = 1;\n";

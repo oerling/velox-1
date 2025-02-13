@@ -171,20 +171,22 @@ struct KernelParams {
   int16_t streamIdx{0};
 };
 
-
-/// grid status for a hash join expand. 
+/// grid status for a hash join expand.
 struct HashJoinExpandGridStatus {
-  /// True if any lane in the grid has unfetched data. If true, hashJoinExpandBlockstatus has the lane statuses. int32_t to support atomics.
+  /// True if any lane in the grid has unfetched data. If true,
+  /// hashJoinExpandBlockstatus has the lane statuses. int32_t to support
+  /// atomics.
   int32_t anyContinuable{0};
 };
- 
-/// Tracks the state of a hash join probe between batches of output. Needed when the join increases cardinality.
+
+/// Tracks the state of a hash join probe between batches of output. Needed when
+/// the join increases cardinality.
 struct HashJoinExpandBlockStatus {
-  /// Flag for existence of hits and existence of next hit candidate per lane of input.
+  /// Flag for existence of hits and existence of next hit candidate per lane of
+  /// input.
   uint8_t flags[kBlockSize];
   /// The next row in the hash table to look at. nullptr if all hits produced.
   void* next[kBlockSize];
 };
 
- 
 } // namespace facebook::velox::wave

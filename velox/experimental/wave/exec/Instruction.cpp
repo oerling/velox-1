@@ -392,31 +392,28 @@ AdvanceResult AbstractReadAggregation::canAdvance(
   return {};
 }
 
-  AdvanceResult AbstractHashJoinExpand::canAdvance(
-      WaveStream& stream,
-      LaunchControl* control,
-      OperatorState* state,
-      int32_t instructionIdx) const {
-    return {};
-  }
-  
-  void AbstractHashJoinExpand::reserveState(InstructionStatus& state)  {
-    // 8 bytes per grid.
-    status.gridState = state.gridState;
-    state.gridState += 8;
-    // 9 bytes per lane. 1 flag for continuable/any hits flag and 8 for the next row pointer to look at.
-    status.blockState = state.blockState;
-    state.blockState += kBlockSize * 9;
-  }
+AdvanceResult AbstractHashJoinExpand::canAdvance(
+    WaveStream& stream,
+    LaunchControl* control,
+    OperatorState* state,
+    int32_t instructionIdx) const {
+  return {};
+}
 
+void AbstractHashJoinExpand::reserveState(InstructionStatus& state) {
+  // 8 bytes per grid.
+  status.gridState = state.gridState;
+  state.gridState += 8;
+  // 9 bytes per lane. 1 flag for continuable/any hits flag and 8 for the next
+  // row pointer to look at.
+  status.blockState = state.blockState;
+  state.blockState += kBlockSize * 9;
+}
 
+void AbstractHashBuild::reserveState(InstructionStatus& state) {
+  // 8 bytes per grid.
+  status.gridState = state.gridState;
+  state.gridState += 8;
+}
 
-  void AbstractHashBuild::reserveState(InstructionStatus& state) {
-    // 8 bytes per grid.
-    status.gridState = state.gridState;
-    state.gridState += 8;
-
-  }
-
-  
 } // namespace facebook::velox::wave

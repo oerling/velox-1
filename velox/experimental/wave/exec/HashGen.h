@@ -34,7 +34,7 @@ void makeHash(
     const std::vector<AbstractOperand*>& keys,
     bool nullableKeys,
     std::string anyNullCode = "",
-	      int32_t id = -1);
+    int32_t id = -1);
 
 /// Emits a lambda for comparing hash table row with probe keys. 'nullableKeys'
 /// is true for group by. The signature is [&](HashRow* row) -> bool.
