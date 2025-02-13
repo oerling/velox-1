@@ -785,11 +785,11 @@ class HashJoinBuilder {
   JoinResultsVerifier testVerifier_{};
 };
 
-class HashJoinTest : public HiveConnectorTestBase {
+class HashJoinTestBase : public HiveConnectorTestBase {
  protected:
-  HashJoinTest() : HashJoinTest(TestParam(1)) {}
+  HashJoinTestBase() : HashJoinTestBase(TestParam(1)) {}
 
-  explicit HashJoinTest(const TestParam& param)
+  explicit HashJoinTestBase(const TestParam& param)
       : numDrivers_(param.numDrivers) {}
 
   void SetUp() override {
@@ -850,6 +850,156 @@ class HashJoinTest : public HiveConnectorTestBase {
 
     std::shared_ptr<TempFilePath> buildFile = TempFilePath::create();
     writeToFile(buildFile->getPath(), buildVectors);
+
+    createDuckDbTable("t", probeVectors);
+    createDuckDbTable("u", buildVectors);
+
+    // Lazy vector is part of the filter but never gets loaded.
+    auto planNodeIdGenerator = std::make_shared<core::PlanNodeIdGenerator>();
+    core::PlanNodeId probeScanId;
+    core::PlanNodeId buildScanId;
+    auto op = PlanBuilder(planNodeIdGenerator)
+                  .tableScan(asRowType(probeVectors[0]->type()))
+                  .capturePlanNodeId(probeScanId)
+                  .hashJoin(
+                      {"c0"},
+                      {"c0"},
+                      PlanBuilder(planNodeIdGenerator)
+                          .tableScan(asRowType(buildVectors[0]->type()))
+                          .capturePlanNodeId(buildScanId)
+                          .planNode(),
+                      filter,
+                      outputLayout,
+                      joinType)
+                  .planNode();
+    SplitInput splitInput = {
+        {probeScanId,
+         {exec::Split(makeHiveConnectorSplit(probeFile->getPath()))}},
+        {buildScanId,
+         {exec::Split(makeHiveConnectorSplit(buildFile->getPath()))}},
+    };
+    HashJoinBuilder(*pool_, duckDbQueryRunner_, driverExecutor_.get())
+        .planNode(std::move(op))
+        .inputSplits(splitInput)
+        .checkSpillStats(false)
+        .referenceQuery(referenceQuery)
+        .run();
+  }
+
+  static uint64_t getInputPositions(
+      const std::shared_ptr<Task>& task,
+      int operatorIndex) {
+    auto stats = task->taskStats().pipelineStats.front().operatorStats;
+    return stats[operatorIndex].inputPositions;
+  }
+
+  static uint64_t getOutputPositions(
+      const std::shared_ptr<Task>& task,
+      const std::string& operatorType) {
+    uint64_t count = 0;
+    for (const auto& pipelineStat : task->taskStats().pipelineStats) {
+      for (const auto& operatorStat : pipelineStat.operatorStats) {
+        if (operatorStat.operatorType == operatorType) {
+          count += operatorStat.outputPositions;
+        }
+      }
+    }
+    return count;
+  }
+
+  static RuntimeMetric getFiltersProduced(
+      const std::shared_ptr<Task>& task,
+      int operatorIndex) {
+    return getOperatorRuntimeStats(
+        task, operatorIndex, "dynamicFiltersProduced");
+  }
+
+  static RuntimeMetric getFiltersAccepted(
+      const std::shared_ptr<Task>& task,
+      int operatorIndex) {
+    return getOperatorRuntimeStats(
+        task, operatorIndex, "dynamicFiltersAccepted");
+  }
+
+  static RuntimeMetric getReplacedWithFilterRows(
+      const std::shared_ptr<Task>& task,
+      int operatorIndex) {
+    return getOperatorRuntimeStats(
+        task, operatorIndex, "replacedWithDynamicFilterRows");
+  }
+
+  static RuntimeMetric getOperatorRuntimeStats(
+      const std::shared_ptr<Task>& task,
+      int32_t operatorIndex,
+      const std::string& statsName) {
+    auto stats = task->taskStats().pipelineStats.front().operatorStats;
+    return stats[operatorIndex].runtimeStats[statsName];
+  }
+
+  // Get the operator index from the plan node id. Only used in the probe-side
+  // pipeline. The plan node id starts from "1" and the operator index starts
+  // from 0. Plan node IDs map to operators 1:1.
+  static int32_t getOperatorIndex(const core::PlanNodeId& planNodeId) {
+    return folly::to<int32_t>(planNodeId) - 1;
+  }
+
+  static core::JoinType flipJoinType(core::JoinType joinType) {
+    switch (joinType) {
+      case core::JoinType::kInner:
+        return joinType;
+      case core::JoinType::kLeft:
+        return core::JoinType::kRight;
+      case core::JoinType::kRight:
+        return core::JoinType::kLeft;
+      case core::JoinType::kFull:
+        return joinType;
+      case core::JoinType::kLeftSemiFilter:
+        return core::JoinType::kRightSemiFilter;
+      case core::JoinType::kLeftSemiProject:
+        return core::JoinType::kRightSemiProject;
+      case core::JoinType::kRightSemiFilter:
+        return core::JoinType::kLeftSemiFilter;
+      case core::JoinType::kRightSemiProject:
+        return core::JoinType::kLeftSemiProject;
+      default:
+        VELOX_FAIL("Cannot flip join type: {}", core::joinTypeName(joinType));
+    }
+  }
+
+  static core::PlanNodePtr flipJoinSides(const core::PlanNodePtr& plan) {
+    auto joinNode = std::dynamic_pointer_cast<const core::HashJoinNode>(plan);
+    VELOX_CHECK_NOT_NULL(joinNode);
+    return std::make_shared<core::HashJoinNode>(
+        joinNode->id(),
+        flipJoinType(joinNode->joinType()),
+        joinNode->isNullAware(),
+        joinNode->rightKeys(),
+        joinNode->leftKeys(),
+        joinNode->filter(),
+        joinNode->sources()[1],
+        joinNode->sources()[0],
+        joinNode->outputType());
+  }
+
+  const int32_t numDrivers_;
+
+  // The default left and right table types used for test.
+  RowTypePtr probeType_;
+  RowTypePtr buildType_;
+  VectorFuzzer::Options fuzzerOpts_;
+
+  memory::MemoryReclaimer::Stats reclaimerStats_;
+  friend class HashJoinBuilder;
+};
+
+class MultiThreadedHashJoinTestBase
+    : public HashJoinTestBase,
+      public testing::WithParamInterface<TestParam> {
+ public:
+  MultiThreadedHashJoinTestBase() : HashJoinTestBase(GetParam()) {}
+
+  static std::vector<TestParam> getTestParams() {
+    return std::vector<TestParam>({TestParam{1}, TestParam{3}});
   }
 };
 } // namespace facebook::velox::exec::test

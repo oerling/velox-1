@@ -1016,27 +1016,32 @@ void CompileState::planPipelines() {
 void CompileState::markWraps(int32_t pipelineIdx) {
   auto& pipeline = selectedPipelines_[pipelineIdx];
   auto hasContinue = false;
-  for (auto i kernelSeq = pipeline.steps.size() - 1; i >= 0; --i) {
-    auto& boxes = pipeline[stepIdx];
+  for (int32_t kernelSeq = pipeline.steps.size() - 1; kernelSeq >= 0; --kernelSeq) {
+    auto& boxes = pipeline.steps[kernelSeq];
     if (boxes.size() > 1) {
+      // If many parallel sequences: Will introduce no wraps but may
+      // have continues. See if any is continuable.
       for (auto j = 0; j < boxes.size(); ++j) {
-        for (auto& step : boxes[j]) {
-          if (step->continueLabel.has_value()) {
+        for (auto& step : boxes[j].steps) {
+          if (step->continueLabel().has_value()) {
             hasContinue = true;
             break;
           }
         }
       }
     } else {
+      int32_t wrapKernel = -1;
+      int32_t wrapStep = -1;
+      bool hasWrap = false;
       auto& box = boxes[0];
       for (int32_t stepIdx = box.steps.size() - 1; stepIdx >= 0; --stepIdx) {
-        auto* step = box.steps[i];
+        auto* step = box.steps[stepIdx];
         if (step->isWrap() != AbstractOperand::kNoWrap) {
           hasWrap = true;
           wrapKernel = kernelSeq;
           wrapStep = stepIdx;
         }
-        if (step->continueLabel.has_value()) {
+        if (step->continueLabel().has_value()) {
           if (hasWrap) {
             pipeline.steps[kernelSeq][0]
                 .steps[wrapStep]
