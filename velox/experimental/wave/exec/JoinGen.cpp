@@ -111,13 +111,12 @@ void makeBuildOps(CompileState& state, const JoinBuild& build) {
   state.addInclude("velox/experimental/wave/common/HashTable.cuh");
   auto& out = state.inlines();
   out << makeJoinRow(
-		     state, build.keys, build.dependent, build.joinType, build.id, true);
+      state, build.keys, build.dependent, build.joinType, build.id, true);
   auto id = build.id;
   out << "struct HashOps" << id << " {\n"
-      << "  BuildOps" << id
-      << "() = default;\n";
+      << "  BuildOps" << id << "() = default;\n";
 
-      makeRowHash(state, build.keys, false, id);
+  makeRowHash(state, build.keys, false, id);
   makeRowRowCompare(state, build.keys, id);
 
   out << "};\n\n";
@@ -135,7 +134,6 @@ void makeBuildOps(CompileState& state, const JoinBuild& build) {
 }
 
 std::string JoinBuild::toString() const {
-
   std::stringstream out;
   out << "JoinBuild {";
   for (auto& key : keys) {
@@ -160,12 +158,12 @@ void JoinBuild::generateMain(CompileState& state, int32_t syncLabel) {
          "    auto* table  = reinterpret_cast>GpuHashTable*>(shared->states["
       << state.stateOrdinal(*this->state)
       << "]);\n"
-    "    if (!table->addRow(";
+         "    if (!table->addRow(";
   makeInitJoinRow(state, keys, dependent, id, false);
   out << ")) {\n"
          "     laneStatus = ErrorCode::kInsufficientMemory;\n"
          "      shared->hasContinue = true;\n"
-    "    }\n";
+         "    }\n";
 }
 
 std::string JoinBuild::preContinueCode(CompileState& state) {
@@ -173,13 +171,32 @@ std::string JoinBuild::preContinueCode(CompileState& state) {
          "      ? ErrorCode::kOk : ErrorCode::kInactive;\n";
 }
 
+char* probeBoilerPlate =
+    "  table$I$ = reinterpret_cast<GpuHashTable*>(shared->states[$SI$];\n"
+    "  hit$I$ = table$I$->joinProbe(hash$I$, ";
+
 void JoinProbe::generateMain(CompileState& state, int32_t syncLabel) {
-  makeJoinRow(
-	      state, keys, dependent, joinType, id, true);
-  makeJoinProbe(state, *this, syncLabel);
+  makeJoinRow(state, keys, dependent, joinType, id, true);
+
+  auto& out = state.generated();
+  state.declareNamed(fmt::format("bool nullProbe{};", id));
+  state.declareNamed(fmt::format("uint64_t hash{};", id));
+
+  auto stateOrd = state.stateOrdinal(this->state);
+  state.declareNamed(fmt::format("  GpuHashTable* table{};", id));
+  state.declareNamed(fmt::format("  HashRow{}* hit{};", id, id));
+  out << fmt::format("  nullProbe{} = false;\n", id);
+  makeHash(state, keys, false, fmt::format("  nullProbe{} = true;", id), id);
+  auto temp = replaceAll(probeBoilerPlate, "$I$", fmt::format("{}", id));
+  out << replaceAll(temp, "$SI$", fmt::format(?\"{}", stateOrd));
+  makeCompareLambda(keys, false, id);
+  out << ");\n";
+  out << fmt::format("  continue{}: ;\n", expand->continueLabelN);
 }
 
-std::string JoinProbe::preContinueCode(CompileState& state) {
+void JoinExpand::generateMain(CompileState& state, int32_t syncLabel) {}
+
+std::string JoinExpand::preContinueCode(CompileState& state) {
   return "    laneStatus = laneStatus == ErrorCode::kInsufficientMemory\n"
          "      ? ErrorCode::kOk : ErrorCode::kInactive;\n";
 }
@@ -189,19 +206,6 @@ std::unique_ptr<AbstractInstruction> JoinExpand::addInstruction(
   RowTypePtr type;
   auto result = std::make_unique<AbstractJoinExpand>(
       state.nextSerial(), keys, empty, this->state, type);
-  int32_t offset =
-      sizeof(int32_t) + bits::roundUp(keys.size() + updates.size(), 32) / 8;
-  for (auto& key : keys) {
-    int32_t align = cudaTypeAlign(*key->type);
-    int32_t width = cudaTypeSize(*key->type);
-    offset = bits::roundUp(offset, align) + width;
-  }
-  for (auto& update : updates) {
-    auto [size, align] = update->generator->accumulatorSizeAndAlign(*update);
-    offset = bits::roundUp(offset, align) + size;
-  }
-  agg->roundedRowSize = bits::roundUp(offset, 8);
-  abstractAggregation = agg.get();
   agg->continueLabel = continueLabelN;
   return agg;
 }
@@ -234,4 +238,4 @@ std::string JoinExpand::toString() const {
 
   return out.str();
 }
-}
+} // namespace facebook::velox::wave

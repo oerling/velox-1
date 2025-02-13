@@ -447,6 +447,8 @@ class GpuHashTable : public GpuHashTableBase {
 	      auto previous = asDeviceAtomic<RowType*>(candidate->nextPtr()).load(cuda::memory_order_relaxed);
 		if (atomicCAS((unsigned long long*)&candidate->next, (unsigned long long)row, (unsigned long long)previous)) {
 		  *row->nextPtr() = previous;
+		  // Set duplicates flag, no need to set if already set.
+		  atomicCAS(&hasDuplicates, 1, 0);
 		  goto next;
 		}
 	    }

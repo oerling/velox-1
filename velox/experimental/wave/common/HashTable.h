@@ -275,6 +275,10 @@ struct GpuHashTableBase {
   // index into 'allocators'.
   uint32_t partitionMask{0};
 
+  /// true if this is a join table where duplicates exist (at least one
+  /// next link is non-nullptr). int32_t to allow atomic ops.
+  int32_t hasDuplicates{0};
+  
   /// A RowAllocator for each partition.
   RowAllocator* allocators;
 

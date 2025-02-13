@@ -43,25 +43,32 @@ void makeHash(
     CompileState& state,
     const std::vector<AbstractOperand*>& keys,
     bool nullableKeys,
-    std::string nullCode) {
+    std::string nullCode,
+	      int32_t id) {
   auto& out = state.generated();
-  out << "  hash = 1;\n";
+  std::string idStr;
+  if (id !=-1) {
+    idStr = fmt::format("{}", id);
+  }
+  out << "  hash" << idStr << " = 1;\n";
   for (auto i = 0; i < keys.size(); ++i) {
     auto* op = keys[i];
     state.ensureOperand(op);
+    std::string stmt;
     if (!nullableKeys && !op->notNull) {
-      out << "  if (" << state.isNull(op) << ") { goto nullKey; }\n";
+      stmt = "  if (" << state.isNull(op) << ") { goto nullKey; }\n";
     } else {
       if (!keys[i]->notNull) {
-        out << fmt::format(
-            "  if ({}) {{ hash = hashMix(hash, 13); }} else {{ hash = hashMix(hash, hashValue({})); }}\n",
+        stmt = fmt::format(
+            "  if ({}) {{ $h$ = hashMix($h$, 13); }} else {{ $h$ = hashMix($h$, hashValue({})); }}\n",
             state.isNull(op),
             state.operandValue(op));
       } else {
-        out << fmt::format(
-            "  hash = hashMix(hash, hashValue({}));\n", state.operandValue(op));
+        stmt = fmt::format(
+            "  $h$ = hashMix($h$, hashValue({}));\n", state.operandValue(op));
       }
     }
+    out << replaceAll(stmt, "$h$", fmt::format("hash{}", idStr));
   }
   if (!nullableKeys) {
     out << " goto hashDone;\n"
