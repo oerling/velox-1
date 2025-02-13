@@ -51,7 +51,7 @@ class HashJoinTest : public HashJoinTestBase {
   explicit HashJoinTest(const TestParam& param) : HashJoinTestBase(param) {}
 };
 
-  class MultiThreadedHashJoinTest
+class MultiThreadedHashJoinTest
     : public HashJoinTest,
       public testing::WithParamInterface<TestParam> {
  public:
@@ -60,9 +60,7 @@ class HashJoinTest : public HashJoinTestBase {
   static std::vector<TestParam> getTestParams() {
     return std::vector<TestParam>({TestParam{1}, TestParam{3}});
   }
-
-  };
-
+};
 
 TEST_P(MultiThreadedHashJoinTest, bigintArray) {
   HashJoinBuilder(*pool_, duckDbQueryRunner_, driverExecutor_.get())
