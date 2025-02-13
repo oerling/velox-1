@@ -992,14 +992,4 @@ class HashJoinTestBase : public HiveConnectorTestBase {
   friend class HashJoinBuilder;
 };
 
-class MultiThreadedHashJoinTestBase
-    : public HashJoinTestBase,
-      public testing::WithParamInterface<TestParam> {
- public:
-  MultiThreadedHashJoinTestBase() : HashJoinTestBase(GetParam()) {}
-
-  static std::vector<TestParam> getTestParams() {
-    return std::vector<TestParam>({TestParam{1}, TestParam{3}});
-  }
-};
 } // namespace facebook::velox::exec::test
