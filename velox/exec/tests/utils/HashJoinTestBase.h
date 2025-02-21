@@ -41,7 +41,7 @@ using namespace facebook::velox::common::testutil;
 using facebook::velox::test::BatchMaker;
 
 struct TestParam {
-  int numDrivers;
+  int64_t numDrivers{1};
 
   explicit TestParam(int _numDrivers) : numDrivers(_numDrivers) {}
 };

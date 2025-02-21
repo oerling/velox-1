@@ -56,8 +56,10 @@ ExpressionFuzzerVerifier::ExpressionFuzzerVerifier(
     const FunctionSignatureMap& signatureMap,
     size_t initialSeed,
     const ExpressionFuzzerVerifier::Options& options,
-    const std::unordered_map<std::string, std::shared_ptr<ArgGenerator>>&
-        argGenerators)
+    const std::unordered_map<std::string, std::shared_ptr<ArgTypesGenerator>>&
+        argTypesGenerators,
+    const std::unordered_map<std::string, std::shared_ptr<ArgValuesGenerator>>&
+        argValuesGenerators)
     : options_(options),
       queryCtx_(core::QueryCtx::create(
           nullptr,
@@ -77,7 +79,8 @@ ExpressionFuzzerVerifier::ExpressionFuzzerVerifier(
           initialSeed,
           vectorFuzzer_,
           options_.expressionFuzzerOptions,
-          argGenerators),
+          argTypesGenerators,
+          argValuesGenerators),
       referenceQueryRunner_{
           options_.expressionFuzzerOptions.referenceQueryRunner} {
   filesystems::registerLocalFileSystem();
@@ -101,7 +104,8 @@ ExpressionFuzzerVerifier::ExpressionFuzzerVerifier(
 std::pair<std::vector<InputTestCase>, InputRowMetadata>
 ExpressionFuzzerVerifier::generateInput(
     const RowTypePtr& rowType,
-    VectorFuzzer& vectorFuzzer) {
+    VectorFuzzer& vectorFuzzer,
+    const std::vector<AbstractInputGeneratorPtr>& inputGenerators) {
   // Randomly pick to generate one or two input rows.
   std::vector<InputTestCase> inputs;
   int numInputs = vectorFuzzer.coinToss(0.5) ? 1 : 2;
@@ -123,6 +127,8 @@ ExpressionFuzzerVerifier::generateInput(
     std::vector<VectorPtr> children;
     children.reserve(rowType->size() + 1);
     for (auto i = 0; i < rowType->size(); ++i) {
+      const auto& inputGenerator =
+          inputGenerators.size() > i ? inputGenerators[i] : nullptr;
       if (std::binary_search(
               metadata.columnsToWrapInCommonDictionary.begin(),
               metadata.columnsToWrapInCommonDictionary.end(),
@@ -130,12 +136,15 @@ ExpressionFuzzerVerifier::generateInput(
         // These will be wrapped in common dictionary later.
         if (vectorFuzzer.getOptions().allowConstantVector &&
             vectorFuzzer.coinToss(0.2)) {
-          children.push_back(vectorFuzzer.fuzzConstant(rowType->childAt(i)));
+          children.push_back(
+              vectorFuzzer.fuzzConstant(rowType->childAt(i), inputGenerator));
         } else {
-          children.push_back(vectorFuzzer.fuzzFlat(rowType->childAt(i)));
+          children.push_back(
+              vectorFuzzer.fuzzFlat(rowType->childAt(i), inputGenerator));
         }
       } else {
-        children.push_back(vectorFuzzer.fuzz(rowType->childAt(i)));
+        children.push_back(
+            vectorFuzzer.fuzz(rowType->childAt(i), inputGenerator));
       }
     }
 
@@ -206,31 +215,32 @@ void ExpressionFuzzerVerifier::logStats() {
     return left.second.numProcessedRows > right.second.numProcessedRows;
   });
   int maxEntriesLimit = std::min<size_t>(10, entries.size());
-  LOG(INFO) << "==============================> Top " << maxEntriesLimit
-            << " by number of rows processed";
-  LOG(INFO)
+  LOG(ERROR) << "==============================> Top " << maxEntriesLimit
+             << " by number of rows processed";
+  LOG(ERROR)
       << "Format: functionName numTimesSelected proportionOfTimesSelected "
          "numProcessedRows";
   for (int i = 0; i < maxEntriesLimit; i++) {
-    LOG(INFO) << entries[i].first << " " << entries[i].second.numTimesSelected
-              << " " << std::fixed << std::setprecision(2)
-              << (entries[i].second.numTimesSelected * 100.00) / totalSelections
-              << "% " << entries[i].second.numProcessedRows;
+    LOG(ERROR) << entries[i].first << " " << entries[i].second.numTimesSelected
+               << " " << std::fixed << std::setprecision(2)
+               << (entries[i].second.numTimesSelected * 100.00) /
+            totalSelections
+               << "% " << entries[i].second.numProcessedRows;
   }
 
-  LOG(INFO) << "==============================> Bottom " << maxEntriesLimit
-            << " by number of rows processed";
-  LOG(INFO)
+  LOG(ERROR) << "==============================> Bottom " << maxEntriesLimit
+             << " by number of rows processed";
+  LOG(ERROR)
       << "Format: functionName numTimesSelected proportionOfTimesSelected "
          "numProcessedRows";
   for (int i = 0; i < maxEntriesLimit; i++) {
     int idx = entries.size() - 1 - i;
-    LOG(INFO) << entries[idx].first << " "
-              << entries[idx].second.numTimesSelected << " " << std::fixed
-              << std::setprecision(2)
-              << (entries[idx].second.numTimesSelected * 100.00) /
+    LOG(ERROR) << entries[idx].first << " "
+               << entries[idx].second.numTimesSelected << " " << std::fixed
+               << std::setprecision(2)
+               << (entries[idx].second.numTimesSelected * 100.00) /
             totalSelections
-              << "% " << entries[idx].second.numProcessedRows;
+               << "% " << entries[idx].second.numProcessedRows;
   }
 
   // sort by numTimesSelected
@@ -238,16 +248,16 @@ void ExpressionFuzzerVerifier::logStats() {
     return left.second.numTimesSelected > right.second.numTimesSelected;
   });
 
-  LOG(INFO) << "==============================> All stats sorted by number "
-               "of times the function was chosen";
-  LOG(INFO)
+  LOG(ERROR) << "==============================> All stats sorted by number "
+                "of times the function was chosen";
+  LOG(ERROR)
       << "Format: functionName numTimesSelected proportionOfTimesSelected "
          "numProcessedRows";
   for (auto& elem : entries) {
-    LOG(INFO) << elem.first << " " << elem.second.numTimesSelected << " "
-              << std::fixed << std::setprecision(2)
-              << (elem.second.numTimesSelected * 100.00) / totalSelections
-              << "% " << elem.second.numProcessedRows;
+    LOG(ERROR) << elem.first << " " << elem.second.numTimesSelected << " "
+               << std::fixed << std::setprecision(2)
+               << (elem.second.numTimesSelected * 100.00) / totalSelections
+               << "% " << elem.second.numProcessedRows;
   }
 }
 
@@ -377,7 +387,7 @@ void ExpressionFuzzerVerifier::go() {
     // set.
     int numExpressionTrees = boost::random::uniform_int_distribution<int>(
         1, options_.maxExpressionTreesPerStep)(rng_);
-    auto [expressions, inputType, selectionStats] =
+    auto [expressions, inputType, inputGenerators, selectionStats] =
         expressionFuzzer_.fuzzExpressions(numExpressionTrees);
     // Project a row number column in the output to enable epsilon-comparison
     // for floating-point columns and make investigation of failures easier.
@@ -391,7 +401,7 @@ void ExpressionFuzzerVerifier::go() {
     std::vector<core::TypedExprPtr> plans = std::move(expressions);
 
     auto [inputTestCases, inputRowMetadata] =
-        generateInput(inputType, *vectorFuzzer_);
+        generateInput(inputType, *vectorFuzzer_, inputGenerators);
 
     auto resultVectors = generateResultVectors(plans);
     std::vector<fuzzer::ResultOrError> results;

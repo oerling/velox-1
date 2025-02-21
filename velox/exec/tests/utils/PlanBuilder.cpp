@@ -108,8 +108,9 @@ PlanBuilder& PlanBuilder::tableScan(
 
 PlanBuilder& PlanBuilder::tpchTableScan(
     tpch::Table table,
-    std::vector<std::string>&& columnNames,
-    double scaleFactor) {
+    std::vector<std::string> columnNames,
+    double scaleFactor,
+    std::string_view connectorId) {
   std::unordered_map<std::string, std::shared_ptr<connector::ColumnHandle>>
       assignmentsMap;
   std::vector<TypePtr> outputTypes;
@@ -127,7 +128,7 @@ PlanBuilder& PlanBuilder::tpchTableScan(
   return TableScanBuilder(*this)
       .outputType(rowType)
       .tableHandle(std::make_shared<connector::tpch::TpchTableHandle>(
-          std::string(kTpchDefaultConnectorId), table, scaleFactor))
+          std::string(connectorId), table, scaleFactor))
       .assignments(assignmentsMap)
       .endTableScan();
 }
@@ -270,7 +271,8 @@ core::PlanNodePtr PlanBuilder::TableWriterBuilder::build(core::PlanNodeId id) {
       bucketProperty,
       compressionKind_,
       serdeParameters_,
-      options_);
+      options_,
+      ensureFiles_);
 
   auto insertHandle =
       std::make_shared<core::InsertTableHandle>(connectorId_, hiveHandle);
@@ -508,7 +510,8 @@ PlanBuilder& PlanBuilder::tableWrite(
     const std::shared_ptr<dwio::common::WriterOptions>& options,
     const std::string& outputFileName,
     const common::CompressionKind compressionKind,
-    const RowTypePtr& schema) {
+    const RowTypePtr& schema,
+    const bool ensureFiles) {
   return TableWriterBuilder(*this)
       .outputDirectoryPath(outputDirectoryPath)
       .outputFileName(outputFileName)
@@ -523,6 +526,7 @@ PlanBuilder& PlanBuilder::tableWrite(
       .serdeParameters(serdeParameters)
       .options(options)
       .compressionKind(compressionKind)
+      .ensureFiles(ensureFiles)
       .endTableWriter();
 }
 

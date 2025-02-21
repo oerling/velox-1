@@ -587,6 +587,11 @@ Each query can override the config by setting corresponding query session proper
        filter execution order is totally determined by the filter type. Otherwise, the file
        reader will dynamically adjust the filter execution order based on the past filter
        execution stats.
+   * - hive.reader.timestamp-partition-value-as-local-time
+     - hive.reader.timestamp_partition_value_as_local_time
+     - bool
+     - true
+     - Reads timestamp partition value as local time if true. Otherwise, reads as UTC.
 
 ``ORC File Format Configuration``
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -652,6 +657,12 @@ Each query can override the config by setting corresponding query session proper
      - 9
      - Timestamp unit used when writing timestamps into Parquet through Arrow bridge.
        Valid values are 3 (millisecond), 6 (microsecond), and 9 (nanosecond).
+   * - hive.parquet.writer.datapage-version
+     - hive.parquet.writer.datapage_version
+     - string
+     - V1
+     - Data Page version used when writing into Parquet through Arrow bridge.
+       Valid values are "V1" and "V2".
 
 ``Amazon S3 Configuration``
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^

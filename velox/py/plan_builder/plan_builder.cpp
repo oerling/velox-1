@@ -108,17 +108,18 @@ PYBIND11_MODULE(plan_builder, m) {
       .def(
           "table_write",
           &velox::py::PyPlanBuilder::tableWrite,
-          py::arg("output_schema"),
           py::arg("output_file"),
           py::arg("connector_id") = "hive",
+          py::arg("output_schema") = std::nullopt,
           py::doc(R"(
         Adds a table write node to the plan.
 
         Args:
-          output_schema: A RowType containing the schema to be written to
-                         the file.
           output_file: Name of the file to be written.
           connector_id: ID of the connector to use for this scan.
+          output_schema: An optional RowType containing the schema to be
+                         written to the file. By default write the schema
+                         produced by the operator upstream.
       )"))
       .def(
           "values",
@@ -174,5 +175,30 @@ PYBIND11_MODULE(plan_builder, m) {
           right_plan_node: The plan node defined the subplan to join with.
           output: List of columns to be projected out of the join.
           filter: Optional join filter expression.
+      )"))
+      .def(
+          "tpch_gen",
+          &velox::py::PyPlanBuilder::tpchGen,
+          py::arg("table_name"),
+          py::arg("columns") = std::vector<std::string>{},
+          py::arg("scale_factor") = 1,
+          py::arg("num_parts") = 1,
+          py::arg("connector_id") = "tpch",
+          py::doc(R"(
+        Generates TPC-H data on the fly using dbgen. Note that generating data
+        on the fly is not terribly efficient, so for performance evaluation one
+        should generate data using this node, write it to output storage files,
+        (Parquet, ORC, or similar), then benchmark a query plan that reads
+        those files.
+
+        Args:
+          table_name: The TPC-H table name to generate data for.
+          columns: The columns from `table_name` to generate data for. If
+                   empty (the default), generate data for all columns.
+          scale_factor: TPC-H scale factor to use - controls the amount of
+                        data generated.
+          num_parts: How many splits to generate. This controls the parallelism
+                     and the number of output files to be generated.
+          connector_id: ID of the connector to use for this scan.
       )"));
 }

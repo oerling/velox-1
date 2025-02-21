@@ -44,11 +44,12 @@ add_executable(
   ArrayRemoveTest.cpp
   ArrayShuffleTest.cpp
   ArraySortTest.cpp
+  ArrayTopNTest.cpp
   ArraysOverlapTest.cpp
   ArraySumTest.cpp
   ArrayTrimTest.cpp
   ArrayUnionTest.cpp
-  ArgGeneratorTest.cpp
+  ArgTypesGeneratorTest.cpp
   BinaryFunctionsTest.cpp
   BitwiseTest.cpp
   CardinalityTest.cpp

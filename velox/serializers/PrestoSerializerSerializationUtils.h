@@ -103,8 +103,7 @@ inline void writeInt64(OutputStream* out, int64_t value) {
 
 std::string_view typeToEncodingName(const TypePtr& type);
 
-template <typename RangeType>
-inline int32_t rangesTotalSize(const folly::Range<const RangeType*>& ranges) {
+inline int32_t rangesTotalSize(const folly::Range<const IndexRange*>& ranges) {
   int32_t total = 0;
   for (auto& range : ranges) {
     total += range.size;
@@ -165,11 +164,12 @@ FlushSizes flushStreams(
     std::vector<VectorStream>& streams,
     int32_t numRows,
     const StreamArena& arena,
-    folly::io::Codec& codec,
+    folly::compression::Codec& codec,
     float minCompressionRatio,
     OutputStream* out);
 
-FOLLY_ALWAYS_INLINE bool needCompression(const folly::io::Codec& codec) {
+FOLLY_ALWAYS_INLINE bool needCompression(
+    const folly::compression::Codec& codec) {
   return codec.type() != folly::io::CodecType::NO_COMPRESSION;
 }
 

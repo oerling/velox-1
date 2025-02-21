@@ -15,27 +15,10 @@
  */
 #pragma once
 
-#include "velox/expression/fuzzer/DecimalArgGeneratorBase.h"
+#include <string>
 
-namespace facebook::velox::exec::test {
+namespace facebook::velox::functions::sparksql {
 
-class MultiplyArgGenerator : public fuzzer::DecimalArgGeneratorBase {
- public:
-  MultiplyArgGenerator() {
-    initialize(2);
-  }
+void registerDecimalCeil(const std::string& prefix);
 
- protected:
-  std::optional<std::pair<int, int>>
-  toReturnType(int p1, int s1, int p2, int s2) override {
-    if (s1 + s2 > 38) {
-      return std::nullopt;
-    }
-
-    auto p = std::min(38, p1 + p2);
-    auto s = s1 + s2;
-    return {{p, s}};
-  }
-};
-
-} // namespace facebook::velox::exec::test
+} // namespace facebook::velox::functions::sparksql
