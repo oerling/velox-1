@@ -439,6 +439,7 @@ struct AbstractHashBuild : public AbstractOperator {
 
   AbstractState* state;
   InstructionStatus status;
+  int32_t continueLabel;
 };
 
 struct AbstractHashJoinExpand : public AbstractOperator {

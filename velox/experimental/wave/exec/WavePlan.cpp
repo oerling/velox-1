@@ -413,6 +413,7 @@ bool CompileState::tryPlanOperator(
       step->dependent.push_back(fieldToOperand(*toSubfield(name), &topScope_));
     }
     step->joinType = node->joinType();
+    step->continueLabel_ = ++nextContinueLabel_;
     segments_.back().steps.push_back(step);
   } else if (name == "HashProbe") {
     auto* probe = reinterpret_cast<exec::HashProbe*>(op);

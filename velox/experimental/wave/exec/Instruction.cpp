@@ -416,4 +416,12 @@ void AbstractHashBuild::reserveState(InstructionStatus& state) {
   state.gridState += 8;
 }
 
+  AdvanceResult AbstractHashBuild::canAdvance(
+      WaveStream& stream,
+      LaunchControl* control,
+      OperatorState* state,
+      int32_t instructionIdx) const {
+    VELOX_NYI();
+  }
+
 } // namespace facebook::velox::wave

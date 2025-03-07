@@ -569,6 +569,10 @@ struct JoinBuild : public KernelStep {
 
   std::string preContinueCode(CompileState& state) override;
 
+  std::optional<int32_t> continueLabel() const override {
+    return continueLabel_;
+  }
+  
   std::string toString() const override;
 
   AbstractState* state;
@@ -576,6 +580,7 @@ struct JoinBuild : public KernelStep {
   std::vector<AbstractOperand*> dependent;
   core::JoinType joinType;
   int32_t id{-1};
+  int32_t continueLabel_;
 };
 
 struct JoinExpand;
@@ -596,8 +601,6 @@ struct JoinProbe : public KernelStep {
   }
 
   void generateMain(CompileState& state, int32_t syncLabel) override;
-
-  std::string preContinueCode(CompileState& state) override;
 
   std::string toString() const override;
 

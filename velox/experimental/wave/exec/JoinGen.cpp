@@ -147,6 +147,16 @@ std::string JoinBuild::toString() const {
   return out.str();
 }
 
+void JoinBuild::visitReferences(
+				std::function<void(AbstractOperand*)> visitor) const {
+    for (auto& k : keys) {
+      visitor(k);
+    }
+    for (auto& d : dependent) {
+      visitor(d);
+    }
+}
+
 void JoinBuild::generateMain(CompileState& state, int32_t syncLabel) {
   makeBuildOps(state, *this);
   auto& out = state.generated();
@@ -171,9 +181,29 @@ std::string JoinBuild::preContinueCode(CompileState& state) {
          "      ? ErrorCode::kOk : ErrorCode::kInactive;\n";
 }
 
+std::unique_ptr<AbstractInstruction> JoinBuild::addInstruction(
+    CompileState& state) {
+  auto result = std::make_unique<AbstractHashBuild>(state.nextSerial(), this->state);
+  result->continueLabel = continueLabel_;
+  return result;
+}
+
+  void JoinProbe::visitReferences(
+				  std::function<void(AbstractOperand*)> visitor) const {
+    for (auto& key :keys) {
+      visitor(key);
+    }
+  }
+
+  void JoinProbe::visitResults(
+			       std::function<void(AbstractOperand*)> visitor) const {
+    visitor(hits);
+  }
+
 const char* probeBoilerPlate =
     "  table$I$ = reinterpret_cast<GpuHashTable*>(shared->states[$SI$]);\n"
     "  hit$I$ = table$I$->joinProbe(hash$I$, ";
+
 
 void JoinProbe::generateMain(CompileState& state, int32_t syncLabel) {
   makeJoinRow(state, keys, expand->dependent, joinType, id, true);
@@ -192,6 +222,24 @@ void JoinProbe::generateMain(CompileState& state, int32_t syncLabel) {
   makeCompareLambda(state, keys, false, id);
   out << ");\n";
   out << fmt::format("  continue{}: ;\n", expand->continueLabel_);
+}
+
+
+void JoinExpand::visitReferences(
+				   std::function<void(AbstractOperand*)> visitor) const {
+  visitor(hits);
+  if (filter) {
+    visitor(filter);
+  }
+}
+  
+
+void JoinExpand::visitResults(
+			      std::function<void(AbstractOperand*)> visitor) const {
+  visitor(indices);
+  for (auto& r : dependent) {
+    visitor(r);
+  }
 }
 
 void JoinExpand::generateMain(CompileState& state, int32_t syncLabel) {}
