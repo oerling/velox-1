@@ -15,10 +15,15 @@
  */
 #pragma once
 
+#include "velox/exec/HashBitRange.h"
 #include "velox/exec/HashTable.h"
 #include "velox/exec/JoinBridge.h"
 #include "velox/exec/MemoryReclaimer.h"
 #include "velox/exec/Spill.h"
+
+namespace facebook::velox::wave {
+struct HashTableHolder;
+}
 
 namespace facebook::velox::exec {
 class HashBuildSpiller;
@@ -82,6 +87,8 @@ class HashJoinBridge : public JoinBridge {
     bool hasNullKeys;
     std::shared_ptr<BaseHashTable> table;
 
+    std::shared_ptr<wave::HashTableHolder> waveTable;
+    
     /// Restored spill partition id associated with 'table', null if 'table' is
     /// not built from restoration.
     std::optional<SpillPartitionId> restoredPartitionId;

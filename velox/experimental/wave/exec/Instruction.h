@@ -207,12 +207,13 @@ struct AdvanceResult {
       WaveStream&,
       const std::vector<WaveStream*>& otherStreams,
       AbstractInstruction&)>
-      updateStatus;
+  updateStatus{nullptr};
 
   /// Extra token to mark reason for 'syncDrivers', e.g. the host side
   /// handle to a device hash table to rehash.
   void* reason{nullptr};
 };
+  
 /// Opcodes for abstract instructions that have a host side representation and
 /// status.
 enum class OpCode { kAggregate, kReadAggregate, kHashBuild, kHashJoinExpand };

@@ -17,7 +17,6 @@
 
 #include "velox/type/SimpleFunctionApi.h"
 #include "velox/type/Type.h"
-#include "velox/vector/VectorTypeUtils.h"
 
 namespace facebook::velox {
 
@@ -50,7 +49,17 @@ class TDigestType : public VarbinaryType {
     return fmt::format("TDIGEST({})", parameters_[0].type->toString());
   }
 
-  folly::dynamic serialize() const override;
+  folly::dynamic serialize() const override {
+    folly::dynamic obj = folly::dynamic::object;
+    obj["name"] = "Type";
+    obj["type"] = name();
+    folly::dynamic children = folly::dynamic::array;
+    for (auto& param : parameters_) {
+      children.push_back(param.type->serialize());
+    }
+    obj["cTypes"] = children;
+    return obj;
+  }
 
  private:
   explicit TDigestType(const TypePtr& dataType)
@@ -65,32 +74,16 @@ inline std::shared_ptr<const TDigestType> TDIGEST(const TypePtr& dataType) {
 
 // Type to use for inputs and outputs of simple functions, e.g.
 // arg_type<TDigest> and out_type<TDigest>.
-struct TDigestT {
+template <typename T>
+struct SimpleTDigestT;
+
+template <>
+struct SimpleTDigestT<double> {
   using type = Varbinary;
-  static constexpr const char* typeName = "tdigest";
+  static constexpr const char* typeName = "tdigest(double)";
 };
 
-using TDigest = CustomType<TDigestT>;
-
-class TDigestTypeFactories : public CustomTypeFactories {
- public:
-  TypePtr getType(const std::vector<TypeParameter>& parameters) const override {
-    VELOX_CHECK_EQ(parameters.size(), 1);
-    VELOX_CHECK(parameters[0].kind == TypeParameterKind::kType);
-    return TDIGEST(parameters[0].type);
-  }
-
-  // TDigest should be treated as Varbinary during type castings.
-  exec::CastOperatorPtr getCastOperator() const override {
-    return nullptr;
-  }
-
-  AbstractInputGeneratorPtr getInputGenerator(
-      const InputGeneratorConfig& /*config*/) const override {
-    return nullptr;
-  }
-};
-
-void registerTDigestType();
+template <typename T>
+using SimpleTDigest = CustomType<SimpleTDigestT<T>>;
 
 } // namespace facebook::velox

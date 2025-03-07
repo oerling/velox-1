@@ -332,6 +332,10 @@ struct AggregateOperatorState : public OperatorState {
   WaveBufferPtr temp;
 };
 
+struct HashTableHolder : public AggregateOperatorState  {
+
+};
+
 struct OperatorStateMap {
   std::mutex mutex;
   folly::F14FastMap<int32_t, std::shared_ptr<OperatorState>> states;
