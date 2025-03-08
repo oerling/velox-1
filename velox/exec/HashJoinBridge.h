@@ -88,7 +88,7 @@ class HashJoinBridge : public JoinBridge {
     std::shared_ptr<BaseHashTable> table;
 
     std::shared_ptr<wave::HashTableHolder> waveTable;
-    
+
     /// Restored spill partition id associated with 'table', null if 'table' is
     /// not built from restoration.
     std::optional<SpillPartitionId> restoredPartitionId;

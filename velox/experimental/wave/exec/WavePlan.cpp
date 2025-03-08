@@ -441,7 +441,8 @@ bool CompileState::tryPlanOperator(
     for (auto& projection : probe->tableOutputProjections()) {
       auto& name = expand->tableType->nameOf(projection.inputChannel);
       expand->tableChannels.push_back(projection.inputChannel);
-      auto* op = newOperand(expand->tableType->childAt(projection.inputChannel), name);
+      auto* op =
+          newOperand(expand->tableType->childAt(projection.inputChannel), name);
       expand->dependent.push_back(op);
       auto* subfield = toSubfield(name);
       Value value(subfield);

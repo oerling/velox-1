@@ -572,7 +572,7 @@ struct JoinBuild : public KernelStep {
   std::optional<int32_t> continueLabel() const override {
     return continueLabel_;
   }
-  
+
   std::string toString() const override;
 
   AbstractState* state;
