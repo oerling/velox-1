@@ -649,10 +649,14 @@ struct JoinExpand : public KernelStep {
 
   std::string toString() const override;
 
+  AbstractState* state;
   AbstractOperand* hits;
   AbstractOperand* indices;
+  std::vector<int32_t> tableChannels;
   std::vector<AbstractOperand*> dependent;
-  AbstractOperand* filter;
+  int32_t numKeys;
+  bool nullableKeys;
+  AbstractOperand* filter{nullptr};
   InstructionStatus status;
   int32_t nthWrap{-1};
   WrapInfo wrapInfo_;

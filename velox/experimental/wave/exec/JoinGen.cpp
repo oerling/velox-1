@@ -206,6 +206,9 @@ const char* probeBoilerPlate =
 
 
 void JoinProbe::generateMain(CompileState& state, int32_t syncLabel) {
+  state.addInclude("velox/experimental/wave/common/Hash.h");
+  state.addInclude("velox/experimental/wave/common/HashTable.cuh");
+
   makeJoinRow(state, keys, expand->dependent, joinType, id, true);
 
   auto& out = state.generated();
@@ -242,7 +245,43 @@ void JoinExpand::visitResults(
   }
 }
 
-void JoinExpand::generateMain(CompileState& state, int32_t syncLabel) {}
+  void makeCopyRow(CompileState& state, const JoinExpand& expand) {
+  auto& out = state.generated();
+  out << "[&](HashRow" << expand.id << "* hit, int32_t nth) {\n";
+  for (auto i = 0; i < expand.dependent.size(); ++i) {
+    auto tableOrd = expand.tableChannels[i];
+    std::string field;
+      int32_t nullFlag;
+      auto* op = expand.dependent[i];
+      if (tableOrd < expand.numKeys) {
+	field = fmt::format("key{}", tableOrd);
+	nullFlag = expand.nullableKeys ? tableOrd : -1;
+      } else {
+	field = fmt::format("dep{}", tableOrd - expand.numKeys);
+	nullFlag = expand.nullableKeys ? tableOrd : tableOrd - expand.nullableKeys;
+      }
+      if (nullFlag != -1) {
+	out << fmt::format("   setNull(operands, {}, blockBase, (row->nulls{} & {}) == 0);\n", state.ordinal(*op), nullFlag / 32, (1 << (nullFlag & 31)));
+      }
+      out << fmt::format("  flatOperand(operands, {}, blockBase) = row->{};\n", state.ordinal(*op), field);
+      }
+  out << "}";
+  }
+  
+
+  void JoinExpand::generateMain(CompileState& state, int32_t syncLabel) {
+    state.addInclude("velox/experimental/wave/exec/Join.cuh");
+  auto& out = state.generated();
+  if (filter) {
+    state.generateIsTrue(*filter);
+  }
+  out << fmt::format("  joinResult<hashRow{}, {}, {}, {}, {}>(", id, state.ordinal(*indices),
+		     status.gridState, status.gridStateSize, status.blockState);
+  out <<  state.operandValue(hits) << ", "
+      << (filter ? state.operandValue(filter) : "true") << ", shared->startLabel == " << continueLabel_ << ",  shared, true, ";
+  makeCopyRow(state, *this);
+  out << ");\n";
+}
 
 std::string JoinExpand::preContinueCode(CompileState& state) {
   return "    laneStatus = laneStatus == ErrorCode::kInsufficientMemory\n"
@@ -252,6 +291,7 @@ std::string JoinExpand::preContinueCode(CompileState& state) {
 std::unique_ptr<AbstractInstruction> JoinExpand::addInstruction(
     CompileState& state) {
   auto result = std::make_unique<AbstractHashJoinExpand>(state.nextSerial());
+  result->state = this->state;
   result->continueLabel = continueLabel_;
   return result;
 }

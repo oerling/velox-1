@@ -429,18 +429,26 @@ bool CompileState::tryPlanOperator(
       step->keys.push_back(
           fieldToOperand(*toSubfield(key->name()), &topScope_));
     }
+    step->state = state;
     step->id = atoi(node->id().c_str());
     segments_.back().steps.push_back(step);
     auto expand = makeStep<JoinExpand>();
     step->expand = expand;
+    expand->state = step->state;
     expand->id = step->id;
     expand->tableType = exec::HashProbe::makeTableType(
         node->sources()[1]->outputType().get(), node->rightKeys());
     for (auto& projection : probe->tableOutputProjections()) {
       auto& name = expand->tableType->nameOf(projection.inputChannel);
-      expand->dependent.push_back(
-          fieldToOperand(*toSubfield(name), &topScope_));
+      expand->tableChannels.push_back(projection.inputChannel);
+      auto* op = newOperand(expand->tableType->childAt(projection.inputChannel), name);
+      expand->dependent.push_back(op);
+      auto* subfield = toSubfield(name);
+      Value value(subfield);
+      topScope_.operandMap[value] = op;
     }
+    expand->numKeys = step->keys.size();
+    expand->nullableKeys = false;
     auto* filter = probe->filterExprSet();
     if (filter) {
       expand->filter = exprToOperand(*filter->exprs()[0], &topScope_);
@@ -882,10 +890,9 @@ void CompileState::planSegment(
         placeExpr(candidate, key, true);
       }
       candidate.currentBox->steps.push_back(&probe);
-      auto& expand = segment.steps[1]->as<JoinExpand>();
+      auto& expand = *probe.expand;
       if (expand.filter) {
         placeExpr(candidate, expand.filter, false);
-        ;
       }
       candidate.currentBox->steps.push_back(&expand);
 
