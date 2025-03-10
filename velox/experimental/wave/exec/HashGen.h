@@ -23,6 +23,7 @@ namespace facebook::velox::wave {
 
 void makeKeyMembers(
     const std::vector<AbstractOperand*>& keys,
+    const std::string& prefix,
     std::stringstream& out);
 
 /// Emits code for loading hash lookup operands and computing a hash

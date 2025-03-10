@@ -111,6 +111,10 @@ struct KernelStep {
     return std::nullopt;
   }
 
+  virtual bool autoContinueLabel() const {
+    return true;
+  }
+  
   /// Returns code to execute before jumping to continueLabel() when continuing
   /// from this step.
   virtual std::string preContinueCode(CompileState& state) {
@@ -630,6 +634,10 @@ struct JoinExpand : public KernelStep {
     return continueLabel_;
   }
 
+  bool autoContinueLabel() const override {
+    return false;
+  }
+  
   bool isBarrier() const override {
     return true;
   }

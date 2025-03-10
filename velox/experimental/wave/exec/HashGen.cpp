@@ -20,10 +20,11 @@ namespace facebook::velox::wave {
 
 void makeKeyMembers(
     const std::vector<AbstractOperand*>& keys,
+    const std::string& prefix,
     std::stringstream& out) {
   for (auto i = 0; i < keys.size(); ++i) {
     auto* key = keys[i];
-    out << cudaTypeName(*key->type) << " key" << i << ";\n";
+    out << cudaTypeName(*key->type) << " " << prefix << i << ";\n";
   }
 }
 
@@ -73,7 +74,7 @@ void makeHash(
   if (!nullableKeys) {
     out << " goto hashDone;\n"
         << " nullKey: laneStatus = ErrorCode::kInactive;\n"
-        << nullCode << "  hashDone: ;\n";
+        << nullCode << "\n  hashDone: ;\n";
   }
 }
 

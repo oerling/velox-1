@@ -52,20 +52,21 @@ gridStatus(const WaveShared* shared, const InstructionStatus& status) {
   return gridStatus<T>(shared, status.gridState);
 }
 
-/// Returns a pointer to the first byte of block level status in the extra status area above the BlockStatus array for the current block.
+/// Returns a pointer to the first byte of block level status in the extra
+/// status area above the BlockStatus array for the current block.
 template <typename T>
 inline T* __device__ blockStatus(
     const WaveShared* shared,
     int32_t gridStatusSize,
     int32_t blockStatusOffset,
-    	    int32_t blockStatusSize) {
+    int32_t blockStatusSize = sizeof(T)) {
   return reinterpret_cast<T*>(
       roundUp(
           reinterpret_cast<uintptr_t>(shared->status) +
               shared->numBlocks * sizeof(BlockStatus),
           8) +
       gridStatusSize + (blockStatusOffset * shared->numBlocks) +
-      		     (blockStatusSize * (shared->blockBase / kBlockSize)));
+      (blockStatusSize * (shared->blockBase / kBlockSize)));
 }
 
 inline bool __device__ laneActive(ErrorCode code) {

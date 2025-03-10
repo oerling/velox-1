@@ -450,6 +450,7 @@ bool CompileState::tryPlanOperator(
     }
     expand->numKeys = step->keys.size();
     expand->nullableKeys = false;
+    expand->continueLabel_ = ++nextContinueLabel_;
     auto* filter = probe->filterExprSet();
     if (filter) {
       expand->filter = exprToOperand(*filter->exprs()[0], &topScope_);

@@ -721,7 +721,7 @@ ProgramKey CompileState::makeLevelText(
       if (needActiveCheck) {
         for (auto next = stepIdx_; next < box.steps.size(); ++next) {
           auto label = box.steps[next]->continueLabel();
-          if (label.has_value()) {
+          if (label.has_value() && box.steps[next]->autoContinueLabel()) {
             generated_ << fmt::format(" continue{}:\n", label.value());
           }
           if (box.steps[next]->isBarrier()) {

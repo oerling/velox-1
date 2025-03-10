@@ -13,53 +13,63 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 #pragma once
 
-#include <velox/experimental/wave/exec/WaveCore.cuh"
+#include "velox/experimental/wave/common/HashTable.cuh"
+#include "velox/experimental/wave/exec/WaveCore.cuh"
 
 namespace facebook::velox::wave {
 
 struct JoinShared {
   HashJoinExpandGridStatus* gridStatus;
-  HashJoinExpandBlockStatus* blockstatus;
+  HashJoinExpandBlockStatus* blockStatus;
   int32_t anyNext;
   int32_t temp[kBlockSize / 32];
+};
+
+inline __device__ JoinShared* joinShared(WaveShared* shared) {
+  return reinterpret_cast<JoinShared*>(&shared->data);
 }
 
-Joinshared* inline __device__
-joinShared(Waveshared* shared) {
-  return reinterpret_cast<JoinShared*>(&shared->data);
+template <int32_t gridStatusSize, int32_t blockStatusOffset>
+int64_t __device__ loadJoinNext(WaveShared* shared) {
+  auto* status = blockStatus<HashJoinExpandBlockStatus>(
+      shared, gridStatusSize, blockStatusOffset);
+  return status->next[threadIdx.x];
 }
 
 template <
     typename RowType,
-    typename copyRow,
     int32_t indicesIdx,
-    int32_t gridstateOffset,
-    int32_t gridStateSize,
-    int32_t blockStateOffset>
+    int32_t gridstatusOffset,
+    int32_t gridStatusSize,
+    int32_t blockStatusOffset,
+    typename CopyRow>
 bool __device__ __forceinline__ joinResult(
-    RowType*& hit,
+    int64_t& hitAsInt,
     bool filterResult,
     bool joinContinue,
     WaveShared* shared,
     bool hasDuplicates,
     CopyRow copyRow) {
+  RowType* hit = reinterpret_cast<RowType*>(hitAsInt);
   if (threadIdx.x == 0) {
     auto* j = joinShared(shared);
     if (hasDuplicates) {
-      j->gridstatus =
-          gridstatus<hashJoinExpandGridStatus>(shared, gridstatusOffset);
-      j->blockstatus = blockstatus(shared, gridstatusSize, blockStatusOffset);
+      j->gridStatus =
+          gridStatus<HashJoinExpandGridStatus>(shared, gridstatusOffset);
+      j->blockStatus = blockStatus<HashJoinExpandBlockStatus>(
+          shared, gridStatusSize, blockStatusOffset);
       j->anyNext = 0;
     } else {
       j->gridStatus = nullptr;
-      j->blockstatus = nullptr;
+      j->blockStatus = nullptr;
     }
   }
   if (!joinContinue) {
     auto nth = exclusiveSum<int32_t, kBlockSize>(
-        filterResult, &shared->numRows, joinTemp(shared));
+        filterResult, &shared->numRows, joinShared(shared)->temp);
     if (filterResult) {
       copyRow(hit, nth);
       auto* indices =
@@ -70,20 +80,20 @@ bool __device__ __forceinline__ joinResult(
       RowType* next = nullptr;
       if (hit) {
         next = *hit->nextPtr();
-        joinShared(shared)->next[threadIdx.x] = next;
+        joinShared(shared)->blockStatus->next[threadIdx.x] = next;
         hit = next;
       }
-      uint32_t flags = ballot_sync(0xffffffff, next != nullptr);
+      uint32_t flags = __ballot_sync(0xffffffff, next != nullptr);
       if ((threadIdx.x & 31) == 0) {
         if (flags) {
           atomicOr(&joinShared(shared)->anyNext, flags);
         }
         // the grid-wide flag is set by one thread per warp if not already set.
         if (!asDeviceAtomic<int32_t>(
-                 &joinShared(shared)->gridState->hasContinue)
-                 .load(cuda::memory_order_relaxed)) {
+                 &joinShared(shared)->gridStatus->anyContinuable)
+                 ->load(cuda::memory_order_relaxed)) {
           // The write goes to L2 as write through without any memory order.
-          joinShared(shared)->gridState->hasContinue = true;
+          joinShared(shared)->gridStatus->anyContinuable = true;
         }
       }
       __syncthreads();
@@ -124,8 +134,8 @@ bool __device__ __forceinline__ joinResult(
   }
   __syncthreads();
   if (threadIdx.x == 0 && joinShared(shared)->anyNext &&
-      !joinShared(shared)->gridStatus->hasContinuable) {
-    joinShared(shared)->gridStatus->hasContinue = 1;
+      !joinShared(shared)->gridStatus->anyContinuable) {
+    joinShared(shared)->gridStatus->anyContinuable = 1;
   }
   return shared->numRows < kBlockSize - 32 && joinShared(shared)->anyNext;
 }

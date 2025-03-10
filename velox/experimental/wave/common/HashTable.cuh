@@ -204,7 +204,7 @@ class GpuHashTable : public GpuHashTableBase {
   }
 
   template <typename RowType, typename Ops, typename Init>
-  bool addJoinRow(Ops ops, Init init) {
+  bool __device__ addJoinRow(Ops ops, Init init) {
     auto* row = allocators[0].allocate<RowType>();
     if (!row) {
       return false;
