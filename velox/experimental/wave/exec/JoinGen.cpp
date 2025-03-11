@@ -287,8 +287,9 @@ void JoinExpand::generateMain(CompileState& state, int32_t syncLabel) {
     state.generateIsTrue(*filter);
   }
   out << fmt::format(" sync{}: ;\n", syncLabel);
+
   out << fmt::format(
-      "  joinResult<HashRow{}, {}, {}, {}, {}>(",
+      "  if (joinResult<HashRow{}, {}, {}, {}, {}>(",
       id,
       state.ordinal(*indices),
       status.gridState,
@@ -296,7 +297,12 @@ void JoinExpand::generateMain(CompileState& state, int32_t syncLabel) {
       status.blockState);
   out << state.operandValue(hits) << ", "
       << (filter ? state.operandValue(filter) : "true")
-      << ", shared->startLabel == " << continueLabel_ << ",  shared, true, ";
+      << ", shared->startLabel == " << continueLabel_ << ", laneStatus,  shared, true)) {\n"
+    out << "  if (threadIdx.x == 0) { shared->startLabel = " << continueLabel << ";};  goto continue" << continueLable << ";}\n";
+  out << "  __syncthreads();\n";
+  out << laneStatus = threadIdx.x < shared->numRows ? ErrorCode::kOk : ErrorCode::kInactive;\n";
+  generateWrap(wrapInfo, nthWrap);
+  out << "  joinRow(" << operandValue(hits) << ", laneStatus, shared, ";
   makeCopyRow(state, *this);
   out << ");\n";
 }

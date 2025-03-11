@@ -941,8 +941,10 @@ class CompileState {
 
   // Generates an array of operands to wrap. Returns the number of distinct
   // wraps. 'id' is a sequence number from nextWrapId().
-  int32_t wrapLiteral(int32_t id);
+  int32_t wrapLiteral(const WrapInfo& info, int32_t id);
 
+  void generateWrap(WrapInfo& wrap, int32_t nthWrap);
+  
   void setInsideNullPropagating(bool flag) {
     insideNullPropagating_ = flag;
   }

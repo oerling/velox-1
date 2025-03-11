@@ -153,6 +153,9 @@ struct AbstractOperand {
   /// If 'containerRow' is set, this is the field on the row.
   std::string containerField;
 
+  /// If true, has an element per thread block, not per thread.
+  bool ElementPerTB{false};
+  
   std::string toString() const;
 };
 

@@ -959,6 +959,25 @@ void PipelineCandidate::markParams(
     auto step = box.steps[stepIdx];
     step->visitReferences(referenceVisitor);
     step->visitResults(resultVisitor);
+    if (auto* wrap = step->wrapInfo()) {
+      // There can be an operand that is wrapped here butr not otherwise refd in this kernel box.
+      auto handleWrapOnly = [&](AbstractOpernand* op) {
+	auto flags = pipeline.flags(*op);
+	if (flags.definedIn.kernelSeq < kernelSeq) {
+	  levelParams[kernelSeq].input.add(op->id);
+	}
+      };
+
+      handleWrapOnly(info->firstWrap);
+      for (auto& rewrap : info->rewrapped) {
+	handleWrapOnly(rewrap);
+      }
+      // Mark the extra storage for wrap rewind state as output params.
+      for (auto i = 0; i < wrap->wrapIndices.size(); ++i) {
+	levelParams[kernelSeq].output.add(wrap->wrapIndices[i]->id);
+	levelParams[kernelSeq].output.add(wrap->wrapbackup[i]->id);
+      }
+    }
     if (step->kind() == StepKind::kAggregateProbe) {
       auto probe = step->as<AggregateProbe>();
       for (auto j = 0; j < probe.inlinedUpdates.size(); ++j) {
@@ -1019,12 +1038,24 @@ void CompileState::planPipelines() {
     if (pipelineIdx_ == selectedPipelines_.size() - 1) {
       markHostOutput();
     }
+    markWraps(pipelineIdx);
     selectedPipelines_[pipelineIdx_].makeOperandSets(pipelineIdx_);
   }
 }
 
+  // True if 'wrapped' has an element that is wrapped at 'wrappedAt'.
+  bool containsWrappedAt(PipelineCandidate& pipeline, const std::vector<AbstractOperand*>& wrapped, int32_t wrappedAt) {
+    for (auto& op : wrapped) {
+      if (pipeline.flags(*op).wrappedAt == wrappedAt) {
+	return true;
+      }
+    }
+    return false;
+  }
+  
 void CompileState::markWraps(int32_t pipelineIdx) {
   auto& pipeline = selectedPipelines_[pipelineIdx];
+  // Mark wraps that need to be rewindable. A continuable wrap or a wrap with a continuable instruction in front needs to be rewindable.
   auto hasContinue = false;
   for (int32_t kernelSeq = pipeline.steps.size() - 1; kernelSeq >= 0;
        --kernelSeq) {
@@ -1061,6 +1092,47 @@ void CompileState::markWraps(int32_t pipelineIdx) {
             hasWrap = false;
           }
         }
+      }
+    }
+  }
+
+  // Fill in WrapInfos.
+  for (int32_t kernelSeq = 0; kernelSeq < pipeline.steps.size();
+       ++kernelSeq) {
+    auto& boxes = pipeline.steps[kernelSeq];
+    if (boxes.size() > 1) {
+      // No wraps in a multibox piece.
+      continue;
+    }
+    auto& box = boxes[0];
+    for (auto stepIdx = 0; stepIdx < box.steps.size(); ++stepIdx) {
+      auto* step = box.steps[stepIdx];
+      if (auto* wrap = step->wrapInfo()) {
+	for (auto id = 0; id < pipeline.operandFlags.size(); ++id) {
+	  auto& flags = pipeline.operandFlags[id];
+	  if (flags.definedIn.empty()) {
+	    continue;
+	  }
+	  if (flags.wrappedAt == step->nthWrap()) {
+	    if (wrap->firstWrap == nullptr) {
+	      wrap->wrappedHere = operandAt(id);
+	    }
+	    continue;
+	  }
+	  CodePosition wrapPosition(kernelSeq, 0, stepIdx);
+	  if (!flags.lastUse.empty() && !flags.definedIn.empty() &&
+	      wrapPosition.isBefore(flags.lastUse) && flags.definedIn.isBefore(wrapPosition)) {
+	    auto wrappedAt = flags.wrappedAt;
+	    if (!containsWrappedAt(pipeline, info->rewrapped, wrappedAt)) {
+	      info.rewrapped.push_back(operandAt(id));
+	      if (info->needRewind) {
+		info->wrapBackup.push_back(newOperand(BIGINT(), fmt::format("wback_{}_{}", nthWrap, i)));
+		info->wrapbackup.back()->elementPerTB = true;
+		info->newIndices.push_back(newOperand(INTEGER(), fmt::format("wback_{}_{}", nthWrap, i)));
+	      }
+	    }
+	  }
+	}
       }
     }
   }

@@ -409,6 +409,128 @@ __device__ void __forceinline__ wrapKernel(
   __syncthreads();
 }
 
+__device__ void __forceinline__ wrapKernel(
+    const OperandIndex* wraps,
+    int32_t numWraps,
+    OperandIndex indicesIdx,
+    Operand** operands,
+    Operand** newWraps,
+    Operand** backup,
+int32_t blockBase,
+    WaveShared* shared) {
+  Operand* op = operands[indicesIdx];
+  auto* filterIndices = reinterpret_cast<int32_t*>(op->base);
+  if (filterIndices[blockBase + shared->numRows - 1] ==
+      shared->numRows + blockBase - 1) {
+    // There is no cardinality change.
+    if (threadIdx.x == 0) {
+      auto* op = operands[wraps[0]];
+      op->indices[blockBase / kBlockSize] = nullptr;
+    }
+    __syncthreads();
+    return;
+  }
+
+  struct WrapState {
+    int32_t* indices;
+  };
+
+  auto* state = reinterpret_cast<WrapState*>(&shared->data);
+  bool rowActive = threadIdx.x < shared->numRows;
+  int32_t totalWrap = numWraps + shared->numExtraWraps;
+  for (auto column = 0; column < totalWrap; ++column) {
+    if (threadIdx.x == 0) {
+      auto opIndex = column < numWraps ? wraps[column]
+                                       : shared->extraWraps + column - numWraps;
+      auto* op = operands[opIndex];
+      int32_t** opIndices = &op->indices[blockBase / kBlockSize];
+      // If there is no indirection or if this is column 0 whose indirection is
+      // inited here, use the filter rows.
+      if (!*opIndices || column == 0) {
+        *opIndices = filterIndices + blockBase;
+        state->indices = nullptr;
+      } else {
+        state->indices = *opIndices;
+      }
+    }
+    __syncthreads();
+    // Every thread sees the decision on thred 0 above.
+    if (!state->indices) {
+      continue;
+    }
+    int32_t newIndex;
+    if (rowActive) {
+      newIndex =
+          state->indices[filterIndices[blockBase + threadIdx.x] - blockBase];
+    }
+    // All threads hit this.
+    __syncthreads();
+    if (rowActive) {
+      state->indices[threadIdx.x] = newIndex;
+    }
+  }
+  __syncthreads();
+}
+
+__device__ void __forceinline__ wrapKernel(
+					   OperandIndex firstWrap,
+					   const OperandIndex* wraps,
+    const OperandIndex* newIndices,
+    const OperandIndex* backups,
+    int32_t numWraps,
+    OperandIndex indicesIdx,
+    WaveShared* shared) {
+  auto* operands = shared->operands;
+  Operand* op = operands[indicesIdx];
+  auto* filterIndices = reinterpret_cast<int32_t*>(op->base);
+
+  struct WrapState {
+    int32_t* indices;
+    int32_t* newIndices;
+  };
+
+  auto* state = reinterpret_cast<WrapState*>(&shared->data);
+  bool rowActive = threadIdx.x < shared->numRows;
+
+  if (first != kEmpty) {
+    if (threadIdx.x == 0) {
+      operands[first]->indices = filterIndices;
+    }
+  }
+  
+  for (auto column = 0; column < numWraps; ++column) {
+    if (threadIdx.x == 0) {
+      auto nthBlock = shared->blockBase / kBlockSize;
+      auto opIndex = wraps[column];
+      auto* op = operands[opIndex];
+      int32_t** opIndices = &op->indices[nthBlock];
+      // Record previous indirection
+      auto backup = reinterpret_cast<int32_t**>(operands[backup[column]]->base);
+      backup[nthBlock] = *opIndices; 
+      if (!*opIndices) {
+        *opIndices = filterIndices + blockBase;
+        state->indices = nullptr;
+      } else {
+	state->indices = *opIndices;
+        state->newIndices = reinterpret_cast<int32_t*>(operands[newIndices[column]]->base);
+      }
+    }
+    __syncthreads();
+    // Every thread sees the decision on thred 0 above.
+    if (!state->indices) {
+      continue;
+    }
+    int32_t newIndex;
+    if (rowActive) {
+      newIndex =
+          state->indices[filterIndices[blockBase + threadIdx.x] - blockBase];
+      state->newIndices[threadIdx.x] = newIndex;
+    }
+  }
+  __syncthreads();
+}
+
+  
 template <typename T>
 __device__ T value(Operand* operands, OperandIndex opIdx) {
   // Obsolete signature. call sites must be changed.

@@ -44,16 +44,17 @@ template <
     int32_t indicesIdx,
     int32_t gridstatusOffset,
     int32_t gridStatusSize,
-    int32_t blockStatusOffset,
-    typename CopyRow>
+    int32_t blockStatusOffset>
 bool __device__ __forceinline__ joinResult(
     int64_t& hitAsInt,
     bool filterResult,
     bool joinContinue,
+    ErrorCode laneStatus,
     WaveShared* shared,
     bool hasDuplicates,
-    CopyRow copyRow) {
+    int64_t* hitsAsInt) {
   RowType* hit = reinterpret_cast<RowType*>(hitAsInt);
+  auto hits = reinterpret_cast<RowType**>(hitsAsInt);
   if (threadIdx.x == 0) {
     auto* j = joinShared(shared);
     if (hasDuplicates) {
@@ -71,7 +72,7 @@ bool __device__ __forceinline__ joinResult(
     auto nth = exclusiveSum<int32_t, kBlockSize>(
         filterResult, &shared->numRows, joinShared(shared)->temp);
     if (filterResult) {
-      copyRow(hit, nth);
+      hits[shared->blockBase + nth] = hit;
       auto* indices =
           reinterpret_cast<int32_t*>(shared->operands[indicesIdx]->base);
       indices[shared->blockBase + nth] = shared->blockBase + threadIdx.x;
@@ -110,7 +111,7 @@ bool __device__ __forceinline__ joinResult(
       auto* indices =
           reinterpret_cast<int32_t*>(shared->operands[indicesIdx]->base);
       indices[shared->blockBase + row] = shared->blockBase + threadIdx.x;
-      copyRow(hit, row);
+      hits[shared->blockBase + row] = hit;
     } else {
       laneFull = true;
     }
@@ -140,4 +141,11 @@ bool __device__ __forceinline__ joinResult(
   return shared->numRows < kBlockSize - 32 && joinShared(shared)->anyNext;
 }
 
+  template <typename RowType, typename CopyRow>
+  void __device__ __forceinline__ joinRow(RowType* hits, laneStatus, CopyRow copy) {
+    if (laneStatus == ErrorCode::kOk) {
+      copy(hits[shared->blockBase + threadIdx.x]);
+    }
+  }
+  
 } // namespace facebook::velox::wave
