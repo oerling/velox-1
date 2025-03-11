@@ -142,9 +142,10 @@ bool __device__ __forceinline__ joinResult(
 }
 
   template <typename RowType, typename CopyRow>
-  void __device__ __forceinline__ joinRow(RowType* hits, laneStatus, CopyRow copy) {
+  void __device__ __forceinline__ joinRow(int64_t* hitsAsInt, ErrorCode laneStatus, WaveShared* shared, CopyRow copy) {
     if (laneStatus == ErrorCode::kOk) {
-      copy(hits[shared->blockBase + threadIdx.x]);
+    auto* hits = reinterpret_cast<RowType**>(hitsAsInt);
+copy(hits[shared->blockBase + threadIdx.x]);
     }
   }
   

@@ -473,7 +473,7 @@ int32_t blockBase,
 }
 
 __device__ void __forceinline__ wrapKernel(
-					   OperandIndex firstWrap,
+					   OperandIndex first,
 					   const OperandIndex* wraps,
     const OperandIndex* newIndices,
     const OperandIndex* backups,
@@ -494,7 +494,7 @@ __device__ void __forceinline__ wrapKernel(
 
   if (first != kEmpty) {
     if (threadIdx.x == 0) {
-      operands[first]->indices = filterIndices;
+      operands[first]->indices[shared->blockBase / kBlockSize] = filterIndices + shared->blockBase;
     }
   }
   
@@ -505,10 +505,10 @@ __device__ void __forceinline__ wrapKernel(
       auto* op = operands[opIndex];
       int32_t** opIndices = &op->indices[nthBlock];
       // Record previous indirection
-      auto backup = reinterpret_cast<int32_t**>(operands[backup[column]]->base);
+      auto backup = reinterpret_cast<int32_t**>(operands[backups[column]]->base);
       backup[nthBlock] = *opIndices; 
       if (!*opIndices) {
-        *opIndices = filterIndices + blockBase;
+        *opIndices = filterIndices + shared->blockBase;
         state->indices = nullptr;
       } else {
 	state->indices = *opIndices;
@@ -523,7 +523,7 @@ __device__ void __forceinline__ wrapKernel(
     int32_t newIndex;
     if (rowActive) {
       newIndex =
-          state->indices[filterIndices[blockBase + threadIdx.x] - blockBase];
+          state->indices[filterIndices[shared->blockBase + threadIdx.x] - shared->blockBase];
       state->newIndices[threadIdx.x] = newIndex;
     }
   }

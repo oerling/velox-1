@@ -154,7 +154,7 @@ struct AbstractOperand {
   std::string containerField;
 
   /// If true, has an element per thread block, not per thread.
-  bool ElementPerTB{false};
+  bool elementPerTB{false};
   
   std::string toString() const;
 };

@@ -943,7 +943,7 @@ class CompileState {
   // wraps. 'id' is a sequence number from nextWrapId().
   int32_t wrapLiteral(const WrapInfo& info, int32_t id);
 
-  void generateWrap(WrapInfo& wrap, int32_t nthWrap);
+  void generateWrap(WrapInfo& wrap, int32_t nthWrap, const AbstractOperand* indices);
   
   void setInsideNullPropagating(bool flag) {
     insideNullPropagating_ = flag;

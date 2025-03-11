@@ -959,23 +959,23 @@ void PipelineCandidate::markParams(
     auto step = box.steps[stepIdx];
     step->visitReferences(referenceVisitor);
     step->visitResults(resultVisitor);
-    if (auto* wrap = step->wrapInfo()) {
+    if (auto* info = step->wrapInfo()) {
       // There can be an operand that is wrapped here butr not otherwise refd in this kernel box.
-      auto handleWrapOnly = [&](AbstractOpernand* op) {
-	auto flags = pipeline.flags(*op);
+      auto handleWrapOnly = [&](AbstractOperand* op) {
+	auto flags = this->flags(op);
 	if (flags.definedIn.kernelSeq < kernelSeq) {
 	  levelParams[kernelSeq].input.add(op->id);
 	}
       };
 
-      handleWrapOnly(info->firstWrap);
+      handleWrapOnly(info->wrappedHere);
       for (auto& rewrap : info->rewrapped) {
 	handleWrapOnly(rewrap);
       }
       // Mark the extra storage for wrap rewind state as output params.
-      for (auto i = 0; i < wrap->wrapIndices.size(); ++i) {
-	levelParams[kernelSeq].output.add(wrap->wrapIndices[i]->id);
-	levelParams[kernelSeq].output.add(wrap->wrapbackup[i]->id);
+      for (auto i = 0; i < info->wrapIndices.size(); ++i) {
+	levelParams[kernelSeq].output.add(info->wrapIndices[i]->id);
+	levelParams[kernelSeq].output.add(info->wrapBackup[i]->id);
       }
     }
     if (step->kind() == StepKind::kAggregateProbe) {
@@ -1038,7 +1038,7 @@ void CompileState::planPipelines() {
     if (pipelineIdx_ == selectedPipelines_.size() - 1) {
       markHostOutput();
     }
-    markWraps(pipelineIdx);
+    markWraps(pipelineIdx_);
     selectedPipelines_[pipelineIdx_].makeOperandSets(pipelineIdx_);
   }
 }
@@ -1046,13 +1046,13 @@ void CompileState::planPipelines() {
   // True if 'wrapped' has an element that is wrapped at 'wrappedAt'.
   bool containsWrappedAt(PipelineCandidate& pipeline, const std::vector<AbstractOperand*>& wrapped, int32_t wrappedAt) {
     for (auto& op : wrapped) {
-      if (pipeline.flags(*op).wrappedAt == wrappedAt) {
+      if (pipeline.flags(op).wrappedAt == wrappedAt) {
 	return true;
       }
     }
     return false;
   }
-  
+
 void CompileState::markWraps(int32_t pipelineIdx) {
   auto& pipeline = selectedPipelines_[pipelineIdx];
   // Mark wraps that need to be rewindable. A continuable wrap or a wrap with a continuable instruction in front needs to be rewindable.
@@ -1113,9 +1113,9 @@ void CompileState::markWraps(int32_t pipelineIdx) {
 	  if (flags.definedIn.empty()) {
 	    continue;
 	  }
-	  if (flags.wrappedAt == step->nthWrap()) {
-	    if (wrap->firstWrap == nullptr) {
-	      wrap->wrappedHere = operandAt(id);
+	  if (flags.wrappedAt == step->isWrap()) {
+	    if (wrap->wrappedHere == nullptr) {
+	      wrap->wrappedHere = operands_[id].get();
 	    }
 	    continue;
 	  }
@@ -1123,12 +1123,12 @@ void CompileState::markWraps(int32_t pipelineIdx) {
 	  if (!flags.lastUse.empty() && !flags.definedIn.empty() &&
 	      wrapPosition.isBefore(flags.lastUse) && flags.definedIn.isBefore(wrapPosition)) {
 	    auto wrappedAt = flags.wrappedAt;
-	    if (!containsWrappedAt(pipeline, info->rewrapped, wrappedAt)) {
-	      info.rewrapped.push_back(operandAt(id));
-	      if (info->needRewind) {
-		info->wrapBackup.push_back(newOperand(BIGINT(), fmt::format("wback_{}_{}", nthWrap, i)));
-		info->wrapbackup.back()->elementPerTB = true;
-		info->newIndices.push_back(newOperand(INTEGER(), fmt::format("wback_{}_{}", nthWrap, i)));
+	    if (!containsWrappedAt(pipeline, wrap->rewrapped, wrappedAt)) {
+	      wrap->rewrapped.push_back(operands_[id].get());
+	      if (wrap->needRewind) {
+		wrap->wrapBackup.push_back(newOperand(BIGINT(), fmt::format("wback_{}_{}", wrappedAt, id)));
+		wrap->wrapBackup.back()->elementPerTB = true;
+		wrap->wrapIndices.push_back(newOperand(INTEGER(), fmt::format("wback_{}_{}", wrappedAt, id)));
 	      }
 	    }
 	  }

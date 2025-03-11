@@ -297,12 +297,12 @@ void JoinExpand::generateMain(CompileState& state, int32_t syncLabel) {
       status.blockState);
   out << state.operandValue(hits) << ", "
       << (filter ? state.operandValue(filter) : "true")
-      << ", shared->startLabel == " << continueLabel_ << ", laneStatus,  shared, true)) {\n"
-    out << "  if (threadIdx.x == 0) { shared->startLabel = " << continueLabel << ";};  goto continue" << continueLable << ";}\n";
-  out << "  __syncthreads();\n";
-  out << laneStatus = threadIdx.x < shared->numRows ? ErrorCode::kOk : ErrorCode::kInactive;\n";
-  generateWrap(wrapInfo, nthWrap);
-  out << "  joinRow(" << operandValue(hits) << ", laneStatus, shared, ";
+      << ", shared->startLabel == " << continueLabel_ << ", laneStatus,  shared, true)) {\n";
+    out << "  if (threadIdx.x == 0) { shared->startLabel = " << continueLabel_ << ";};  goto continue" << continueLabel_ << ";}\n";
+    out << "  __syncthreads();\n";
+  out << "  laneStatus = threadIdx.x < shared->numRows ? ErrorCode::kOk : ErrorCode::kInactive;\n";
+  state.generateWrap(wrapInfo_, nthWrap, indices);
+  out << "  joinRow(" << state.operandValue(hits) << ", laneStatus, shared, ";
   makeCopyRow(state, *this);
   out << ");\n";
 }
