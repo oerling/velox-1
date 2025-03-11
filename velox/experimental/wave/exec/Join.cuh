@@ -141,12 +141,16 @@ bool __device__ __forceinline__ joinResult(
   return shared->numRows < kBlockSize - 32 && joinShared(shared)->anyNext;
 }
 
-  template <typename RowType, typename CopyRow>
-  void __device__ __forceinline__ joinRow(int64_t* hitsAsInt, ErrorCode laneStatus, WaveShared* shared, CopyRow copy) {
-    if (laneStatus == ErrorCode::kOk) {
+template <typename RowType, typename CopyRow>
+void __device__ __forceinline__ joinRow(
+    int64_t* hitsAsInt,
+    ErrorCode laneStatus,
+    WaveShared* shared,
+    CopyRow copy) {
+  if (laneStatus == ErrorCode::kOk) {
     auto* hits = reinterpret_cast<RowType**>(hitsAsInt);
-copy(hits[shared->blockBase + threadIdx.x]);
-    }
+    copy(hits[shared->blockBase + threadIdx.x]);
   }
-  
+}
+
 } // namespace facebook::velox::wave

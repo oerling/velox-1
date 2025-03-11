@@ -416,7 +416,7 @@ __device__ void __forceinline__ wrapKernel(
     Operand** operands,
     Operand** newWraps,
     Operand** backup,
-int32_t blockBase,
+    int32_t blockBase,
     WaveShared* shared) {
   Operand* op = operands[indicesIdx];
   auto* filterIndices = reinterpret_cast<int32_t*>(op->base);
@@ -473,8 +473,8 @@ int32_t blockBase,
 }
 
 __device__ void __forceinline__ wrapKernel(
-					   OperandIndex first,
-					   const OperandIndex* wraps,
+    OperandIndex first,
+    const OperandIndex* wraps,
     const OperandIndex* newIndices,
     const OperandIndex* backups,
     int32_t numWraps,
@@ -494,10 +494,11 @@ __device__ void __forceinline__ wrapKernel(
 
   if (first != kEmpty) {
     if (threadIdx.x == 0) {
-      operands[first]->indices[shared->blockBase / kBlockSize] = filterIndices + shared->blockBase;
+      operands[first]->indices[shared->blockBase / kBlockSize] =
+          filterIndices + shared->blockBase;
     }
   }
-  
+
   for (auto column = 0; column < numWraps; ++column) {
     if (threadIdx.x == 0) {
       auto nthBlock = shared->blockBase / kBlockSize;
@@ -505,14 +506,16 @@ __device__ void __forceinline__ wrapKernel(
       auto* op = operands[opIndex];
       int32_t** opIndices = &op->indices[nthBlock];
       // Record previous indirection
-      auto backup = reinterpret_cast<int32_t**>(operands[backups[column]]->base);
-      backup[nthBlock] = *opIndices; 
+      auto backup =
+          reinterpret_cast<int32_t**>(operands[backups[column]]->base);
+      backup[nthBlock] = *opIndices;
       if (!*opIndices) {
         *opIndices = filterIndices + shared->blockBase;
         state->indices = nullptr;
       } else {
-	state->indices = *opIndices;
-        state->newIndices = reinterpret_cast<int32_t*>(operands[newIndices[column]]->base);
+        state->indices = *opIndices;
+        state->newIndices =
+            reinterpret_cast<int32_t*>(operands[newIndices[column]]->base);
       }
     }
     __syncthreads();
@@ -522,15 +525,15 @@ __device__ void __forceinline__ wrapKernel(
     }
     int32_t newIndex;
     if (rowActive) {
-      newIndex =
-          state->indices[filterIndices[shared->blockBase + threadIdx.x] - shared->blockBase];
+      newIndex = state->indices
+                     [filterIndices[shared->blockBase + threadIdx.x] -
+                      shared->blockBase];
       state->newIndices[threadIdx.x] = newIndex;
     }
   }
   __syncthreads();
 }
 
-  
 template <typename T>
 __device__ T value(Operand* operands, OperandIndex opIdx) {
   // Obsolete signature. call sites must be changed.
