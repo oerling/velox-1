@@ -225,6 +225,8 @@ void JoinProbe::generateMain(CompileState& state, int32_t syncLabel) {
   makeCompareLambda(state, keys, false, id);
   out << "));\n";
   auto flags = state.flags(*hits);
+  flags.needStore = true;
+  hits->isStored = true;
   hits->inRegister = true;
   if (flags.needStore) {
     out << fmt::format("  flatOperand<int64_t>(operands, {}, blockBase) = r{};\n", hitsOrdinal, hitsOrdinal);
@@ -286,6 +288,7 @@ void JoinExpand::generateMain(CompileState& state, int32_t syncLabel) {
   if (filter) {
     state.generateIsTrue(*filter);
   }
+  auto hitsOrd = state.ordinal(*hits);
   out << fmt::format(" sync{}: ;\n", syncLabel);
 
   out << fmt::format(
@@ -297,12 +300,14 @@ void JoinExpand::generateMain(CompileState& state, int32_t syncLabel) {
       status.blockState);
   out << state.operandValue(hits) << ", "
       << (filter ? state.operandValue(filter) : "true")
-      << ", shared->startLabel == " << continueLabel_ << ", laneStatus,  shared, true)) {\n"
-    out << "  if (threadIdx.x == 0) { shared->startLabel = " << continueLabel << ";};  goto continue" << continueLable << ";}\n";
-  out << "  __syncthreads();\n";
-  out << laneStatus = threadIdx.x < shared->numRows ? ErrorCode::kOk : ErrorCode::kInactive;\n";
-  generateWrap(wrapInfo, nthWrap);
-  out << "  joinRow(" << operandValue(hits) << ", laneStatus, shared, ";
+      << ", shared->startLabel == " << continueLabel_ << ", laneStatus,  shared, true,";
+    out << "    reinterpret_cast<int64_t*>(operands[" << hitsOrd << "]) )) {\n";
+    out << "  if (threadIdx.x == 0) { shared->startLabel = " << continueLabel_ << ";};  goto continue" << continueLabel_ << ";}\n";
+    out << "  __syncthreads();\n";
+  out << "  laneStatus = threadIdx.x < shared->numRows ? ErrorCode::kOk : ErrorCode::kInactive;\n";
+  state.generateWrap(wrapInfo_, nthWrap, indices);
+  state.ensureOperand(hits);
+  out << "  joinRow(" << state.operandValue(hits) << ", laneStatus, shared, ";
   makeCopyRow(state, *this);
   out << ");\n";
 }

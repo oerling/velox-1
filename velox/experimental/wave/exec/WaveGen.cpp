@@ -523,53 +523,49 @@ void Filter::generateMain(CompileState& state, int32_t syncLabel) {
       "filterKernel({}, operands, {}, blockBase, shared, laneStatus);\n",
       flagValue,
       state.ordinal(*indices));
-  state.generateWrap(wrapInfo, nthWrap, indices);
+  state.generateWrap(wrapInfo_, nthWrap, indices);
 }
 
-  std::string operandIdArray(const std::string& name, AbstractOperand* first, const std::vector<AbstractOperand*> more) {
+  std::string operandIdArray(CompileState& state, const std::string& name, const std::vector<AbstractOperand*> more) {
     std::stringstream out;
-      "  OperandIndex " << name << "[] = {";
-    if (first) {
-      out << ordinal(*first);
-    }
-    if (!more.empty()) {
-      if (first) {
-	out << ", ";
-      }
+    if (more.empty()) {
+      out << "const OperandIndex* " << name << " = nullptr;\n";
+    } else {
+      out << "  const OperandIndex " << name << "[] = {";
       for (auto i = 0; i < more.size(); ++i) {
-	out << ordinal(*more[i]);
+	out << state.ordinal(*more[i]);
 	if (i < more.size() - 1) {
 	  out << ", ";
 	}
       }
+
+      out << "};\n";
     }
-    out << "};\n";
-    return out.str();
+      return out.str();
   }
   
-  void CompileState::generateWrap(WrapInfo& wrap, int32_t nthWrap, AbstractOperand* indices) {
+  void CompileState::generateWrap(WrapInfo& info, int32_t nthWrap, const AbstractOperand* indices) {
     auto& out = generated_;
-  if (wrap.needRewind) {
-    out << operandIdArray(fmt::format("wraps{}", nthWrap), nullptr, info->rewrapped);
-    out << operandIdArray(fmt::format("idxs{}", nthWrap), nullptr, info->wrapIndices);
-    out << operandIdArray(fmt::format("back{}", nthWrap), nullptr, info->wrapBackup);
+  if (info.needRewind) {
+    out << operandIdArray(*this, fmt::format("wraps{}", nthWrap), info.rewrapped);
+    out << operandIdArray(*this, fmt::format("idxs{}", nthWrap), info.wrapIndices);
+    out << operandIdArray(*this, fmt::format("back{}", nthWrap), info.wrapBackup);
     out << fmt::format(
 		       "wrapKernel({}, wraps{}, idxs{}, back{}, {}, {}, shared);\n",
-		       info->firstWrap ? ordinal(*info->firstWrap) : kEmpty,
+		       info.wrappedHere ? ordinal(*info.wrappedHere) : kEmpty,
 		       nthWrap, nthWrap, nthWrap,
-		       numWraps,
+		       info.wrapIndices.size(),
 		       ordinal(*indices));
   } else {
-    auto numWraps = wrapLiteral(wrap, nthWrap);
+    auto numWraps = wrapLiteral(info, nthWrap);
     out << fmt::format(
 		       "wrapKernel(wraps{}, {}, {}, operands, blockBase, shared);\n",
 		       nthWrap,
 		       numWraps,
 		       ordinal(*indices));
   }
-  state.lastPlacedWrap() = nthWrap;
-
-  state.clearInRegister();
+  lastPlacedWrap() = nthWrap;
+  clearInRegister();
 }
 
 void AggregateProbe::generateMain(CompileState& state, int32_t syncLabel) {
