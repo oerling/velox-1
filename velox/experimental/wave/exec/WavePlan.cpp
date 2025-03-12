@@ -434,6 +434,7 @@ bool CompileState::tryPlanOperator(
     segments_.back().steps.push_back(step);
     auto expand = makeStep<JoinExpand>();
     step->expand = expand;
+    expand->nthWrap = wrapId_++;
     expand->state = step->state;
     expand->id = step->id;
     expand->tableType = exec::HashProbe::makeTableType(
@@ -968,7 +969,9 @@ void PipelineCandidate::markParams(
 	}
       };
 
-      handleWrapOnly(info->wrappedHere);
+      if (info->wrappedHere) {
+	handleWrapOnly(info->wrappedHere);
+      }
       for (auto& rewrap : info->rewrapped) {
 	handleWrapOnly(rewrap);
       }
@@ -1006,6 +1009,7 @@ void CompileState::markHostOutput() {
   CodePosition afterEnd(candidate.steps.size());
   for (auto i = 0; i < resultOrder_->size(); ++i) {
     auto* op = operandById((*resultOrder_)[i]);
+    recordReference(candidate, op);
     auto& flags = candidate.flags(op);
     flags.lastUse = afterEnd;
     flags.needStore = true;

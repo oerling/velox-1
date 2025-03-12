@@ -528,16 +528,20 @@ void Filter::generateMain(CompileState& state, int32_t syncLabel) {
 
   std::string operandIdArray(CompileState& state, const std::string& name, const std::vector<AbstractOperand*> more) {
     std::stringstream out;
-    out << "  const OperandIndex " << name << "[] = {";
-    for (auto i = 0; i < more.size(); ++i) {
-      out << state.ordinal(*more[i]);
-      if (i < more.size() - 1) {
-	out << ", ";
+    if (more.empty()) {
+      out << "const OperandIndex* " << name << " = nullptr;\n";
+    } else {
+      out << "  const OperandIndex " << name << "[] = {";
+      for (auto i = 0; i < more.size(); ++i) {
+	out << state.ordinal(*more[i]);
+	if (i < more.size() - 1) {
+	  out << ", ";
+	}
       }
-    }
 
-    out << "};\n";
-    return out.str();
+      out << "};\n";
+    }
+      return out.str();
   }
   
   void CompileState::generateWrap(WrapInfo& info, int32_t nthWrap, const AbstractOperand* indices) {
