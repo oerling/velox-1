@@ -473,7 +473,7 @@ int32_t blockBase,
 }
 
 __device__ void __forceinline__ wrapKernel(
-					   OperandIndex firstWrap,
+					   OperandIndex first,
 					   const OperandIndex* wraps,
     const OperandIndex* newIndices,
     const OperandIndex* backups,
