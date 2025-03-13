@@ -98,7 +98,6 @@ class HashBuild final : public Operator {
     return joinBridge_;
   }
 
-  
  private:
   void setState(State state);
   void checkStateTransition(State state);

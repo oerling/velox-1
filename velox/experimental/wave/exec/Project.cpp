@@ -163,7 +163,6 @@ void Project::pipelineFinished(WaveStream& stream) {
   }
 }
 
-  
 void Project::finalize(CompileState& state) {
   for (auto& level : levels_) {
     for (auto& program : level) {

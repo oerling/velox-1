@@ -57,7 +57,7 @@ class Project : public WaveOperator {
 
   void pipelineFinished(WaveStream& stream) override;
 
-    void finalize(CompileState& state) override;
+  void finalize(CompileState& state) override;
 
   std::string toString() const override {
     return fmt::format("Project {}", WaveOperator::toString());

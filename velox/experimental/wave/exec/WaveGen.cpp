@@ -470,7 +470,7 @@ int32_t CompileState::nextWrapId() {
   return ++wrapId_;
 }
 
-  int32_t CompileState::wrapLiteral(const WrapInfo& info, int32_t nthWrap) {
+int32_t CompileState::wrapLiteral(const WrapInfo& info, int32_t nthWrap) {
   // We take one Operand of each group of Operands that shares a
   // wrappedAt such that the Operand's lifetime crosses the
   // filter. The wrap that is initialized here is first in the indices
@@ -526,43 +526,54 @@ void Filter::generateMain(CompileState& state, int32_t syncLabel) {
   state.generateWrap(wrapInfo_, nthWrap, indices);
 }
 
-  std::string operandIdArray(CompileState& state, const std::string& name, const std::vector<AbstractOperand*> more) {
-    std::stringstream out;
-    if (more.empty()) {
-      out << "const OperandIndex* " << name << " = nullptr;\n";
-    } else {
-      out << "  const OperandIndex " << name << "[] = {";
-      for (auto i = 0; i < more.size(); ++i) {
-	out << state.ordinal(*more[i]);
-	if (i < more.size() - 1) {
-	  out << ", ";
-	}
+std::string operandIdArray(
+    CompileState& state,
+    const std::string& name,
+    const std::vector<AbstractOperand*> more) {
+  std::stringstream out;
+  if (more.empty()) {
+    out << "const OperandIndex* " << name << " = nullptr;\n";
+  } else {
+    out << "  const OperandIndex " << name << "[] = {";
+    for (auto i = 0; i < more.size(); ++i) {
+      out << state.ordinal(*more[i]);
+      if (i < more.size() - 1) {
+        out << ", ";
       }
-
-      out << "};\n";
     }
-      return out.str();
+
+    out << "};\n";
   }
-  
-  void CompileState::generateWrap(WrapInfo& info, int32_t nthWrap, const AbstractOperand* indices) {
-    auto& out = generated_;
+  return out.str();
+}
+
+void CompileState::generateWrap(
+    WrapInfo& info,
+    int32_t nthWrap,
+    const AbstractOperand* indices) {
+  auto& out = generated_;
   if (info.needRewind) {
-    out << operandIdArray(*this, fmt::format("wraps{}", nthWrap), info.rewrapped);
-    out << operandIdArray(*this, fmt::format("idxs{}", nthWrap), info.wrapIndices);
-    out << operandIdArray(*this, fmt::format("back{}", nthWrap), info.wrapBackup);
+    out << operandIdArray(
+        *this, fmt::format("wraps{}", nthWrap), info.rewrapped);
+    out << operandIdArray(
+        *this, fmt::format("idxs{}", nthWrap), info.wrapIndices);
+    out << operandIdArray(
+        *this, fmt::format("back{}", nthWrap), info.wrapBackup);
     out << fmt::format(
-		       "wrapKernel({}, wraps{}, idxs{}, back{}, {}, {}, shared);\n",
-		       info.wrappedHere ? ordinal(*info.wrappedHere) : kEmpty,
-		       nthWrap, nthWrap, nthWrap,
-		       info.wrapIndices.size(),
-		       ordinal(*indices));
+        "wrapKernel({}, wraps{}, idxs{}, back{}, {}, {}, shared);\n",
+        info.wrappedHere ? ordinal(*info.wrappedHere) : kEmpty,
+        nthWrap,
+        nthWrap,
+        nthWrap,
+        info.wrapIndices.size(),
+        ordinal(*indices));
   } else {
     auto numWraps = wrapLiteral(info, nthWrap);
     out << fmt::format(
-		       "wrapKernel(wraps{}, {}, {}, operands, blockBase, shared);\n",
-		       nthWrap,
-		       numWraps,
-		       ordinal(*indices));
+        "wrapKernel(wraps{}, {}, {}, operands, blockBase, shared);\n",
+        nthWrap,
+        numWraps,
+        ordinal(*indices));
   }
   lastPlacedWrap() = nthWrap;
   clearInRegister();
@@ -935,8 +946,7 @@ void CompileState::makeLevelKernel(std::vector<KernelBox>& level) {
     auto programState = std::make_unique<ProgramState>();
     programState->stateId = abstractState->id;
     programState->isGlobal = true;
-    programState->create =
-      abstractState->instruction->stateCreateFunction();
+    programState->create = abstractState->instruction->stateCreateFunction();
 
     states.push_back(std::move(programState));
   });

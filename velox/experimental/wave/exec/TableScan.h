@@ -64,8 +64,6 @@ class TableScan : public WaveSourceOperator {
 
   bool isFinished() const override;
 
-
-  
   bool canAddDynamicFilter() const override {
     return true;
   }

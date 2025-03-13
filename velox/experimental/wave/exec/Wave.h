@@ -334,7 +334,7 @@ struct AggregateOperatorState : public OperatorState {
 
 struct HashTableHolder : public AggregateOperatorState {
   HashTableHolder(std::shared_ptr<GpuArena> arena)
-    : AggregateOperatorState(std::move(arena)) {}
+      : AggregateOperatorState(std::move(arena)) {}
 };
 
 struct OperatorStateMap {
@@ -568,7 +568,7 @@ class Program : public std::enable_shared_from_this<Program> {
 
   /// Calls pipelineFinished() on instructions.
   void pipelineFinished(WaveStream& stream);
-  
+
   const std::string& label() const {
     return label_;
   }
@@ -965,7 +965,7 @@ class WaveStream {
   /// Initializes 'state' to the device side state for 'inst'. Returns after
   /// 'state' is ready to use on device.
   void makeHashBuild(AbstractHashBuild& inst, HashTableHolder& state);
-  
+
   std::unique_ptr<Executable> recycleExecutable(
       Program* program,
       int32_t numRows);

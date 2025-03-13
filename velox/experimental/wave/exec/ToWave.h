@@ -114,7 +114,7 @@ struct KernelStep {
   virtual bool autoContinueLabel() const {
     return true;
   }
-  
+
   /// Returns code to execute before jumping to continueLabel() when continuing
   /// from this step.
   virtual std::string preContinueCode(CompileState& state) {
@@ -638,7 +638,7 @@ struct JoinExpand : public KernelStep {
   bool autoContinueLabel() const override {
     return false;
   }
-  
+
   bool isBarrier() const override {
     return true;
   }
@@ -946,8 +946,9 @@ class CompileState {
   // wraps. 'id' is a sequence number from nextWrapId().
   int32_t wrapLiteral(const WrapInfo& info, int32_t id);
 
-  void generateWrap(WrapInfo& wrap, int32_t nthWrap, const AbstractOperand* indices);
-  
+  void
+  generateWrap(WrapInfo& wrap, int32_t nthWrap, const AbstractOperand* indices);
+
   void setInsideNullPropagating(bool flag) {
     insideNullPropagating_ = flag;
   }

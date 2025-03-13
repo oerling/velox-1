@@ -382,7 +382,7 @@ RowVectorPtr WaveDriver::getOutput() {
               if (maybeWaitForPeers()) {
                 return nullptr;
               }
-	      pipelineFinished(i);
+              pipelineFinished(i);
               break;
             } else {
               // Last finished.
@@ -447,7 +447,7 @@ void WaveDriver::pipelineFinished(int32_t pipelineIdx) {
     pipeline.operators[i]->pipelineFinished(*pipeline.arrived[0]);
   }
 }
-  
+
 namespace {
 void moveTo(
     std::vector<std::unique_ptr<WaveStream>>& from,
