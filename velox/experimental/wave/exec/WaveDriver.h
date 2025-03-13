@@ -261,6 +261,10 @@ class WaveDriver : public exec::SourceOperator {
   // after there is guaranteed no more input.
   void flush(int32_t pipelineIdx);
 
+  // Calls pipelinefinished on abstract instructions. Called on one stream of last Driver to finish for the Task pipeline.
+  void pipelineFinished(int32_t pipelineIdx);
+
+  
   // Copies from 'waveStats_' to runtimeStates consumed by
   // exec::Driver.
   void updateStats();

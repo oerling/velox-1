@@ -16,6 +16,7 @@
 
 #include <iostream>
 #include "velox/experimental/wave/exec/Wave.h"
+#include "velox/exec/HashJoinBridge.h"
 
 DEFINE_int32(
     wave_max_reader_batch_rows,
@@ -120,7 +121,7 @@ void resupplyHashTable(
     stream.mutableExclusiveProcessed() = false;
     return;
   }
-  auto deviceStream = WaveStream::streamFromReserve();
+   auto deviceStream = WaveStream::streamFromReserve();
   auto stateId = agg->state->id;
   auto* state = stream.operatorState(stateId)->as<AggregateOperatorState>();
   auto* head = state->alignedHead;
@@ -249,6 +250,20 @@ AdvanceResult AbstractAggregation::canAdvance(
   return {};
 }
 
+  std::function<std::shared_ptr<OperatorState>(WaveStream& stream)> AbstractAggregation::stateCreateFunction() {
+    return [inst = this](
+			  WaveStream& stream) -> std::shared_ptr<OperatorState> {
+      auto newState =
+	std::make_shared<AggregateOperatorState>(stream.arenaShared());
+      newState->isGrouped = !inst->keys.empty();
+      newState->rowSize = inst->rowSize();
+      newState->maxReadStreams = inst->maxReadStreams;
+      stream.makeAggregate(*inst, *newState);
+      return newState;
+    };
+  }
+
+  
 std::pair<int64_t, int64_t> countResultRows(
     std::vector<AllocationRange>& ranges,
     int32_t rowSize) {
@@ -410,6 +425,24 @@ void AbstractHashJoinExpand::reserveState(InstructionStatus& state) {
   state.blockState += kBlockSize * 9;
 }
 
+exec::BlockingReason AbstractHashJoinExpand::isBlocked(
+					 WaveStream& stream,
+					 OperatorState* state,
+					 ContinueFuture* future) const {
+
+  if (state) {
+    return exec::BlockingReason::kNotBlocked;
+  }
+  auto hashBuildResult = joinBridge->tableOrFuture(future);
+  if (!hashBuildResult.has_value()) {
+    VELOX_CHECK(future->valid());
+    return exec::BlockingReason::kWaitForJoinBuild;
+  }
+  auto* map = stream.taskStateMap();
+  map->addIfNew(state->id, hashBuildResult.value().waveTable);
+  return exec::BlockingReason::kNotBlocked;
+}
+
 void AbstractHashBuild::reserveState(InstructionStatus& state) {
   // 8 bytes per grid.
   status.gridState = state.gridState;
@@ -421,7 +454,31 @@ AdvanceResult AbstractHashBuild::canAdvance(
     LaunchControl* control,
     OperatorState* state,
     int32_t instructionIdx) const {
-  VELOX_NYI();
+
+  return {};
 }
 
+void AbstractHashBuild::pipelineFinished(WaveStream& stream, CompiledKernel* kernel) {
+    auto deviceStream = WaveStream::streamFromReserve();
+    
+    deviceStream->wait();
+  WaveStream::releaseStream(std::move(deviceStream));
+}
+
+  std::function<std::shared_ptr<OperatorState>(WaveStream& stream)> AbstractHashBuild::stateCreateFunction() {
+    return [inst = this](
+			  WaveStream& stream) -> std::shared_ptr<OperatorState> {
+      auto newState =
+	std::make_shared<HashTableHolder>(stream.arenaShared());
+      newState->isGrouped = true;
+      newState->rowSize = inst->rowSize();
+      newState->maxReadStreams = 0;
+      stream.makeHashBuild(*inst, *newState);
+      return newState;
+    };
+  }
+
+  
+ 
+  
 } // namespace facebook::velox::wave

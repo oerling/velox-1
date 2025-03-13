@@ -107,6 +107,15 @@ std::string definesToString(const DefinesMap* map) {
   return out.str();
 }
 
+  void OperatorStateMap::addIfNew(int32_t id, const std::shared_ptr<OperatorState>& state) {
+    std::lock_guard<std::mutex> l(mutex);
+    if (states.count(id) == 0) {
+      states[id] = state;
+    }
+  }
+
+ 
+  
 AbstractOperand* pathToOperand(
     const DefinesMap& map,
     std::vector<std::unique_ptr<common::Subfield::PathElement>>& path) {
@@ -1211,6 +1220,12 @@ void Program::callUpdateStatus(
   }
 }
 
+  void Program::pipelineFinished(WaveStream& stream) {
+    for (auto& instruction : instructions_) {
+      instruction->pipelineFinished(stream, kernel_.get());
+    }
+  }
+  
 std::unique_ptr<Executable> Program::getExecutable(
     int32_t maxRows,
     const std::vector<std::unique_ptr<AbstractOperand>>& operands) {

@@ -24,6 +24,10 @@
 #include "velox/type/Type.h"
 #include "velox/vector/BaseVector.h"
 
+namespace facebook::velox::exec {
+class HashJoinBridge;
+}
+
 namespace facebook::velox::wave {
 /// Abstract representation of Wave instructions. These translate to a kernel
 /// right before execution.
@@ -254,6 +258,12 @@ struct AbstractInstruction {
     return {};
   }
 
+  /// Called on each instruction of a pipeline after the pipeline is
+  /// at end on all Drivers. This will take place on the last stream
+  /// of the last Driver to finish. This can produce a combined result
+  /// like a hash join build side.
+  virtual void pipelineFinished(WaveStream& /*stream*/, CompiledKernel* /*kernel*/) {}
+  
   virtual bool isSink() const {
     return false;
   }
@@ -262,6 +272,11 @@ struct AbstractInstruction {
     return std::nullopt;
   }
 
+  /// Returns a function that sets up a state, e.g. hash table, given a WaveStream.
+  virtual std::function<std::shared_ptr<OperatorState>(WaveStream& stream)> stateCreateFunction() {
+    return nullptr;
+  }
+  
   /// True if assigns 'op'.
   virtual bool isOutput(const AbstractOperand* op) const {
     return false;
@@ -389,6 +404,8 @@ struct AbstractAggregation : public AbstractOperator {
       OperatorState* state,
       int32_t instructionIdx) const override;
 
+  std::function<std::shared_ptr<OperatorState>(WaveStream& stream)> stateCreateFunction() override;
+  
   InstructionStatus instructionStatus;
 
   bool intermediateInput{false};
@@ -438,16 +455,26 @@ struct AbstractHashBuild : public AbstractOperator {
       OperatorState* state,
       int32_t instructionIdx) const override;
 
+  void pipelineFinished(WaveStream& stream, CompiledKernel* kernel) override;
+
+  std::function<std::shared_ptr<OperatorState>(WaveStream& stream)> stateCreateFunction() override;
+
   void reserveState(InstructionStatus& state) override;
 
-  AbstractState* state;
+  int32_t rowSize() {
+    return roundedRowSize;
+  }
+
+  int32_t roundedRowSize{-1};
+  
   InstructionStatus status;
   int32_t continueLabel;
+  std::shared_ptr<exec::HashJoinBridge> joinBridge;
 };
-
+  
 struct AbstractHashJoinExpand : public AbstractOperator {
-  AbstractHashJoinExpand(int32_t serial)
-      : AbstractOperator(OpCode::kHashJoinExpand, 0, nullptr) {}
+  AbstractHashJoinExpand(int32_t serial, AbstractState* state)
+      : AbstractOperator(OpCode::kHashJoinExpand, 0, state) {}
 
   AdvanceResult canAdvance(
       WaveStream& stream,
@@ -455,7 +482,15 @@ struct AbstractHashJoinExpand : public AbstractOperator {
       OperatorState* state,
       int32_t instructionIdx) const override;
 
+  exec::BlockingReason isBlocked(
+					 WaveStream& stream,
+					 OperatorState* state,
+					 ContinueFuture* future) const override;
+  
   void reserveState(InstructionStatus& state) override;
+
+  std::string planNodeId;
+  std::shared_ptr<exec::HashJoinBridge> joinBridge;
 
   InstructionStatus status;
   int32_t continueLabel;

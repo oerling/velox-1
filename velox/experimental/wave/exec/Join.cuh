@@ -36,7 +36,7 @@ template <int32_t gridStatusSize, int32_t blockStatusOffset>
 int64_t __device__ loadJoinNext(WaveShared* shared) {
   auto* status = blockStatus<HashJoinExpandBlockStatus>(
       shared, gridStatusSize, blockStatusOffset);
-  return status->next[threadIdx.x];
+  return reinterpret_cast<int64_t>(status->next[threadIdx.x]);
 }
 
 template <
@@ -149,7 +149,7 @@ void __device__ __forceinline__ joinRow(
     CopyRow copy) {
   if (laneStatus == ErrorCode::kOk) {
     auto* hits = reinterpret_cast<RowType**>(hitsAsInt);
-    copy(hits[shared->blockBase + threadIdx.x]);
+    copy(hits[shared->blockBase + threadIdx.x], shared->blockBase + threadIdx.x);
   }
 }
 

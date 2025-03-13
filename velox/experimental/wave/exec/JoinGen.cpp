@@ -186,6 +186,7 @@ void makeBuildOps(CompileState& state, const JoinBuild& build) {
     auto result =
       std::make_unique<AbstractHashBuild>(state.nextSerial(), this->state);
     result->continueLabel = continueLabel_;
+    result->joinBridge = joinBridge;
     return result;
   }
 
@@ -324,8 +325,9 @@ std::string JoinExpand::preContinueCode(CompileState& state) {
 
 std::unique_ptr<AbstractInstruction> JoinExpand::addInstruction(
     CompileState& state) {
-  auto result = std::make_unique<AbstractHashJoinExpand>(state.nextSerial());
-  result->state = this->state;
+  auto result = std::make_unique<AbstractHashJoinExpand>(state.nextSerial(), this->state);
+  result->joinBridge = joinBridge;
+  result->planNodeId = planNodeId;
   result->continueLabel = continueLabel_;
   return result;
 }

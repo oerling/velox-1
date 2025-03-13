@@ -332,11 +332,16 @@ struct AggregateOperatorState : public OperatorState {
   WaveBufferPtr temp;
 };
 
-struct HashTableHolder : public AggregateOperatorState {};
+struct HashTableHolder : public AggregateOperatorState {
+  HashTableHolder(std::shared_ptr<GpuArena> arena)
+    : AggregateOperatorState(std::move(arena)) {}
+};
 
 struct OperatorStateMap {
   std::mutex mutex;
   folly::F14FastMap<int32_t, std::shared_ptr<OperatorState>> states;
+
+  void addIfNew(int32_t id, const std::shared_ptr<OperatorState>& state);
 };
 
 /// Represents a kernel or data transfer. Many executables can be in one kernel
@@ -561,6 +566,9 @@ class Program : public std::enable_shared_from_this<Program> {
     return output_;
   }
 
+  /// Calls pipelineFinished() on instructions.
+  void pipelineFinished(WaveStream& stream);
+  
   const std::string& label() const {
     return label_;
   }
@@ -954,6 +962,10 @@ class WaveStream {
   /// 'state' is ready to use on device.
   void makeAggregate(AbstractAggregation& inst, AggregateOperatorState& state);
 
+  /// Initializes 'state' to the device side state for 'inst'. Returns after
+  /// 'state' is ready to use on device.
+  void makeHashBuild(AbstractHashBuild& inst, HashTableHolder& state);
+  
   std::unique_ptr<Executable> recycleExecutable(
       Program* program,
       int32_t numRows);

@@ -100,6 +100,11 @@ class HashProbe : public Operator {
     return state_;
   }
 
+  const std::shared_ptr<HashJoinBridge>& joinBridge() const {
+    return joinBridge_;
+  }
+
+  
  private:
   // Indicates if the join type includes misses from the left side in the
   // output.

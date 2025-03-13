@@ -63,9 +63,7 @@ class WaveOperator {
     VELOX_FAIL("Override for blocking operator");
   }
 
-  virtual void flush(bool /*noMoreInput*/) {
-    VELOX_FAIL("Override for blocking operator");
-  }
+  virtual void pipelineFinished(WaveStream& /*stream*/) {}
 
   /// Returns how many rows of output are available from 'this'. Source
   /// operators and cardinality increasing operators must return a correct

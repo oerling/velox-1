@@ -934,20 +934,9 @@ void CompileState::makeLevelKernel(std::vector<KernelBox>& level) {
     auto* abstractState = operatorStates_[id].get();
     auto programState = std::make_unique<ProgramState>();
     programState->stateId = abstractState->id;
-    auto* abstractInst =
-        reinterpret_cast<AbstractAggregation*>(abstractState->instruction);
     programState->isGlobal = true;
     programState->create =
-        [inst = abstractInst](
-            WaveStream& stream) -> std::shared_ptr<OperatorState> {
-      auto newState =
-          std::make_shared<AggregateOperatorState>(stream.arenaShared());
-      newState->isGrouped = !inst->keys.empty();
-      newState->rowSize = inst->rowSize();
-      newState->maxReadStreams = inst->maxReadStreams;
-      stream.makeAggregate(*inst, *newState);
-      return newState;
-    };
+      abstractState->instruction->stateCreateFunction();
 
     states.push_back(std::move(programState));
   });

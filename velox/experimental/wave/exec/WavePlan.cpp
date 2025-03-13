@@ -401,6 +401,7 @@ bool CompileState::tryPlanOperator(
     addSegment(BoundaryType::kHashBuild, node, node->outputType());
     auto step = makeStep<JoinBuild>();
     auto* state = newState(StateKind::kHashBuild, node->id(), "");
+    step->joinBridge = reinterpret_cast<exec::HashBuild*>(op)->joinBridge();
     auto& keys = node->rightKeys();
     for (auto i = 0; i < keys.size(); ++i) {
       step->keys.push_back(
@@ -436,6 +437,8 @@ bool CompileState::tryPlanOperator(
     step->expand = expand;
     expand->nthWrap = wrapId_++;
     expand->state = step->state;
+    expand->joinBridge = reinterpret_cast<exec::HashProbe*>(op)->joinBridge();
+    expand->planNodeId = node->id();
     expand->id = step->id;
     expand->tableType = exec::HashProbe::makeTableType(
         node->sources()[1]->outputType().get(), node->rightKeys());

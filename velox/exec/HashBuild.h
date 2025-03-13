@@ -94,6 +94,11 @@ class HashBuild final : public Operator {
     return dependentChannels_;
   }
 
+  const std::shared_ptr<HashJoinBridge>& joinBridge() const {
+    return joinBridge_;
+  }
+
+  
  private:
   void setState(State state);
   void checkStateTransition(State state);

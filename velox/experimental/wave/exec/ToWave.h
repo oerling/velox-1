@@ -585,6 +585,7 @@ struct JoinBuild : public KernelStep {
   core::JoinType joinType;
   int32_t id{-1};
   int32_t continueLabel_;
+  std::shared_ptr<exec::HashJoinBridge> joinBridge;
 };
 
 struct JoinExpand;
@@ -670,7 +671,9 @@ struct JoinExpand : public KernelStep {
   WrapInfo wrapInfo_;
   int32_t continueLabel_{-1};
   int32_t id{-1};
+  std::string planNodeId;
   RowTypePtr tableType;
+  std::shared_ptr<exec::HashJoinBridge> joinBridge;
 };
 
 struct KernelBox {

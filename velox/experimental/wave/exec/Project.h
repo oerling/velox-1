@@ -55,7 +55,9 @@ class Project : public WaveOperator {
 
   void schedule(WaveStream& stream, int32_t maxRows = 0) override;
 
-  void finalize(CompileState& state) override;
+  void pipelineFinished(WaveStream& stream) override;
+
+    void finalize(CompileState& state) override;
 
   std::string toString() const override {
     return fmt::format("Project {}", WaveOperator::toString());

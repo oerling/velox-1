@@ -155,6 +155,15 @@ void Project::schedule(WaveStream& stream, int32_t maxRows) {
   }
 }
 
+void Project::pipelineFinished(WaveStream& stream) {
+  for (auto& level : levels_) {
+    for (auto& program : level) {
+      program->pipelineFinished(stream);
+    }
+  }
+}
+
+  
 void Project::finalize(CompileState& state) {
   for (auto& level : levels_) {
     for (auto& program : level) {
