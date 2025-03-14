@@ -467,6 +467,11 @@ struct AbstractHashBuild : public AbstractOperator {
 
   void reserveState(InstructionStatus& state) override;
 
+  InstructionStatus* mutableInstructionStatus() override {
+    return &status;
+  }
+
+  
   int32_t rowSize() {
     return roundedRowSize;
   }
@@ -494,6 +499,10 @@ struct AbstractHashJoinExpand : public AbstractOperator {
       ContinueFuture* future) const override;
 
   void reserveState(InstructionStatus& state) override;
+
+    InstructionStatus* mutableInstructionStatus() override {
+    return &status;
+  }
 
   std::string planNodeId;
   std::shared_ptr<exec::HashJoinBridge> joinBridge;

@@ -559,6 +559,11 @@ struct JoinBuild : public KernelStep {
   StepKind kind() const override {
     return StepKind::kJoinBuild;
   }
+
+  bool isBarrier() const override {
+    return true;
+  }
+
   void visitReferences(
       std::function<void(AbstractOperand*)> visitor) const override;
 
@@ -586,6 +591,7 @@ struct JoinBuild : public KernelStep {
   int32_t id{-1};
   int32_t continueLabel_;
   std::shared_ptr<exec::HashJoinBridge> joinBridge;
+  AbstractHashBuild* abstractHashBuild{nullptr};
 };
 
 struct JoinExpand;
@@ -1024,6 +1030,20 @@ class CompileState {
     return tryErrorLabel_;
   }
 
+  template <typename T>
+  const T* inputPlanNode(int32_t nodeIndex) {
+    const core::PlanNode* node;
+    if (nodeIndex >= driverFactory_.planNodes.size()) {
+      node = driverFactory_.consumerNode.get();
+    } else {
+      node = driverFactory_.planNodes[nodeIndex].get();
+    }
+    VELOX_CHECK_NOT_NULL(node);
+    auto result = dynamic_cast<const T*>(node);
+    VELOX_CHECK_NOT_NULL(node);
+    return result;
+  }
+  
  private:
   bool
   addOperator(exec::Operator* op, int32_t& nodeIndex, RowTypePtr& outputType);

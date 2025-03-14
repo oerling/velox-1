@@ -18,15 +18,22 @@
 
 namespace facebook::velox::wave {
 
+  bool joinTypeHasNullableKeys(core::JoinType joinType) {
+    return joinType == core::JoinType::kRight || joinType == core::JoinType::kFull;
+  }
+  
+bool joinTypeHasNext(core::JoinType joinType) {
+  return true;
+}
+  
 std::string makeJoinRow(
     CompileState& state,
     const std::vector<AbstractOperand*>& keys,
     const std::vector<AbstractOperand*>& dependent,
     core::JoinType joinType,
-    int32_t id,
-    bool hasNext) {
-  bool nullableKeys =
-      joinType == core::JoinType::kRight || joinType == core::JoinType::kFull;
+    int32_t id) {
+  bool nullableKeys = joinTypeHasNullableKeys(joinType);
+  bool hasNext = joinTypeHasNext(joinType);
   std::stringstream out;
   out << "struct HashRow" << id << " {\n";
   int32_t numNullableKeys = nullableKeys ? keys.size() : 0;
@@ -59,6 +66,7 @@ void makeInitJoinRow(
   int32_t numNullFlags = dependent.size() + (nullableKeys ? keys.size() : 0);
   for (auto i = 0; i < keys.size(); ++i) {
     auto* op = keys[i];
+    state.ensureOperand(op);
     if (nullableKeys) {
       out << fmt::format(
           "   if (!{}) {{ row->key{} = {};}}\n",
@@ -66,19 +74,20 @@ void makeInitJoinRow(
           i,
           state.operandValue(op));
     } else {
-      out << "    row->key" << i << " = " << state.operandValue(op);
+      out << "    row->key" << i << " = " << state.operandValue(op) << ";\n";
     }
   }
 
   for (auto i = 0; i < dependent.size(); ++i) {
     auto op = dependent[i];
+    state.ensureOperand(op);
     out << fmt::format(
-        "   if (!{}) {{ row->key{} = {};}}\n",
+        "   if (!{}) {{ row->dep{} = {};}}\n",
         state.isNull(op),
         i,
         state.operandValue(op));
   }
-  for (auto i = 32; i < numNullFlags; i += 32) {
+  for (auto i = 0; i < numNullFlags; i += 32) {
     out << fmt::format("   row->nulls{} = 0;\n", i / 32);
   }
   OpVector allColumns;
@@ -95,11 +104,11 @@ void makeRowRowCompare(
     CompileState& state,
     const std::vector<AbstractOperand*>& keys,
     int32_t id) {
-  auto& out = state.generated();
+  auto& out = state.inlines();
   out << "  bool __device__ compare(HashRow" << id << "* left, HashRow" << id
       << "* right) {\n";
   for (auto i = 0; i < keys.size(); ++i) {
-    out << "    if (left.key" << i << " != right.key" << i
+    out << "    if (left->key" << i << " != right->key" << i
         << ") { return false; }\n";
   }
   out << "  return true;\n}\n";
@@ -111,25 +120,25 @@ void makeBuildOps(CompileState& state, const JoinBuild& build) {
   state.addInclude("velox/experimental/wave/common/HashTable.cuh");
   auto& out = state.inlines();
   out << makeJoinRow(
-      state, build.keys, build.dependent, build.joinType, build.id, true);
+      state, build.keys, build.dependent, build.joinType, build.id);
   auto id = build.id;
   out << "struct HashOps" << id << " {\n"
-      << "  BuildOps" << id << "() = default;\n";
+      << "  HashOps" << id << "() = default;\n";
 
   makeRowHash(state, build.keys, false, id);
   makeRowRowCompare(state, build.keys, id);
 
   out << "};\n\n";
 
-  state.addEntryPoint("facebook::velox::wave::buildTable");
+  state.addEntryPoint("facebook::velox::wave::buildTableKernel");
   out << "void __global__ buildTableKernel(GpuHashTable* table, HashRow" << id
       << "** rows, int32_t numRows) {\n"
-         "  hashOps"
+         "  HashOps"
       << id
-      << " ops();\n"
-         "  table->buildTable<HashRow"
+      << " ops;\n"
+         "  table->joinBuild<HashRow"
       << id << ", HashOps" << id
-      << ">(rows, numRows);\n"
+      << ">(rows, numRows, ops);\n"
          "}\n";
 }
 
@@ -160,21 +169,27 @@ void JoinBuild::visitReferences(
 void JoinBuild::generateMain(CompileState& state, int32_t syncLabel) {
   makeBuildOps(state, *this);
   auto& out = state.generated();
-
-  out << "  if (laneStatus == ErrorCode::kOk) {\n"
-         "    BuildOps"
-      << id
-      << " ops;\n"
-         "    auto* table  = reinterpret_cast>GpuHashTable*>(shared->states["
+  state.declareNamed(fmt::format("GpuHashTable* table{};", id));
+  out << "  table" << id << " = reinterpret_cast<GpuHashTable*>(shared->states["
       << state.stateOrdinal(*this->state)
       << "]);\n"
-         "    if (!table->addRow(";
+    "    if (!table" << id << "->addJoinRow<HashRow" << id << ">(";
   makeInitJoinRow(state, keys, dependent, id, false);
   out << ")) {\n"
          "     laneStatus = ErrorCode::kInsufficientMemory;\n"
          "      shared->hasContinue = true;\n"
          "    }\n";
+  out << " sync" << syncLabel << ":\n";
+  out << "      __syncthreads();\n";
+  out << "  if (threadIdx.x == 0 && shared->hasContinue) {\n"
+         "    auto ret = gridStatus<BuildReturn>(shared, "
+      << abstractHashBuild->mutableInstructionStatus()->gridState
+      << ");\n"
+         "    ret->needMore = true;\n"
+         "  }\n";
+  out << "  __syncthreads();\n";
 }
+
 
 std::string JoinBuild::preContinueCode(CompileState& state) {
   return "    laneStatus = laneStatus == ErrorCode::kInsufficientMemory\n"
@@ -185,8 +200,29 @@ std::unique_ptr<AbstractInstruction> JoinBuild::addInstruction(
     CompileState& state) {
   auto result =
       std::make_unique<AbstractHashBuild>(state.nextSerial(), this->state);
+  bool hasNext = joinTypeHasNext(joinType);
+  bool nullableKeys = joinTypeHasNullableKeys(joinType);
+    int32_t offset = 0;
+    offset += bits::roundUp((nullableKeys ? keys.size() : 0) + dependent.size(), 32) / 8;
+    for (auto& key : keys) {
+    int32_t align = cudaTypeAlign(*key->type);
+    int32_t width = cudaTypeSize(*key->type);
+    offset = bits::roundUp(offset, align) + width;
+    }
+    for (auto& key : dependent) {
+      int32_t align = cudaTypeAlign(*key->type);
+      int32_t width = cudaTypeSize(*key->type);
+      offset = bits::roundUp(offset, align) + width;
+    }
+
+    if (hasNext) {
+      offset = bits::roundUp(offset, 8) + 8;
+    }
+    result->roundedRowSize = bits::roundUp(offset, 8);
+
   result->continueLabel = continueLabel_;
   result->joinBridge = joinBridge;
+  abstractHashBuild = result.get();
   return result;
 }
 
@@ -211,7 +247,7 @@ void JoinProbe::generateMain(CompileState& state, int32_t syncLabel) {
   state.addInclude("velox/experimental/wave/common/HashTable.cuh");
 
   state.inlines() << makeJoinRow(
-      state, keys, expand->dependent, joinType, id, true);
+      state, keys, expand->dependent, joinType, id);
 
   auto& out = state.generated();
   state.declareNamed(fmt::format("bool nullProbe{};", id));
@@ -316,7 +352,7 @@ void JoinExpand::generateMain(CompileState& state, int32_t syncLabel) {
   out << "  laneStatus = threadIdx.x < shared->numRows ? ErrorCode::kOk : ErrorCode::kInactive;\n";
   state.generateWrap(wrapInfo_, nthWrap, indices);
   state.ensureOperand(hits);
-  out << "  joinRow(" << state.operandValue(hits) << ", laneStatus, shared, ";
+  out << "  joinRow(reinterpret_cast<HashRow" << id << "**>(operands[" <<  state.ordinal(*hits) << "]->base), laneStatus, shared, ";
   makeCopyRow(state, *this);
   out << ");\n";
 }

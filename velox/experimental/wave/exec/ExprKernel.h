@@ -78,6 +78,12 @@ struct AggregateReturn {
   int64_t numDistinct;
 };
 
+// Return status for hash join build. Only indicates if more space is needed.
+struct BuildReturn {
+  // Flag 8 wide for alignment.
+  int64_t needMore{0};
+};
+ 
 /// Thread block wide status in Wave kernels
 struct WaveShared {
   /// per lane status and row count.

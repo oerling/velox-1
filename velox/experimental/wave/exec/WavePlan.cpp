@@ -395,12 +395,13 @@ bool CompileState::tryPlanOperator(
   } else if (name == "FilterProject") {
     tryFilterProject(op, outputType, nodeIndex);
   } else if (name == "HashBuild") {
-    auto* node = dynamic_cast<const core::HashJoinNode*>(
-        driverFactory_.planNodes[nodeIndex].get());
+    auto* node = inputPlanNode<core::HashJoinNode>(nodeIndex);
     VELOX_CHECK_NOT_NULL(node);
     addSegment(BoundaryType::kHashBuild, node, node->outputType());
     auto step = makeStep<JoinBuild>();
     auto* state = newState(StateKind::kHashBuild, node->id(), "");
+    step->state = state;
+    step->id = atoi(node->id().c_str());
     step->joinBridge = reinterpret_cast<exec::HashBuild*>(op)->joinBridge();
     auto& keys = node->rightKeys();
     for (auto i = 0; i < keys.size(); ++i) {
@@ -416,6 +417,8 @@ bool CompileState::tryPlanOperator(
     step->joinType = node->joinType();
     step->continueLabel_ = ++nextContinueLabel_;
     segments_.back().steps.push_back(step);
+    // A join build has no output columns.
+    segments_.back().outputType = ROW({}, {});
   } else if (name == "HashProbe") {
     auto* probe = reinterpret_cast<exec::HashProbe*>(op);
     auto* node = dynamic_cast<const core::HashJoinNode*>(

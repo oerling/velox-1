@@ -203,9 +203,9 @@ class GpuHashTable : public GpuHashTableBase {
       }
   }
 
-  template <typename RowType, typename Ops, typename Init>
-  bool __device__ addJoinRow(Ops ops, Init init) {
-    auto* row = allocators[0].allocate<RowType>();
+  template <typename RowType, typename Init>
+  bool __device__ addJoinRow(Init init) {
+    auto* row = allocators[0].allocateRow<RowType>();
     if (!row) {
       return false;
     }
@@ -444,7 +444,7 @@ class GpuHashTable : public GpuHashTableBase {
 	  auto candidate = bucket->loadWithWait<RowType>(hitIdx);
 	  if (ops.compare(row, candidate)) {
 	    for (;;) {
-	      auto previous = asDeviceAtomic<RowType*>(candidate->nextPtr()).load(cuda::memory_order_relaxed);
+	      auto previous = asDeviceAtomic<RowType*>(candidate->nextPtr())->load(cuda::memory_order_relaxed);
 		if (atomicCAS((unsigned long long*)&candidate->next, (unsigned long long)row, (unsigned long long)previous)) {
 		  *row->nextPtr() = previous;
 		  // Set duplicates flag, no need to set if already set.
