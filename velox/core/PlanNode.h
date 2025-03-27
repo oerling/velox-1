@@ -506,7 +506,7 @@ class ProjectNode : public PlanNode {
 
   static PlanNodePtr create(const folly::dynamic& obj, void* context);
 
- private:
+ protected:
   void addDetails(std::stringstream& stream) const override;
 
   /// Append a summary of the plan node to 'stream'. Make sure to append full
@@ -519,6 +519,7 @@ class ProjectNode : public PlanNode {
       const PlanSummaryOptions& options,
       std::stringstream& stream) const override;
 
+ private:
   static RowTypePtr makeOutputType(
       const std::vector<std::string>& names,
       const std::vector<TypedExprPtr>& projections) {
