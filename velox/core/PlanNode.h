@@ -456,9 +456,9 @@ class FilterNode : public PlanNode {
   const TypedExprPtr filter_;
 };
 
-class ProjectNode : public PlanNode {
+class AbstractProjectNode : public PlanNode {
  public:
-  ProjectNode(
+  AbstractProjectNode(
       const PlanNodeId& id,
       std::vector<std::string>&& names,
       std::vector<TypedExprPtr>&& projections,
@@ -469,7 +469,7 @@ class ProjectNode : public PlanNode {
         projections_(std::move(projections)),
         outputType_(makeOutputType(names_, projections_)) {}
 
-  ProjectNode(
+  AbstractProjectNode(
       const PlanNodeId& id,
       const std::vector<std::string>& names,
       const std::vector<TypedExprPtr>& projections,
@@ -502,10 +502,6 @@ class ProjectNode : public PlanNode {
     return "Project";
   }
 
-  folly::dynamic serialize() const override;
-
-  static PlanNodePtr create(const folly::dynamic& obj, void* context);
-
  protected:
   void addDetails(std::stringstream& stream) const override;
 
@@ -519,7 +515,6 @@ class ProjectNode : public PlanNode {
       const PlanSummaryOptions& options,
       std::stringstream& stream) const override;
 
- private:
   static RowTypePtr makeOutputType(
       const std::vector<std::string>& names,
       const std::vector<TypedExprPtr>& projections) {
@@ -537,6 +532,23 @@ class ProjectNode : public PlanNode {
   const std::vector<TypedExprPtr> projections_;
   const RowTypePtr outputType_;
 };
+
+class ProjectNode : public AbstractProjectNode {
+public:
+  ProjectNode(
+      const PlanNodeId& id,
+      std::vector<std::string>&& names,
+      std::vector<TypedExprPtr>&& projections,
+      PlanNodePtr source)
+    : AbstractProjectNode(id, names, projections, source) {}
+
+  folly::dynamic serialize() const override;
+
+  static PlanNodePtr create(const folly::dynamic& obj, void* context);
+};
+  
+
+  
 
 class TableScanNode : public PlanNode {
  public:
