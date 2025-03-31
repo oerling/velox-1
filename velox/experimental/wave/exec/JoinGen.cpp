@@ -131,9 +131,9 @@ void makeBuildOps(CompileState& state, const JoinBuild& build) {
   out << "};\n\n";
 
   state.addEntryPoint("facebook::velox::wave::buildTableKernel");
-  out << "void __global__ buildTableKernel(GpuHashTable* table, HashRow" << id
-      << "** rows, int32_t numRows) {\n"
-         "  HashOps"
+  out << "void __global__ buildTableKernel(GpuHashTable* table, void* voidRows, int32_t numRows) {\n"
+    "  auto rows = reinterpret_cast<HashRow" << id <<"*>(voidRows);\n"
+    "  HashOps"
       << id
       << " ops;\n"
          "  table->joinBuild<HashRow"

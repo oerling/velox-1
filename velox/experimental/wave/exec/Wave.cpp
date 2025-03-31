@@ -1031,7 +1031,8 @@ void WaveStream::makeHashTable(AggregateOperatorState& state, int32_t rowSize, b
 				   numBuckets - 1,
 				   0,
 				   reinterpret_cast<RowAllocator*>(allocators));
-  auto numRows = numBuckets * GpuBucketMembers::kNumSlots;
+  auto numRows = makeTable ? numBuckets * GpuBucketMembers::kNumSlots
+    : (1 << 20) / rowSize;
   WaveBufferPtr rows = arena_->allocate<char>(rowSize * numRows);
   state.buffers.push_back(rows);
   new (allocators) HashPartitionAllocator(

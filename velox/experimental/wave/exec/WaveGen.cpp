@@ -914,6 +914,10 @@ void CompileState::makeLevel(std::vector<KernelBox>& level) {
             currentBox_->kernelEntryPoints_[agg->continueIdx()] =
                 kernelEntryPointCounter++;
           }
+          if (auto* build = dynamic_cast<AbstractHashBuild*>(opInst)) {
+            currentBox_->kernelEntryPoints_[build->continueIdx()] =
+                kernelEntryPointCounter++;
+          }
           AbstractState* state = opInst->state;
           state->instruction = instruction;
         }
