@@ -324,6 +324,14 @@ OperatorState* WaveStream::operatorState(int32_t id) {
   return nullptr;
 }
 
+  std::shared_ptr<OperatorState> WaveStream::operatorStateShared(int32_t id) {
+  auto it = taskStateMap_->states.find(id);
+  if (it != taskStateMap_->states.end()) {
+    return it->second;
+  }
+  return nullptr;
+}
+  
 OperatorState* WaveStream::newState(ProgramState& init) {
   auto stateShared = init.create(*this);
   taskStateMap_->states[init.stateId] = stateShared;

@@ -956,6 +956,9 @@ class WaveStream {
 
   OperatorState* operatorState(int32_t id);
 
+  std::shared_ptr<OperatorState> operatorStateShared(int32_t id);
+
+  
   OperatorState* newState(ProgramState& init);
 
   /// Initializes 'state' to the device side state for 'inst'. Returns after

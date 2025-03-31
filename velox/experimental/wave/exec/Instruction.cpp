@@ -545,15 +545,16 @@ AdvanceResult AbstractHashBuild::canAdvance(
 int32_t allocatedRowBytes(const AllocationRange& range) {
   return range.rowOffset - range.firstRowOffset;
 }
+
 void AbstractHashBuild::pipelineFinished(
     WaveStream& stream,
     CompiledKernel* kernel) {
   auto deviceStream = WaveStream::streamFromReserve();
   auto stateId = state->id;
-  auto* state = stream.operatorState(stateId)->as<HashTableHolder>();
+  auto state = std::dynamic_pointer_cast<HashTableHolder>(stream.operatorStateShared(stateId));
   auto* head = state->alignedHead;
   auto* hashTable = head->table;
-  allocatorsToRanges(state);
+  allocatorsToRanges(state.get());
   int64_t numRows = 0;
   for (auto i = 0; i < state->ranges.size(); ++i) {
     numRows += allocatedRowBytes(state->ranges[i]);
@@ -615,6 +616,7 @@ void AbstractHashBuild::pipelineFinished(
   deviceStream->wait();
   TR(&stream, fmt::format("Built {}\n", (void*)hashTable));
   WaveStream::releaseStream(std::move(deviceStream));
+  joinBridge->setHashTable(std::move(state), false);
 }
 
 std::function<std::shared_ptr<OperatorState>(WaveStream& stream)>
