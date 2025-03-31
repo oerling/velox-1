@@ -1007,44 +1007,46 @@ void AggregateOperatorState::allocateAggregateHeader(
   new (alignedHead) DeviceAggregation();
 }
 
-void WaveStream::makeHashTable(AggregateOperatorState& state, int32_t rowSize, bool makeTable) {
+void WaveStream::makeHashTable(
+    AggregateOperatorState& state,
+    int32_t rowSize,
+    bool makeTable) {
   AggregationControl control;
   auto stream = streamFromReserve();
   const int32_t numPartitions = 1;
   int32_t size = sizeof(DeviceAggregation) + sizeof(GpuHashTableBase) +
-    sizeof(HashPartitionAllocator) * numPartitions;
+      sizeof(HashPartitionAllocator) * numPartitions;
   state.allocateAggregateHeader(size, *arena_);
   auto* header = state.alignedHead;
   auto* hashTable = reinterpret_cast<GpuHashTableBase*>(header + 1);
   HashPartitionAllocator* allocators =
-    reinterpret_cast<HashPartitionAllocator*>(hashTable + 1);
+      reinterpret_cast<HashPartitionAllocator*>(hashTable + 1);
   int32_t numBuckets = bits::nextPowerOfTwo(FLAGS_wave_init_group_by_buckets);
   header->table = hashTable;
   WaveBufferPtr table;
   if (makeTable) {
-    table =
-      arena_->allocate<char>(sizeof(GpuBucketMembers) * numBuckets);
+    table = arena_->allocate<char>(sizeof(GpuBucketMembers) * numBuckets);
     state.buffers.push_back(table);
   }
   new (hashTable) GpuHashTableBase(
-				   table->as<GpuBucket>(),
-				   numBuckets - 1,
-				   0,
-				   reinterpret_cast<RowAllocator*>(allocators));
+      table->as<GpuBucket>(),
+      numBuckets - 1,
+      0,
+      reinterpret_cast<RowAllocator*>(allocators));
   auto numRows = makeTable ? numBuckets * GpuBucketMembers::kNumSlots
-    : (1 << 20) / rowSize;
+                           : (1 << 20) / rowSize;
   WaveBufferPtr rows = arena_->allocate<char>(rowSize * numRows);
   state.buffers.push_back(rows);
   new (allocators) HashPartitionAllocator(
-        rows->as<char>(), rows->size(), rows->size(), rowSize);
-    state.setSizesToSafe();
-      stream->prefetch(getDevice(), state.alignedHead, state.alignedHeadSize);
-      if (table) {
-	stream->memset(table->as<char>(), 0, table->size());
-      }
-      releaseStream(std::move(stream));
+      rows->as<char>(), rows->size(), rows->size(), rowSize);
+  state.setSizesToSafe();
+  stream->prefetch(getDevice(), state.alignedHead, state.alignedHeadSize);
+  if (table) {
+    stream->memset(table->as<char>(), 0, table->size());
+  }
+  releaseStream(std::move(stream));
 }
-  
+
 void WaveStream::makeAggregate(
     AbstractAggregation& inst,
     AggregateOperatorState& state) {
@@ -1096,7 +1098,7 @@ void WaveStream::makeHashBuild(
     HashTableHolder& state) {
   makeHashTable(state, false, inst.rowSize());
 }
-  
+
 void checkOperand(Operand& op) {
   if (op.indexMask != 0 && op.indexMask != -1) {
     VELOX_FAIL("Corrupt operand in executable");

@@ -253,8 +253,8 @@ void registerWave() {
   registerWaveFunctions();
 }
 
-  std::string planToString(const core::PlanNode* plan) {
-    return plan->toString(true, true);
-  }
-  
+std::string planToString(const core::PlanNode* plan) {
+  return plan->toString(true, true);
+}
+
 } // namespace facebook::velox::wave

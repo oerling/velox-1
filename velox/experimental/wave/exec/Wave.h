@@ -1078,8 +1078,9 @@ class WaveStream {
 
   LaunchControl* lastControl() const;
 
-  void makeHashTable(AggregateOperatorState& state, int32_t rowSize, bool makeTable);
-  
+  void
+  makeHashTable(AggregateOperatorState& state, int32_t rowSize, bool makeTable);
+
   static std::unique_ptr<Event> eventFromReserve();
   static void releaseEvent(std::unique_ptr<Event>&& event);
 
@@ -1095,7 +1096,7 @@ class WaveStream {
 
   static folly::CPUThreadPoolExecutor* getExecutor(
       std::unique_ptr<folly::CPUThreadPoolExecutor>& ptr);
-  
+
   // Unified memory.
   std::shared_ptr<GpuArena> arena_;
 

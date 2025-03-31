@@ -83,7 +83,7 @@ struct BuildReturn {
   // Flag 8 wide for alignment.
   int64_t needMore{0};
 };
- 
+
 /// Thread block wide status in Wave kernels
 struct WaveShared {
   /// per lane status and row count.

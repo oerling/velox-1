@@ -244,7 +244,7 @@ AdvanceResult AbstractAggregation::canAdvance(
         .continueLabel = continueLabel,
         .isRetry = true,
         .syncDrivers = true,
-          .updateStatus = resupplyHashTable,
+        .updateStatus = resupplyHashTable,
         .reason = state};
   }
   return {};
@@ -311,24 +311,21 @@ int32_t makeResultRows(
   return fill;
 }
 
-  void       allocatorsToRanges(AggregateOperatorState* aggState) {
-          auto* hashTable =
-          reinterpret_cast<GpuHashTableBase*>(aggState->alignedHead + 1);
-      auto* allocators =
-          reinterpret_cast<HashPartitionAllocator*>(hashTable + 1);
-      int32_t numPartitions = hashTable->partitionMask + 1;
-      for (auto i = 0; i < numPartitions; ++i) {
-        for (auto j = 0; j < 2; j++) {
-          if (!allocators[i].ranges[j].empty()) {
-            aggState->ranges.push_back(std::move(allocators[i].ranges[j]));
-            aggState->ranges.back().clearOverflows(aggState->rowSize);
-          }
-        }
+void allocatorsToRanges(AggregateOperatorState* aggState) {
+  auto* hashTable =
+      reinterpret_cast<GpuHashTableBase*>(aggState->alignedHead + 1);
+  auto* allocators = reinterpret_cast<HashPartitionAllocator*>(hashTable + 1);
+  int32_t numPartitions = hashTable->partitionMask + 1;
+  for (auto i = 0; i < numPartitions; ++i) {
+    for (auto j = 0; j < 2; j++) {
+      if (!allocators[i].ranges[j].empty()) {
+        aggState->ranges.push_back(std::move(allocators[i].ranges[j]));
+        aggState->ranges.back().clearOverflows(aggState->rowSize);
       }
-
+    }
   }
-  
-  
+}
+
 AdvanceResult AbstractReadAggregation::canAdvance(
     WaveStream& stream,
     LaunchControl* control,
@@ -518,13 +515,12 @@ void resupplyJoinTable(
   }
 }
 
-  
 AdvanceResult AbstractHashBuild::canAdvance(
     WaveStream& stream,
     LaunchControl* control,
     OperatorState* state,
     int32_t instructionIdx) const {
-    auto gridState = stream.gridStatus<BuildReturn>(status);
+  auto gridState = stream.gridStatus<BuildReturn>(status);
   if (!gridState) {
     // There is no state if there has been no launch. Not continuable.
     return {};
@@ -540,15 +536,15 @@ AdvanceResult AbstractHashBuild::canAdvance(
         .continueLabel = continueLabel,
         .isRetry = true,
         .syncDrivers = true,
-          .updateStatus = resupplyJoinTable,
+        .updateStatus = resupplyJoinTable,
         .reason = state};
   }
   return {};
 }
 
-  int32_t allocatedRowBytes(const AllocationRange& range) {
-    return range.rowOffset - range.firstRowOffset;
-  }
+int32_t allocatedRowBytes(const AllocationRange& range) {
+  return range.rowOffset - range.firstRowOffset;
+}
 void AbstractHashBuild::pipelineFinished(
     WaveStream& stream,
     CompiledKernel* kernel) {
@@ -563,33 +559,31 @@ void AbstractHashBuild::pipelineFinished(
     numRows += allocatedRowBytes(state->ranges[i]);
   }
   numRows /= state->rowSize;
-  int64_t newTableSize = std::max<int64_t>(64, bits::nextPowerOfTwo((numRows / 4) * 5));
+  int64_t newTableSize =
+      std::max<int64_t>(64, bits::nextPowerOfTwo((numRows / 4) * 5));
   auto tableBuffer = state->arena->allocate<GpuBucketMembers>(
-							      newTableSize / GpuBucketMembers::kNumSlots);
+      newTableSize / GpuBucketMembers::kNumSlots);
   state->buffers.push_back(tableBuffer);
-  deviceStream->memset(
-        tableBuffer->as<char>(), 0, tableBuffer->size());
-    hashTable->sizeMask = (newTableSize / GpuBucketMembers::kNumSlots) - 1;
-    hashTable->buckets = tableBuffer->as<GpuBucket>();
-    hashTable->maxEntries = newTableSize;
+  deviceStream->memset(tableBuffer->as<char>(), 0, tableBuffer->size());
+  hashTable->sizeMask = (newTableSize / GpuBucketMembers::kNumSlots) - 1;
+  hashTable->buckets = tableBuffer->as<GpuBucket>();
+  hashTable->maxEntries = newTableSize;
 
   state->setSizesToSafe();
   deviceStream->prefetch(
       getDevice(), state->alignedHead, state->alignedHeadSize);
 
   auto* exe = stream.executableByInstruction(this);
-    VELOX_CHECK_NOT_NULL(exe);
+  VELOX_CHECK_NOT_NULL(exe);
   auto* program = exe->programShared.get();
   auto entryPointIdx = program->entryPointIdxBySerial(serial);
-
-
 
   struct BuildArgs {
     BuildArgs() = default;
     BuildArgs(GpuHashTableBase* table, void* rows, int32_t numRows)
-      : table(table), rows(rows), numRows(numRows) {
+        : table(table), rows(rows), numRows(numRows) {
       voids[0] = &table;
-      voids[1]= &rows;
+      voids[1] = &rows;
       voids[2] = &numRows;
       args = reinterpret_cast<void**>(&voids);
     }
@@ -602,9 +596,20 @@ void AbstractHashBuild::pipelineFinished(
 
   std::vector<BuildArgs> buildArgs(state->ranges.size());
   for (auto i = 0; i < state->ranges.size(); ++i) {
-    buildArgs[i] = BuildArgs(hashTable, reinterpret_cast<void*>(state->ranges[i].base + state->ranges[i].firstRowOffset ), allocatedRowBytes(state->ranges[i]) / state->rowSize);
-    auto numBlocks = bits::roundUp(buildArgs[i].numRows, kBlockSize) / kBlockSize;
-    program->kernel()->launch(entryPointIdx, numBlocks, kBlockSize, 0, deviceStream.get(), buildArgs[i].args);
+    buildArgs[i] = BuildArgs(
+        hashTable,
+        reinterpret_cast<void*>(
+            state->ranges[i].base + state->ranges[i].firstRowOffset),
+        allocatedRowBytes(state->ranges[i]) / state->rowSize);
+    auto numBlocks =
+        bits::roundUp(buildArgs[i].numRows, kBlockSize) / kBlockSize;
+    program->kernel()->launch(
+        entryPointIdx,
+        numBlocks,
+        kBlockSize,
+        0,
+        deviceStream.get(),
+        buildArgs[i].args);
   }
 
   deviceStream->wait();

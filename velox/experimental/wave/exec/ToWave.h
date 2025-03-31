@@ -1043,7 +1043,7 @@ class CompileState {
     VELOX_CHECK_NOT_NULL(node);
     return result;
   }
-  
+
  private:
   bool
   addOperator(exec::Operator* op, int32_t& nodeIndex, RowTypePtr& outputType);

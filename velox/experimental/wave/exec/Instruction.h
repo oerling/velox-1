@@ -471,7 +471,6 @@ struct AbstractHashBuild : public AbstractOperator {
     return &status;
   }
 
-  
   int32_t rowSize() {
     return roundedRowSize;
   }
@@ -500,7 +499,7 @@ struct AbstractHashJoinExpand : public AbstractOperator {
 
   void reserveState(InstructionStatus& state) override;
 
-    InstructionStatus* mutableInstructionStatus() override {
+  InstructionStatus* mutableInstructionStatus() override {
     return &status;
   }
 
