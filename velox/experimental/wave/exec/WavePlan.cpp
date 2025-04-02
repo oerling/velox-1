@@ -545,6 +545,9 @@ bool CompileState::makeSegments(int32_t& operatorIndex) {
     if (!tryPlanOperator(operators[operatorIndex], nodeIndex, outputType)) {
       break;
     }
+    if (startNodeId_.empty()) {
+      startNodeId_ = operators[operatorIndex]->planNodeId();
+    }
     ++nodeIndex;
   }
   if (!segments_.back().outputType) {

@@ -60,7 +60,7 @@ class TableScan : public WaveSourceOperator {
     return true;
   }
 
-  exec::BlockingReason isBlocked(ContinueFuture* future) override;
+  exec::BlockingReason isBlocked(WaveStream& /*stream*/, ContinueFuture* future) override;
 
   bool isFinished() const override;
 

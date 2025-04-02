@@ -725,7 +725,7 @@ ProgramKey CompileState::makeLevelText(
 
   VELOX_CHECK_EQ(1, level.size(), "Only one program per level supported");
   std::stringstream head;
-  auto kernelName = fmt::format("wavegen{}", ++kernelCounter_);
+  auto kernelName = fmt::format("wavegen{}_{}", startNodeId_, ++kernelCounter_);
   kernelEntryPoints_ = {fmt::format("facebook::velox::wave::{}", kernelName)};
   generated_ << "  GENERATED_PREAMBLE(0);\n";
   auto& params = currentCandidate_->levelParams[kernelSeq_];

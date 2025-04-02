@@ -586,13 +586,13 @@ void AbstractHashBuild::pipelineFinished(
       voids[0] = &table;
       voids[1] = &rows;
       voids[2] = &numRows;
-      args = reinterpret_cast<void**>(&voids);
+      args = reinterpret_cast<void*>(&voids);
     }
     GpuHashTableBase* table;
     void* rows;
     int32_t numRows;
     void* voids[3];
-    void** args;
+    void* args;
   };
 
   std::vector<BuildArgs> buildArgs(state->ranges.size());
@@ -610,7 +610,7 @@ void AbstractHashBuild::pipelineFinished(
         kBlockSize,
         0,
         deviceStream.get(),
-        buildArgs[i].args);
+        buildArgs[i].voids);
   }
 
   deviceStream->wait();

@@ -298,6 +298,8 @@ struct AggregateOperatorState : public OperatorState {
   // affecting surrounding data.
   DeviceAggregation* alignedHead;
 
+  GpuHashTableBase* hashTable{nullptr};
+
   // Used bytes counting from 'alignedHead'.
   int32_t alignedHeadSize;
 
@@ -335,6 +337,10 @@ struct AggregateOperatorState : public OperatorState {
 struct HashTableHolder : public AggregateOperatorState {
   HashTableHolder(std::shared_ptr<GpuArena> arena)
       : AggregateOperatorState(std::move(arena)) {}
+
+  void* devicePtr() const override {
+    return hashTable;
+  }
 };
 
 struct OperatorStateMap {
@@ -591,6 +597,8 @@ class Program : public std::enable_shared_from_this<Program> {
         instructions_.front()->opCode == OpCode::kReadAggregate;
   }
 
+  exec::BlockingReason isBlocked(WaveStream& stream, ContinueFuture* future);
+  
   /// If partially executed instructions in the call of 'control',
   /// returns the point where to pick up. If fully executed or not
   /// started, returns the number of rows to obtain from the

@@ -422,11 +422,11 @@ class GpuHashTable : public GpuHashTableBase {
 
   template <typename RowType, typename Ops>
   void __device__
-  joinBuild(RowType** rows, int32_t numRows, Ops ops) {
+  joinBuild(RowType* rows, int32_t numRows, Ops ops) {
     int32_t stride = blockDim.x * gridDim.x;
     for (auto idx = threadIdx.x + blockDim.x * blockIdx.x; idx < numRows;
          idx += stride) {
-      auto* row = rows[idx];
+      auto* row = rows + idx;
       uint64_t h = ops.hashRow(row);
       auto bucketIdx = h & sizeMask;
       uint32_t tagWord = hashTag(h);

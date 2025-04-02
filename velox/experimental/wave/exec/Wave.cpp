@@ -1027,6 +1027,7 @@ void WaveStream::makeHashTable(
   state.allocateAggregateHeader(size, *arena_);
   auto* header = state.alignedHead;
   auto* hashTable = reinterpret_cast<GpuHashTableBase*>(header + 1);
+  state.hashTable = hashTable;
   HashPartitionAllocator* allocators =
       reinterpret_cast<HashPartitionAllocator*>(hashTable + 1);
   int32_t numBuckets = bits::nextPowerOfTwo(FLAGS_wave_init_group_by_buckets);
@@ -1037,7 +1038,7 @@ void WaveStream::makeHashTable(
     state.buffers.push_back(table);
   }
   new (hashTable) GpuHashTableBase(
-      table->as<GpuBucket>(),
+				   makeTable ? table->as<GpuBucket>() : nullptr,
       numBuckets - 1,
       0,
       reinterpret_cast<RowAllocator*>(allocators));
@@ -1104,7 +1105,7 @@ void WaveStream::makeAggregate(
 void WaveStream::makeHashBuild(
     AbstractHashBuild& inst,
     HashTableHolder& state) {
-  makeHashTable(state, false, inst.rowSize());
+  makeHashTable(state, inst.rowSize(), false);
 }
 
 void checkOperand(Operand& op) {
@@ -1243,6 +1244,22 @@ bool Program::isSink() const {
   return instructions_[size - 1]->isSink();
 }
 
+  exec::BlockingReason Program::isBlocked(WaveStream& stream, ContinueFuture* future) {
+  for (int32_t i = instructions_.size() - 1; i >= 0; --i) {
+    auto* instruction = instructions_[i].get();
+    OperatorState* state = nullptr;
+    auto stateId = instruction->stateId();
+    if (stateId.has_value()) {
+      state = stream.operatorState(stateId.value());
+    }
+    auto result = instruction->isBlocked(stream, state, future);
+    if (result != exec::BlockingReason::kNotBlocked) {
+      return result;
+    }
+  }
+  return exec::BlockingReason::kNotBlocked;
+}
+    
 AdvanceResult Program::canAdvance(
     WaveStream& stream,
     LaunchControl* control,

@@ -454,6 +454,10 @@ struct AbstractHashBuild : public AbstractOperator {
   AbstractHashBuild(int32_t serial, AbstractState* state)
       : AbstractOperator(OpCode::kHashBuild, serial, state) {}
 
+  bool isSink() const override {
+    return true;
+  }
+
   AdvanceResult canAdvance(
       WaveStream& stream,
       LaunchControl* control,

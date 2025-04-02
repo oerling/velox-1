@@ -51,6 +51,8 @@ class Project : public WaveOperator {
     return last.size() == 1 && last[0]->isSink();
   }
 
+  exec::BlockingReason isBlocked(WaveStream& stream, ContinueFuture* future) override;
+  
   std::vector<AdvanceResult> canAdvance(WaveStream& Stream) override;
 
   void schedule(WaveStream& stream, int32_t maxRows = 0) override;

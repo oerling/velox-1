@@ -35,7 +35,7 @@ class WaveOperator {
 
   virtual ~WaveOperator() = default;
 
-  virtual exec::BlockingReason isBlocked(ContinueFuture* future) {
+  virtual exec::BlockingReason isBlocked(WaveStream& stream, ContinueFuture* future) {
     return exec::BlockingReason::kNotBlocked;
   }
 
