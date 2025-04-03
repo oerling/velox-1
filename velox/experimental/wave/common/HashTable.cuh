@@ -445,10 +445,10 @@ class GpuHashTable : public GpuHashTableBase {
 	  if (ops.compare(row, candidate)) {
 	    for (;;) {
 	      auto previous = asDeviceAtomic<RowType*>(candidate->nextPtr())->load(cuda::memory_order_relaxed);
-		if (atomicCAS((unsigned long long*)&candidate->next, (unsigned long long)row, (unsigned long long)previous)) {
+		if ((unsigned long long)previous == atomicCAS((unsigned long long*)&candidate->next, (unsigned long long)previous, (unsigned long long)row)) {
 		  *row->nextPtr() = previous;
 		  // Set duplicates flag, no need to set if already set.
-		  atomicCAS(&hasDuplicates, 1, 0);
+		  atomicCAS(&hasDuplicates, 0, 1);
 		  goto next;
 		}
 	    }
@@ -470,7 +470,7 @@ class GpuHashTable : public GpuHashTableBase {
     next:;
     }
     __syncthreads();
-  }
+}
 
   int32_t __device__ partitionIdx(uint64_t h) const {
     return partitionMask == 0 ? 0 : (h >> 41) & partitionMask;

@@ -464,6 +464,7 @@ bool CompileState::tryPlanOperator(
     }
     expand->hits = step->hits;
     expand->indices = newOperand(INTEGER(), "join_rows");
+    expand->indices->notNull = true;
   } else if (name == "Aggregation") {
     auto* node = dynamic_cast<const core::AggregationNode*>(
         driverFactory_.planNodes[nodeIndex].get());

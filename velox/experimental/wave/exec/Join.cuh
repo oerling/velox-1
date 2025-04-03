@@ -70,7 +70,7 @@ bool __device__ __forceinline__ joinResult(
   }
   if (!joinContinue) {
     auto nth = exclusiveSum<int32_t, kBlockSize>(
-        filterResult, &shared->numRows, joinShared(shared)->temp);
+        (hit ? filterResult : 0), &shared->numRows, joinShared(shared)->temp);
     if (filterResult) {
       hits[shared->blockBase + nth] = hit;
       auto* indices =

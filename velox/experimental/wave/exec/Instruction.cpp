@@ -583,16 +583,14 @@ void AbstractHashBuild::pipelineFinished(
     BuildArgs() = default;
     BuildArgs(GpuHashTableBase* table, void* rows, int32_t numRows)
         : table(table), rows(rows), numRows(numRows) {
-      voids[0] = &table;
-      voids[1] = &rows;
-      voids[2] = &numRows;
-      args = reinterpret_cast<void*>(&voids);
+      voids[0] = &this->table;
+      voids[1] = &this->rows;
+      voids[2] = &this->numRows;
     }
     GpuHashTableBase* table;
     void* rows;
     int32_t numRows;
     void* voids[3];
-    void* args;
   };
 
   std::vector<BuildArgs> buildArgs(state->ranges.size());
@@ -604,6 +602,9 @@ void AbstractHashBuild::pipelineFinished(
         allocatedRowBytes(state->ranges[i]) / state->rowSize);
     auto numBlocks =
         bits::roundUp(buildArgs[i].numRows, kBlockSize) / kBlockSize;
+    if (numBlocks == 0) {
+      continue;
+    }
     program->kernel()->launch(
         entryPointIdx,
         numBlocks,

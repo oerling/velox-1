@@ -169,10 +169,19 @@ void JoinBuild::visitReferences(
   }
 }
 
+  void checkNullBuildKey(CompileState& state, const std::vector<AbstractOperand*>& keys, int32_t syncLabel) {
+    auto& out = state.generated();
+    for (auto* key : keys) {
+      state.ensureOperand(key);
+    out << fmt::format("  if ({}) {{goto sync{};}}\n", state.isNull(key), syncLabel);
+  }
+}
+  
 void JoinBuild::generateMain(CompileState& state, int32_t syncLabel) {
   makeBuildOps(state, *this);
   auto& out = state.generated();
   state.declareNamed(fmt::format("GpuHashTable* table{};", id));
+  checkNullBuildKey(state, keys, syncLabel);
   out << "  table" << id << " = reinterpret_cast<GpuHashTable*>(shared->states["
       << state.stateOrdinal(*this->state)
       << "]);\n"
@@ -247,11 +256,24 @@ const char* probeBoilerPlate =
     "  table$I$ = reinterpret_cast<GpuHashTable*>(shared->states[$SI$]);\n"
     "  r$HIT$ = reinterpret_cast<int64_t>(table$I$->joinProbe<HashRow$I$>(hash$I$, ";
 
+  // List the non-key extracted build side columns  in the order of build side layout.
+  std::vector<AbstractOperand*> probeDependent(const JoinExpand* expand) {
+    std::vector<AbstractOperand*> deps(expand->tableType->size() - expand->numKeys);
+    for (auto i = 0; i < expand->tableChannels.size(); ++i) {
+      auto channel = expand->tableChannels[i];
+      if (channel < expand->numKeys) {
+	continue;
+      }
+      deps[channel - expand->numKeys] = expand->dependent[i]; 
+    }
+    return deps;
+  }
+
 void JoinProbe::generateMain(CompileState& state, int32_t syncLabel) {
   state.addInclude("velox/experimental/wave/common/Hash.h");
   state.addInclude("velox/experimental/wave/common/HashTable.cuh");
 
-  state.inlines() << makeJoinRow(state, keys, expand->dependent, joinType, id);
+  state.inlines() << makeJoinRow(state, keys, probeDependent(expand), joinType, id);
 
   auto& out = state.generated();
   state.declareNamed(fmt::format("bool nullProbe{};", id));
@@ -337,7 +359,8 @@ void JoinExpand::generateMain(CompileState& state, int32_t syncLabel) {
   }
   auto hitsOrd = state.ordinal(*hits);
   out << fmt::format(" sync{}: ;\n", syncLabel);
-
+  auto duplicatesStr = fmt::format(" table{}->hasDuplicates", id);
+  
   out << fmt::format(
       "  if (joinResult<HashRow{}, {}, {}, {}, {}>(",
       id,
@@ -348,18 +371,21 @@ void JoinExpand::generateMain(CompileState& state, int32_t syncLabel) {
   out << state.operandValue(hits) << ", "
       << (filter ? state.operandValue(filter) : "true")
       << ", shared->startLabel == " << continueLabel_
-      << ", laneStatus,  shared, true,";
+      << ", laneStatus,  shared," << duplicatesStr << ",";
   out << "    reinterpret_cast<int64_t*>(operands[" << hitsOrd << "]) )) {\n";
   out << "  if (threadIdx.x == 0) { shared->startLabel = " << continueLabel_
       << ";};  goto continue" << continueLabel_ << ";}\n";
   out << "  __syncthreads();\n";
   out << "  laneStatus = threadIdx.x < shared->numRows ? ErrorCode::kOk : ErrorCode::kInactive;\n";
   state.generateWrap(wrapInfo_, nthWrap, indices);
+  out << "  laneStatus = threadIdx.x < shared->numRows ? ErrorCode::kOk : ErrorCode::kInactive;\n"
+<< "  if (laneStatus != ErrorCode::kOk) {goto skip" << syncLabel << "; }\n";
   state.ensureOperand(hits);
   out << "  joinRow(reinterpret_cast<HashRow" << id << "**>(operands["
       << state.ordinal(*hits) << "]->base), laneStatus, shared, ";
   makeCopyRow(state, *this);
   out << ");\n";
+  out << "  skip" << syncLabel << ": ;\n";
 }
 
 std::string JoinExpand::preContinueCode(CompileState& state) {
