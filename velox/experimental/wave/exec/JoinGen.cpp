@@ -362,27 +362,27 @@ void JoinExpand::generateMain(CompileState& state, int32_t syncLabel) {
   auto duplicatesStr = fmt::format(" table{}->hasDuplicates", id);
   
   out << fmt::format(
-      "  if (joinResult<HashRow{}, {}, {}, {}, {}>(",
+      "  if (joinResult<HashRow{}, {}, {}, {}, {}, {}>(",
       id,
       state.ordinal(*indices),
       status.gridState,
       status.gridStateSize,
-      status.blockState);
+      status.blockState,
+      state.ordinal(*hits));
   out << state.operandValue(hits) << ", "
       << (filter ? state.operandValue(filter) : "true")
       << ", shared->startLabel == " << continueLabel_
-      << ", laneStatus,  shared," << duplicatesStr << ",";
-  out << "    reinterpret_cast<int64_t*>(operands[" << hitsOrd << "]) )) {\n";
-  out << "  if (threadIdx.x == 0) { shared->startLabel = " << continueLabel_
-      << ";};  goto continue" << continueLabel_ << ";}\n";
+      << ", laneStatus,  shared," << duplicatesStr << ")) {\n";
+  out << "  shared->startLabel = " << continueLabel_
+      << ";  goto continue" << continueLabel_ << ";}\n";
   out << "  __syncthreads();\n";
   out << "  laneStatus = threadIdx.x < shared->numRows ? ErrorCode::kOk : ErrorCode::kInactive;\n";
   state.generateWrap(wrapInfo_, nthWrap, indices);
   out << "  laneStatus = threadIdx.x < shared->numRows ? ErrorCode::kOk : ErrorCode::kInactive;\n"
 << "  if (laneStatus != ErrorCode::kOk) {goto skip" << syncLabel << "; }\n";
-  state.ensureOperand(hits);
-  out << "  joinRow(reinterpret_cast<HashRow" << id << "**>(operands["
-      << state.ordinal(*hits) << "]->base), laneStatus, shared, ";
+
+  auto tpl = fmt::format("HashRow{}, {}, {}", id, state.ordinal(*hits), state.ordinal(*indices));
+  out << "  joinRow<" << tpl << ">(laneStatus, shared, ";
   makeCopyRow(state, *this);
   out << ");\n";
   out << "  skip" << syncLabel << ": ;\n";

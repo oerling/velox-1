@@ -21,12 +21,6 @@
 
 namespace facebook::velox::wave {
 
-struct JoinShared {
-  HashJoinExpandGridStatus* gridStatus;
-  HashJoinExpandBlockStatus* blockStatus;
-  int32_t anyNext;
-  int32_t temp[kBlockSize / 32];
-};
 
 inline __device__ JoinShared* joinShared(WaveShared* shared) {
   return reinterpret_cast<JoinShared*>(&shared->data);
@@ -44,17 +38,16 @@ template <
     int32_t indicesIdx,
     int32_t gridstatusOffset,
     int32_t gridStatusSize,
-    int32_t blockStatusOffset>
+  int32_t blockStatusOffset,
+  int32_t hitsIdx>
 bool __device__ __forceinline__ joinResult(
     int64_t& hitAsInt,
     bool filterResult,
     bool joinContinue,
     ErrorCode laneStatus,
     WaveShared* shared,
-    bool hasDuplicates,
-    int64_t* hitsAsInt) {
-  RowType* hit = reinterpret_cast<RowType*>(hitAsInt);
-  auto hits = reinterpret_cast<RowType**>(hitsAsInt);
+    bool hasDuplicates) {
+  RowType* hit = reinterpret_cast<RowType*>(laneStatus == ErrorCode::kOk ? hitAsInt : 0);
   if (threadIdx.x == 0) {
     auto* j = joinShared(shared);
     if (hasDuplicates) {
@@ -71,43 +64,48 @@ bool __device__ __forceinline__ joinResult(
   if (!joinContinue) {
     auto nth = exclusiveSum<int32_t, kBlockSize>(
         (hit ? filterResult : 0), &shared->numRows, joinShared(shared)->temp);
-    if (filterResult) {
+    if (hit && filterResult) {
+      auto* hits = reinterpret_cast<RowType**>(shared->operands[hitsIdx]->base);
       hits[shared->blockBase + nth] = hit;
       auto* indices =
           reinterpret_cast<int32_t*>(shared->operands[indicesIdx]->base);
       indices[shared->blockBase + nth] = shared->blockBase + threadIdx.x;
     }
-    if (hasDuplicates) {
-      RowType* next = nullptr;
-      if (hit) {
-        next = *hit->nextPtr();
-        joinShared(shared)->blockStatus->next[threadIdx.x] = next;
-        hit = next;
-      }
-      uint32_t flags = __ballot_sync(0xffffffff, next != nullptr);
-      if ((threadIdx.x & 31) == 0) {
-        if (flags) {
-          atomicOr(&joinShared(shared)->anyNext, flags);
-        }
-        // the grid-wide flag is set by one thread per warp if not already set.
-        if (!asDeviceAtomic<int32_t>(
-                 &joinShared(shared)->gridStatus->anyContinuable)
-                 ->load(cuda::memory_order_relaxed)) {
-          // The write goes to L2 as write through without any memory order.
-          joinShared(shared)->gridStatus->anyContinuable = true;
-        }
-      }
-      __syncthreads();
-      return shared->numRows < kBlockSize - 32 &&
-          joinShared(shared)->anyNext != 0;
+    if (threadIdx.x == kBlockSize - 1) {
+      shared->numRows = nth + (hit && filterResult);;
     }
-    return false;
+
+    if (!hasDuplicates) {
+      // syncthreads in caller.
+      return false;
+    }
+    RowType* next = nullptr;
+    if (hit) {
+      next = *hit->nextPtr();
+      hit = next;
+      hitAsInt = reinterpret_cast<int64_t>(hit);
+    }
+    joinShared(shared)->blockStatus->next[threadIdx.x] = next;
+    uint32_t flags = __ballot_sync(0xffffffff, next != nullptr);
+    if ((threadIdx.x & 31) == 0) {
+      if (flags) {
+	atomicOr(&joinShared(shared)->anyNext, flags);
+	joinShared(shared)->gridStatus->anyContinuable = true;
+      }
+    }
+    __syncthreads();
+    // All threads return the same. true if there is space in the output and nexts to look at.
+    return shared->numRows < kBlockSize - 64 && joinShared(shared)->anyNext;
   }
+  shared->numRows = 0;
+  __syncthreads();
+
   // We come here when there are  places to fill above shared->numRows.
   bool laneFull = false;
   if (hit && filterResult) {
     auto row = atomicAdd(&shared->numRows, 1);
     if (row < kBlockSize) {
+      auto* hits = reinterpret_cast<RowType**>(shared->operands[hitsIdx]->base);
       auto* indices =
           reinterpret_cast<int32_t*>(shared->operands[indicesIdx]->base);
       indices[shared->blockBase + row] = shared->blockBase + threadIdx.x;
@@ -115,12 +113,13 @@ bool __device__ __forceinline__ joinResult(
     } else {
       laneFull = true;
     }
-    if (!laneFull) {
+  }
+  if (!laneFull && hit) {
       auto* next = *hit->nextPtr();
       joinShared(shared)->blockStatus->next[threadIdx.x] = next;
-      hit = next;
-    }
+      hitAsInt = reinterpret_cast<int64_t>(next);
   }
+
   __syncthreads();
   if (threadIdx.x == 0 && shared->numRows > kBlockSize) {
     shared->numRows = kBlockSize;
@@ -134,21 +133,21 @@ bool __device__ __forceinline__ joinResult(
     }
   }
   __syncthreads();
-  if (threadIdx.x == 0 && joinShared(shared)->anyNext &&
-      !joinShared(shared)->gridStatus->anyContinuable) {
+  if (threadIdx.x == 0 && joinShared(shared)->anyNext) {
     joinShared(shared)->gridStatus->anyContinuable = 1;
   }
   return shared->numRows < kBlockSize - 32 && joinShared(shared)->anyNext;
 }
 
-template <typename RowType, typename CopyRow>
+  template <typename RowType, int32_t hitsIdx, int32_t indicesIdx, typename CopyRow>
 void __device__ __forceinline__ joinRow(
-    RowType** hits,
     ErrorCode laneStatus,
     WaveShared* shared,
     CopyRow copy) {
-  if (laneStatus == ErrorCode::kOk) {
-    copy(hits[shared->blockBase + threadIdx.x], shared->blockBase + threadIdx.x);
+    if (laneStatus == ErrorCode::kOk) {
+      RowType** hits = reinterpret_cast<RowType**>(shared->operands[hitsIdx]->base);
+      int32_t* indices = reinterpret_cast<int32_t*>(shared->operands[indicesIdx]->base);
+      copy(hits[indices[shared->blockBase + threadIdx.x]], shared->blockBase + threadIdx.x);
   }
 }
 

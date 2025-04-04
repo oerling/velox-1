@@ -225,6 +225,8 @@ struct AdvanceResult {
 /// status.
 enum class OpCode { kAggregate, kReadAggregate, kHashBuild, kHashJoinExpand };
 
+  class Program;
+  
 struct AbstractInstruction {
   AbstractInstruction(OpCode opCode, int32_t serial = -1)
       : opCode(opCode), serial(serial) {}
@@ -264,7 +266,7 @@ struct AbstractInstruction {
   /// like a hash join build side.
   virtual void pipelineFinished(
       WaveStream& /*stream*/,
-      CompiledKernel* /*kernel*/) {}
+      Program* /*program*/) {}
 
   virtual bool isSink() const {
     return false;
@@ -464,7 +466,7 @@ struct AbstractHashBuild : public AbstractOperator {
       OperatorState* state,
       int32_t instructionIdx) const override;
 
-  void pipelineFinished(WaveStream& stream, CompiledKernel* kernel) override;
+  void pipelineFinished(WaveStream& stream, Program* program) override;
 
   std::function<std::shared_ptr<OperatorState>(WaveStream& stream)>
   stateCreateFunction() override;

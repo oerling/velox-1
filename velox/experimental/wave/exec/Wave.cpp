@@ -1293,7 +1293,7 @@ void Program::callUpdateStatus(
 
 void Program::pipelineFinished(WaveStream& stream) {
   for (auto& instruction : instructions_) {
-    instruction->pipelineFinished(stream, kernel_.get());
+    instruction->pipelineFinished(stream, this);
   }
 }
 

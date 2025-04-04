@@ -183,6 +183,7 @@ struct HashJoinExpandGridStatus {
   /// hashJoinExpandBlockstatus has the lane statuses. int32_t to support
   /// atomics.
   int32_t anyContinuable{0};
+  int32_t pad{0};
 };
 
 /// Tracks the state of a hash join probe between batches of output. Needed when
@@ -195,4 +196,13 @@ struct HashJoinExpandBlockStatus {
   void* next[kBlockSize];
 };
 
+// Shared memory resident state for hash join expand.
+struct JoinShared {
+  HashJoinExpandGridStatus* gridStatus;
+  HashJoinExpandBlockStatus* blockStatus;
+  int32_t anyNext;
+  int32_t temp[kBlockSize / 32];
+};
+
+ 
 } // namespace facebook::velox::wave

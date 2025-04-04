@@ -649,6 +649,11 @@ struct JoinExpand : public KernelStep {
     return true;
   }
 
+  int32_t sharedMemorySize() const {
+    return sizeof(WaveShared) + sizeof(JoinShared);
+  }
+
+  
   void visitReferences(
       std::function<void(AbstractOperand*)> visitor) const override;
 

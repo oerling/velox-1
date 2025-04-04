@@ -51,6 +51,9 @@ struct Pipeline {
   bool makesHostResult{false};
   bool canAdvance{false};
   bool noMoreInput{false};
+
+  /// true if pipelineFinished has been called.
+  bool finishCalled{false};
 };
 
 /// Synchronizes between WaveDrivers on different Drivers of a Task

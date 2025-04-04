@@ -414,17 +414,26 @@ AdvanceResult AbstractHashJoinExpand::canAdvance(
     LaunchControl* control,
     OperatorState* state,
     int32_t instructionIdx) const {
-  return {};
+    auto* gridStatus =
+        stream->gridStatus<HashJoinExpandGridStatus>(status);
+    if (!gridStatus) {
+      return {};
+    }
+    if (gridStatus->anyContinuable) {
+      stream.clearGridStatus<HashJoinExpandGridStatus>(status);
+      return AdvanceResult{.continueLabel = continueLabel, isRetry = true};
+    }
+    return {};
 }
 
 void AbstractHashJoinExpand::reserveState(InstructionStatus& state) {
   // 8 bytes per grid.
   status.gridState = state.gridState;
   state.gridState += 8;
-  // 9 bytes per lane. 1 flag for continuable/any hits flag and 8 for the next
+  // 8 bytes per lane. 8 for the next
   // row pointer to look at.
   status.blockState = state.blockState;
-  state.blockState += kBlockSize * 9;
+  state.blockState += kBlockSize * 8;
 }
 
 exec::BlockingReason AbstractHashJoinExpand::isBlocked(
@@ -548,7 +557,7 @@ int32_t allocatedRowBytes(const AllocationRange& range) {
 
 void AbstractHashBuild::pipelineFinished(
     WaveStream& stream,
-    CompiledKernel* kernel) {
+    Program* program) {
   auto deviceStream = WaveStream::streamFromReserve();
   auto stateId = state->id;
   auto state = std::dynamic_pointer_cast<HashTableHolder>(stream.operatorStateShared(stateId));
@@ -574,9 +583,6 @@ void AbstractHashBuild::pipelineFinished(
   deviceStream->prefetch(
       getDevice(), state->alignedHead, state->alignedHeadSize);
 
-  auto* exe = stream.executableByInstruction(this);
-  VELOX_CHECK_NOT_NULL(exe);
-  auto* program = exe->programShared.get();
   auto entryPointIdx = program->entryPointIdxBySerial(serial);
 
   struct BuildArgs {
