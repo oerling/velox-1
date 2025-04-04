@@ -415,13 +415,13 @@ AdvanceResult AbstractHashJoinExpand::canAdvance(
     OperatorState* state,
     int32_t instructionIdx) const {
     auto* gridStatus =
-        stream->gridStatus<HashJoinExpandGridStatus>(status);
+        stream.gridStatus<HashJoinExpandGridStatus>(status);
     if (!gridStatus) {
       return {};
     }
     if (gridStatus->anyContinuable) {
       stream.clearGridStatus<HashJoinExpandGridStatus>(status);
-      return AdvanceResult{.continueLabel = continueLabel, isRetry = true};
+      return AdvanceResult{.continueLabel = continueLabel, .isRetry = true};
     }
     return {};
 }
@@ -639,3 +639,6 @@ AbstractHashBuild::stateCreateFunction() {
 }
 
 } // namespace facebook::velox::wave
+
+
+

@@ -265,6 +265,7 @@ __device__ inline T& flatResult(Operand* op, int32_t blockBase) {
     shared->states = params.operatorStates[0];                                 \
     shared->nthBlock = 0;                                                      \
     shared->streamIdx = params.streamIdx;                                      \
+    shared->localContinue = false;  \
     shared->isContinue = params.startPC != nullptr;                            \
     if (shared->isContinue) {                                                  \
       shared->startLabel = params.startPC[shared->programIdx];                 \

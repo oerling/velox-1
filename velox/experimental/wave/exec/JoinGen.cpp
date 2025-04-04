@@ -371,10 +371,9 @@ void JoinExpand::generateMain(CompileState& state, int32_t syncLabel) {
       state.ordinal(*hits));
   out << state.operandValue(hits) << ", "
       << (filter ? state.operandValue(filter) : "true")
-      << ", shared->startLabel == " << continueLabel_
+      << ", shared->localContinue || shared->startLabel == " << continueLabel_
       << ", laneStatus,  shared," << duplicatesStr << ")) {\n";
-  out << "  shared->startLabel = " << continueLabel_
-      << ";  goto continue" << continueLabel_ << ";}\n";
+  out << "    goto continue" << continueLabel_ << ";}\n";
   out << "  __syncthreads();\n";
   out << "  laneStatus = threadIdx.x < shared->numRows ? ErrorCode::kOk : ErrorCode::kInactive;\n";
   state.generateWrap(wrapInfo_, nthWrap, indices);
@@ -392,7 +391,7 @@ std::string JoinExpand::preContinueCode(CompileState& state) {
   std::stringstream out;
   int32_t ord = state.ordinal(*hits);
   out << fmt::format(
-      "  r{} = loadJoinNext<{}, {}>(shared);\n",
+      "  r{} = loadJoinNext<{}, {}>(shared, laneStatus);\n",
       ord,
       status.gridStateSize,
       status.blockState);

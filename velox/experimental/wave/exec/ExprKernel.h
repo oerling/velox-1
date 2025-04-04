@@ -108,6 +108,11 @@ struct WaveShared {
   /// continue. Reset before end of instruction.
   bool hasContinue;
 
+  /// True if doing an extra iteration to increase cardinality in
+  /// non-continue case, e.g. first kernel of 1:n join or unnest
+  /// producing non-first result for an active lane of input.
+  bool localContinue;
+  
   /// If true, all threads in block return before starting next instruction.
   bool stop;
   int32_t blockBase;
@@ -189,9 +194,6 @@ struct HashJoinExpandGridStatus {
 /// Tracks the state of a hash join probe between batches of output. Needed when
 /// the join increases cardinality.
 struct HashJoinExpandBlockStatus {
-  /// Flag for existence of hits and existence of next hit candidate per lane of
-  /// input.
-  uint8_t flags[kBlockSize];
   /// The next row in the hash table to look at. nullptr if all hits produced.
   void* next[kBlockSize];
 };

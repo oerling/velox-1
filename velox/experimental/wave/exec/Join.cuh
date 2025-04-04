@@ -27,10 +27,15 @@ inline __device__ JoinShared* joinShared(WaveShared* shared) {
 }
 
 template <int32_t gridStatusSize, int32_t blockStatusOffset>
-int64_t __device__ loadJoinNext(WaveShared* shared) {
+int64_t __device__ loadJoinNext(WaveShared* shared, ErrorCode& laneStatus) {
   auto* status = blockStatus<HashJoinExpandBlockStatus>(
       shared, gridStatusSize, blockStatusOffset);
-  return reinterpret_cast<int64_t>(status->next[threadIdx.x]);
+  if (threadIdx.x == 0) {
+    shared->numRows = 0;
+  }
+  auto h = reinterpret_cast<int64_t>(status->next[threadIdx.x]);
+  laneStatus = h != 0 ? ErrorCode::kOk : ErrorCode::kInactive;
+  return h;
 }
 
 template <
@@ -94,12 +99,13 @@ bool __device__ __forceinline__ joinResult(
       }
     }
     __syncthreads();
+    if (threadIdx.x == 0) {
+      shared->localContinue = shared->numRows < kBlockSize - 64 && joinShared(shared)->anyNext;
+    }
+    __syncthreads();
     // All threads return the same. true if there is space in the output and nexts to look at.
-    return shared->numRows < kBlockSize - 64 && joinShared(shared)->anyNext;
+      return shared->localContinue;
   }
-  shared->numRows = 0;
-  __syncthreads();
-
   // We come here when there are  places to fill above shared->numRows.
   bool laneFull = false;
   if (hit && filterResult) {
@@ -133,10 +139,14 @@ bool __device__ __forceinline__ joinResult(
     }
   }
   __syncthreads();
-  if (threadIdx.x == 0 && joinShared(shared)->anyNext) {
-    joinShared(shared)->gridStatus->anyContinuable = 1;
+  if (threadIdx.x == 0) {
+    if(joinShared(shared)->anyNext) {
+      joinShared(shared)->gridStatus->anyContinuable = 1;
+    }
+    shared->localContinue = shared->numRows < kBlockSize - 32 && joinShared(shared)->anyNext;
   }
-  return shared->numRows < kBlockSize - 32 && joinShared(shared)->anyNext;
+  __syncthreads();
+  return shared->localContinue;
 }
 
   template <typename RowType, int32_t hitsIdx, int32_t indicesIdx, typename CopyRow>
