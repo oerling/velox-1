@@ -382,16 +382,16 @@ RowVectorPtr WaveDriver::getOutput() {
               if (maybeWaitForPeers()) {
                 return nullptr;
               }
-	      pipelineFinished(i - 2);
+              pipelineFinished(i - 2);
               break;
             } else {
               // Last finished.
               finished_ = true;
               updateStats();
-	      if (maybeWaitForPeers()) {
-		return nullptr;
-	      }
-	      pipelineFinished(i);
+              if (maybeWaitForPeers()) {
+                return nullptr;
+              }
+              pipelineFinished(i);
 
               return nullptr;
             }
@@ -478,7 +478,8 @@ exec::BlockingReason WaveDriver::processArrived(Pipeline& pipeline) {
   for (auto streamIdx = 0; streamIdx < pipeline.arrived.size(); ++streamIdx) {
     bool continued = false;
     for (int32_t i = pipeline.operators.size() - 1; i >= 0; --i) {
-      auto reason = pipeline.operators[i]->isBlocked(*pipeline.arrived[streamIdx], &blockingFuture_);
+      auto reason = pipeline.operators[i]->isBlocked(
+          *pipeline.arrived[streamIdx], &blockingFuture_);
       if (reason != exec::BlockingReason::kNotBlocked) {
         return reason;
       }

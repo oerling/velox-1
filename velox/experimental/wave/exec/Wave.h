@@ -598,7 +598,7 @@ class Program : public std::enable_shared_from_this<Program> {
   }
 
   exec::BlockingReason isBlocked(WaveStream& stream, ContinueFuture* future);
-  
+
   /// If partially executed instructions in the call of 'control',
   /// returns the point where to pick up. If fully executed or not
   /// started, returns the number of rows to obtain from the
@@ -966,7 +966,6 @@ class WaveStream {
 
   std::shared_ptr<OperatorState> operatorStateShared(int32_t id);
 
-  
   OperatorState* newState(ProgramState& init);
 
   /// Initializes 'state' to the device side state for 'inst'. Returns after

@@ -112,7 +112,7 @@ struct WaveShared {
   /// non-continue case, e.g. first kernel of 1:n join or unnest
   /// producing non-first result for an active lane of input.
   bool localContinue;
-  
+
   /// If true, all threads in block return before starting next instruction.
   bool stop;
   int32_t blockBase;
@@ -206,5 +206,4 @@ struct JoinShared {
   int32_t temp[kBlockSize / 32];
 };
 
- 
 } // namespace facebook::velox::wave

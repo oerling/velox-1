@@ -113,21 +113,23 @@ void CompileState::declareNamed(const std::string& line) {
   declarations_ << line << std::endl;
 }
 
-
-  void CompileState::declareNamed(const std::string& type, const std::string& name, const std::string& debugInit) {
+void CompileState::declareNamed(
+    const std::string& type,
+    const std::string& name,
+    const std::string& debugInit) {
   if (namedDeclares_.count(name)) {
     return;
   }
   namedDeclares_.insert(name);
   declarations_ << "  " << type << " " << name;
   if (FLAGS_cuda_G) {
-    declarations_ << " = reinterpret_cast<" << type << ">(" << debugInit << ");\n";
+    declarations_ << " = reinterpret_cast<" << type << ">(" << debugInit
+                  << ");\n";
   } else {
     declarations_ << ";\n";
   }
 }
 
-  
 bool CompileState::hasMoreReferences(AbstractOperand* op, int32_t pc) {
   for (auto i = pc; i < currentBox_->steps.size(); ++i) {
     if (!currentBox_->steps[i]->preservesRegisters()) {

@@ -414,16 +414,18 @@ AdvanceResult AbstractHashJoinExpand::canAdvance(
     LaunchControl* control,
     OperatorState* state,
     int32_t instructionIdx) const {
-    auto* gridStatus =
-        stream.gridStatus<HashJoinExpandGridStatus>(status);
-    if (!gridStatus) {
-      return {};
-    }
-    if (gridStatus->anyContinuable) {
-      stream.clearGridStatus<HashJoinExpandGridStatus>(status);
-      return AdvanceResult{ .numRows = bits::roundUp(stream.numRows(), kBlockSize), .continueLabel = continueLabel, .isRetry = true};
-    }
+  auto* gridStatus = stream.gridStatus<HashJoinExpandGridStatus>(status);
+  if (!gridStatus) {
     return {};
+  }
+  if (gridStatus->anyContinuable) {
+    stream.clearGridStatus<HashJoinExpandGridStatus>(status);
+    return AdvanceResult{
+        .numRows = bits::roundUp(stream.numRows(), kBlockSize),
+        .continueLabel = continueLabel,
+        .isRetry = true};
+  }
+  return {};
 }
 
 void AbstractHashJoinExpand::reserveState(InstructionStatus& state) {
@@ -555,12 +557,11 @@ int32_t allocatedRowBytes(const AllocationRange& range) {
   return range.rowOffset - range.firstRowOffset;
 }
 
-void AbstractHashBuild::pipelineFinished(
-    WaveStream& stream,
-    Program* program) {
+void AbstractHashBuild::pipelineFinished(WaveStream& stream, Program* program) {
   auto deviceStream = WaveStream::streamFromReserve();
   auto stateId = state->id;
-  auto state = std::dynamic_pointer_cast<HashTableHolder>(stream.operatorStateShared(stateId));
+  auto state = std::dynamic_pointer_cast<HashTableHolder>(
+      stream.operatorStateShared(stateId));
   auto* head = state->alignedHead;
   auto* hashTable = head->table;
   allocatorsToRanges(state.get());
@@ -639,6 +640,3 @@ AbstractHashBuild::stateCreateFunction() {
 }
 
 } // namespace facebook::velox::wave
-
-
-

@@ -225,8 +225,8 @@ struct AdvanceResult {
 /// status.
 enum class OpCode { kAggregate, kReadAggregate, kHashBuild, kHashJoinExpand };
 
-  class Program;
-  
+class Program;
+
 struct AbstractInstruction {
   AbstractInstruction(OpCode opCode, int32_t serial = -1)
       : opCode(opCode), serial(serial) {}
@@ -264,9 +264,7 @@ struct AbstractInstruction {
   /// at end on all Drivers. This will take place on the last stream
   /// of the last Driver to finish. This can produce a combined result
   /// like a hash join build side.
-  virtual void pipelineFinished(
-      WaveStream& /*stream*/,
-      Program* /*program*/) {}
+  virtual void pipelineFinished(WaveStream& /*stream*/, Program* /*program*/) {}
 
   virtual bool isSink() const {
     return false;

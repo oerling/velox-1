@@ -75,7 +75,8 @@ void WaveVector::resize(
   auto capacity = values_ ? values_->capacity() : 0;
   size_ = size;
 
-  // Round to next block. A cardinality expanding plan can produce up to full block for a partial block.
+  // Round to next block. A cardinality expanding plan can produce up to full
+  // block for a partial block.
   size = bits::roundUp(size, kBlockSize);
   int32_t bytesNeeded = backingSize(type_, size, nullable);
   if (bytesNeeded > capacity) {

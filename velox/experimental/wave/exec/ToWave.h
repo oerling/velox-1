@@ -650,7 +650,6 @@ struct JoinExpand : public KernelStep {
     return sizeof(WaveShared) + sizeof(JoinShared);
   }
 
-  
   void visitReferences(
       std::function<void(AbstractOperand*)> visitor) const override;
 
@@ -928,9 +927,11 @@ class CompileState {
 
   void declareNamed(const std::string& line);
 
-  void declareNamed(const std::string& type, const std::string& name, const std::string& debugInit);
+  void declareNamed(
+      const std::string& type,
+      const std::string& name,
+      const std::string& debugInit);
 
-  
   int32_t ordinal(const AbstractOperand& op);
 
   int32_t stateOrdinal(const AbstractState& state);
@@ -1282,7 +1283,7 @@ class CompileState {
 
   // PlanNodeId of the first operator. Used in makeing unique kernel name.
   std::string startNodeId_;
-  
+
   Branches branches_;
   std::vector<Segment> segments_;
   Scope topScope_;

@@ -58,9 +58,13 @@ void makeHash(
     state.ensureOperand(op);
     std::string stmt;
     if (!nullableKeys && !op->notNull) {
-      stmt = fmt::format("  if ({}) {{ goto nullKey; }}\n"
-			 "   hash{} = hashMix(hash{}, hashValue({}));\n",
-			 state.isNull(op), id, id, state.operandValue(op));
+      stmt = fmt::format(
+          "  if ({}) {{ goto nullKey; }}\n"
+          "   hash{} = hashMix(hash{}, hashValue({}));\n",
+          state.isNull(op),
+          id,
+          id,
+          state.operandValue(op));
     } else {
       if (!keys[i]->notNull) {
         stmt = fmt::format(

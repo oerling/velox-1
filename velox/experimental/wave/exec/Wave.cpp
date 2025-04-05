@@ -324,14 +324,14 @@ OperatorState* WaveStream::operatorState(int32_t id) {
   return nullptr;
 }
 
-  std::shared_ptr<OperatorState> WaveStream::operatorStateShared(int32_t id) {
+std::shared_ptr<OperatorState> WaveStream::operatorStateShared(int32_t id) {
   auto it = taskStateMap_->states.find(id);
   if (it != taskStateMap_->states.end()) {
     return it->second;
   }
   return nullptr;
 }
-  
+
 OperatorState* WaveStream::newState(ProgramState& init) {
   auto stateShared = init.create(*this);
   taskStateMap_->states[init.stateId] = stateShared;
@@ -1038,7 +1038,7 @@ void WaveStream::makeHashTable(
     state.buffers.push_back(table);
   }
   new (hashTable) GpuHashTableBase(
-				   makeTable ? table->as<GpuBucket>() : nullptr,
+      makeTable ? table->as<GpuBucket>() : nullptr,
       numBuckets - 1,
       0,
       reinterpret_cast<RowAllocator*>(allocators));
@@ -1244,7 +1244,9 @@ bool Program::isSink() const {
   return size > 0 && instructions_[size - 1]->isSink();
 }
 
-  exec::BlockingReason Program::isBlocked(WaveStream& stream, ContinueFuture* future) {
+exec::BlockingReason Program::isBlocked(
+    WaveStream& stream,
+    ContinueFuture* future) {
   for (int32_t i = instructions_.size() - 1; i >= 0; --i) {
     auto* instruction = instructions_[i].get();
     OperatorState* state = nullptr;
@@ -1259,7 +1261,7 @@ bool Program::isSink() const {
   }
   return exec::BlockingReason::kNotBlocked;
 }
-    
+
 AdvanceResult Program::canAdvance(
     WaveStream& stream,
     LaunchControl* control,
