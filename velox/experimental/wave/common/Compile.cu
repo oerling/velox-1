@@ -141,31 +141,33 @@ std::mutex initMutex;
 std::vector<std::string> waveNvrtcFlags;
 std::vector<const char*> waveNvrtcFlagsString;
 
-  bool readSystemHeaders(std::map<std::string, std::string>& headers) {
-    std::ifstream in("/tmp/wavesystemheaders.txt");
-    std::string  path;
-    while (std::getline(in, path)) {
-      std::string size;
-      getline(in, size);
-      int32_t bytes = atoi(size.c_str());
-      std::string text;
-      text.resize(bytes);
-      in.read(text.data(), bytes);
-      headers[path] = text;
-    }
-    return !headers.empty();
+bool readSystemHeaders(std::map<std::string, std::string>& headers) {
+  std::ifstream in("/tmp/wavesystemheaders.txt");
+  std::string path;
+  while (std::getline(in, path)) {
+    std::string size;
+    getline(in, size);
+    int32_t bytes = atoi(size.c_str());
+    std::string text;
+    text.resize(bytes);
+    in.read(text.data(), bytes);
+    headers[path] = text;
   }
+  return !headers.empty();
+}
 
-  void saveSystemHeaders(std::map<std::string, std::string>& map) {
-    std::ofstream out(fmt::format("/tmp/h.{}", getpid()));
-    for (auto& pair : map) {
-      out << pair.first << std::endl << pair.second.size() << std::endl << pair.second;
-    }
-    out.close();
-    system(fmt::format(" mv /tmp/h.{} /tmp/wavesystemheaders.txt", getpid()).c_str());
+void saveSystemHeaders(std::map<std::string, std::string>& map) {
+  std::ofstream out(fmt::format("/tmp/h.{}", getpid()));
+  for (auto& pair : map) {
+    out << pair.first << std::endl
+        << pair.second.size() << std::endl
+        << pair.second;
   }
+  out.close();
+  system(fmt::format(" mv /tmp/h.{} /tmp/wavesystemheaders.txt", getpid())
+             .c_str());
+}
 
-  
 // Adds a trailing zero to make the string.data() a C char*.
 void makeNTS(std::string& string) {
   string.resize(string.size() + 1);
@@ -258,7 +260,7 @@ void ensureInit() {
   std::map<std::string, std::string> headers;
   if (!readSystemHeaders(headers)) {
     static jitify::JitCache kernel_cache;
-    
+
     auto program = kernel_cache.program(sampleText, {}, waveNvrtcFlags);
     headers = program._impl->_config->sources;
     saveSystemHeaders(headers);

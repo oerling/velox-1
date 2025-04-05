@@ -391,14 +391,23 @@ void fillMemory(uint64_t* ptr, int32_t numWords, int32_t seed, bool isDevice) {
   }
 }
 
-  std::string AllocationRange::toString(int32_t rowSize) {
-    return fmt::format("<Range: {} Fixed cap={} rows fixd avail={} rows total cap={}B >", (fixedFull ? "full" : ""), (stringOffset - firstRowOffset) / rowSize,  (rowLimit - rowOffset) / rowSize, capacity);
-  }
+std::string AllocationRange::toString(int32_t rowSize) {
+  return fmt::format(
+      "<Range: {} Fixed cap={} rows fixd avail={} rows total cap={}B >",
+      (fixedFull ? "full" : ""),
+      (stringOffset - firstRowOffset) / rowSize,
+      (rowLimit - rowOffset) / rowSize,
+      capacity);
+}
 
-  std::string HashPartitionAllocator::toString() {
-    return fmt::format("<allocator avail {} rows : {} {}>", availableFixed() / rowSize, ranges[0].toString(rowSize), ranges[1].toString(rowSize));
-  }
-  
+std::string HashPartitionAllocator::toString() {
+  return fmt::format(
+      "<allocator avail {} rows : {} {}>",
+      availableFixed() / rowSize,
+      ranges[0].toString(rowSize),
+      ranges[1].toString(rowSize));
+}
+
 bool registerKernel(const char* name, const void* func) {
   kernelEntries[numKernelEntries].name = name;
   kernelEntries[numKernelEntries].func = func;

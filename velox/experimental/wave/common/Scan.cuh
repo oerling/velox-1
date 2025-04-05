@@ -120,8 +120,7 @@ inline __device__ T exclusiveSum(T input, T* total, T* temp) {
   constexpr int32_t kNumWarps = kBlockSize / kWarpThreads;
   using Scan = WarpScan<T>;
   T sum;
-  Scan()
-      .exclusiveSum(input, sum);
+  Scan().exclusiveSum(input, sum);
   if (kBlockSize == kWarpThreads) {
     if (total) {
       if (threadIdx.x == kWarpThreads - 1) {
@@ -138,8 +137,7 @@ inline __device__ T exclusiveSum(T input, T* total, T* temp) {
   using InnerScan = WarpScan<T, kNumWarps>;
   T warpSum = threadIdx.x < kNumWarps ? temp[threadIdx.x] : 0;
   T blockSum;
-  InnerScan()
-      .exclusiveSum(warpSum, blockSum);
+  InnerScan().exclusiveSum(warpSum, blockSum);
   if (threadIdx.x < kNumWarps) {
     temp[threadIdx.x] = blockSum;
     if (total && threadIdx.x == kNumWarps - 1) {
@@ -159,8 +157,7 @@ inline __device__ T inclusiveSum(T input, T* total, T* temp) {
   constexpr int32_t kNumWarps = kBlockSize / kWarpThreads;
   using Scan = WarpScan<T>;
   T sum;
-  Scan()
-      .inclusiveSum(input, sum);
+  Scan().inclusiveSum(input, sum);
   if (kBlockSize <= kWarpThreads) {
     if (total != nullptr) {
       if (threadIdx.x == kBlockSize - 1) {
@@ -178,8 +175,7 @@ inline __device__ T inclusiveSum(T input, T* total, T* temp) {
   using InnerScan = WarpScan<T, kInnerWidth>;
   T warpSum = threadIdx.x < kInnerWidth ? temp[threadIdx.x] : 0;
   T blockSum;
-  InnerScan()
-      .exclusiveSum(warpSum, blockSum);
+  InnerScan().exclusiveSum(warpSum, blockSum);
   if (threadIdx.x < kInnerWidth) {
     temp[threadIdx.x] = blockSum;
   }
@@ -189,6 +185,5 @@ inline __device__ T inclusiveSum(T input, T* total, T* temp) {
   __syncthreads();
   return sum + temp[threadIdx.x / kWarpThreads];
 }
-
 
 } // namespace facebook::velox::wave

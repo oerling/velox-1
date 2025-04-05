@@ -1281,7 +1281,7 @@ class CompileState {
   // Query wide counter for kernels.
   int32_t kernelCounter_{0};
 
-  // PlanNodeId of the first operator. Used in makeing unique kernel name.
+  // PlanNodeId of the first operator. Used in making unique kernel name.
   std::string startNodeId_;
 
   Branches branches_;

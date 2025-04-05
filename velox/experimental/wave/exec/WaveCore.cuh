@@ -88,7 +88,7 @@ __device__ __forceinline__ bool operandOrNull(
     int32_t blockBase,
     T& value) {
   auto op = operands[opIdx];
-  int32_t index = threadIdx.x;
+  auto index = threadIdx.x;
   if (auto indicesInOp = op->indices) {
     auto indices = indicesInOp[blockBase / kBlockSize];
     if (indices) {
@@ -116,7 +116,7 @@ bool __device__ __forceinline__ valueOrNull(
     int32_t blockBase,
     T& value) {
   auto op = operands[opIdx];
-  int32_t index = threadIdx.x;
+  auto index = threadIdx.x;
   if (!kMayWrap) {
     index = (index + blockBase) & op->indexMask;
     if (op->nulls && op->nulls[index] == kNull) {
@@ -162,7 +162,7 @@ template <bool kMayWrap, typename T>
 T __device__ __forceinline__
 nonNullOperand(Operand** operands, OperandIndex opIdx, int32_t blockBase) {
   auto op = operands[opIdx];
-  int32_t index = threadIdx.x;
+  auto index = threadIdx.x;
   if (!kMayWrap) {
     index = (index + blockBase) & op->indexMask;
     return reinterpret_cast<const T*>(op->base)[index];
@@ -265,13 +265,13 @@ __device__ inline T& flatResult(Operand* op, int32_t blockBase) {
     shared->states = params.operatorStates[0];                                 \
     shared->nthBlock = 0;                                                      \
     shared->streamIdx = params.streamIdx;                                      \
-    shared->localContinue = false;  \
+    shared->localContinue = false;                                             \
     shared->isContinue = params.startPC != nullptr;                            \
     if (shared->isContinue) {                                                  \
       shared->startLabel = params.startPC[shared->programIdx];                 \
-    } else { \
-      shared->startLabel = -1; \
-      }\
+    } else {                                                                   \
+      shared->startLabel = -1;                                                 \
+    }                                                                          \
     shared->extraWraps = params.extraWraps;                                    \
     shared->numExtraWraps = params.numExtraWraps;                              \
     shared->hasContinue = false;                                               \

@@ -82,7 +82,7 @@ __device__ inline void
 bool256ToIndices(Getter8 getter8, T start, T* indices, T& size, char* smem) {
   using Scan = cub::WarpScan<uint16_t>;
   auto* smem16 = reinterpret_cast<uint16_t*>(smem);
-  int32_t group = threadIdx.x / 8;
+  auto group = threadIdx.x / 8;
   uint64_t bits = getter8(group) & 0x0101010101010101;
   if ((threadIdx.x & 7) == 0) {
     smem16[group] = __popcll(bits);
@@ -99,7 +99,7 @@ bool256ToIndices(Getter8 getter8, T start, T* indices, T& size, char* smem) {
     }
   }
   __syncthreads();
-  int32_t tidInGroup = threadIdx.x & 7;
+  auto tidInGroup = threadIdx.x & 7;
   if (bits & (1UL << (tidInGroup * 8))) {
     int32_t base =
         smem16[group] + __popcll(bits & lowMask<uint64_t>(tidInGroup * 8));
@@ -164,7 +164,7 @@ void __device__ blockSort(
 
   // Load items into a blocked arrangement
   for (auto i = 0; i < kItemsPerThread; ++i) {
-    int32_t idx = blockOffset + i * kBlockSize + threadIdx.x;
+    auto idx = blockOffset + i * kBlockSize + threadIdx.x;
     values[i] = valueGetter(idx);
     keys[i] = keyGetter(idx);
   }

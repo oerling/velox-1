@@ -2336,7 +2336,7 @@ const char* velox_experimental_wave_common_HashTable_cuh =
     "  template <typename RowType, typename Ops>\n"
     "  void __device__\n"
     "  joinBuild(RowType* rows, int32_t numRows, Ops ops) {\n"
-    "    int32_t stride = blockDim.x * gridDim.x;\n"
+    "    auto stride = blockDim.x * gridDim.x;\n"
     "    for (auto idx = threadIdx.x + blockDim.x * blockIdx.x; idx < numRows;\n"
     "         idx += stride) {\n"
     "      auto* row = rows + idx;\n"

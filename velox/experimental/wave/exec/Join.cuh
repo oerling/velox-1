@@ -20,7 +20,7 @@
 #include "velox/experimental/wave/exec/WaveCore.cuh"
 
 namespace facebook::velox::wave {
-  
+
 inline __device__ JoinShared* joinShared(WaveShared* shared) {
   return reinterpret_cast<JoinShared*>(&shared->data);
 }
@@ -42,8 +42,8 @@ template <
     int32_t indicesIdx,
     int32_t gridstatusOffset,
     int32_t gridStatusSize,
-  int32_t blockStatusOffset,
-  int32_t hitsIdx>
+    int32_t blockStatusOffset,
+    int32_t hitsIdx>
 bool __device__ __forceinline__ joinResult(
     int64_t& hitAsInt,
     bool filterResult,
@@ -51,7 +51,8 @@ bool __device__ __forceinline__ joinResult(
     ErrorCode laneStatus,
     WaveShared* shared,
     bool hasDuplicates) {
-  RowType* hit = reinterpret_cast<RowType*>(laneStatus == ErrorCode::kOk ? hitAsInt : 0);
+  RowType* hit =
+      reinterpret_cast<RowType*>(laneStatus == ErrorCode::kOk ? hitAsInt : 0);
   if (threadIdx.x == 0) {
     auto* j = joinShared(shared);
     if (hasDuplicates) {
@@ -94,17 +95,19 @@ bool __device__ __forceinline__ joinResult(
     uint32_t flags = __ballot_sync(0xffffffff, next != nullptr);
     if ((threadIdx.x & 31) == 0) {
       if (flags) {
-	atomicOr(&joinShared(shared)->anyNext, flags);
-	joinShared(shared)->gridStatus->anyContinuable = true;
+        atomicOr(&joinShared(shared)->anyNext, flags);
+        joinShared(shared)->gridStatus->anyContinuable = true;
       }
     }
     __syncthreads();
     if (threadIdx.x == 0) {
-      shared->localContinue = shared->numRows < kBlockSize - 64 && joinShared(shared)->anyNext;
+      shared->localContinue =
+          shared->numRows < kBlockSize - 64 && joinShared(shared)->anyNext;
     }
     __syncthreads();
-    // All threads return the same. true if there is space in the output and nexts to look at.
-      return shared->localContinue;
+    // All threads return the same. true if there is space in the output and
+    // nexts to look at.
+    return shared->localContinue;
   }
   // We come here when there are  places to fill above shared->numRows.
   bool laneFull = false;
@@ -123,9 +126,9 @@ bool __device__ __forceinline__ joinResult(
   // Make sure joinShared is seen on all threads.
   __syncthreads();
   if (!laneFull && hit) {
-      auto* next = *hit->nextPtr();
-      joinShared(shared)->blockStatus->next[threadIdx.x] = next;
-      hitAsInt = reinterpret_cast<int64_t>(next);
+    auto* next = *hit->nextPtr();
+    joinShared(shared)->blockStatus->next[threadIdx.x] = next;
+    hitAsInt = reinterpret_cast<int64_t>(next);
   }
 
   if (threadIdx.x == 0 && shared->numRows > kBlockSize) {
@@ -141,23 +144,24 @@ bool __device__ __forceinline__ joinResult(
   }
   __syncthreads();
   if (threadIdx.x == 0) {
-    if(joinShared(shared)->anyNext) {
+    if (joinShared(shared)->anyNext) {
       joinShared(shared)->gridStatus->anyContinuable = 1;
     }
-    shared->localContinue = shared->numRows < kBlockSize - 32 && joinShared(shared)->anyNext;
+    shared->localContinue =
+        shared->numRows < kBlockSize - 32 && joinShared(shared)->anyNext;
   }
   __syncthreads();
   return shared->localContinue;
 }
 
-  template <typename RowType, int32_t hitsIdx, typename CopyRow>
-void __device__ __forceinline__ joinRow(
-    ErrorCode laneStatus,
-    WaveShared* shared,
-    CopyRow copy) {
-    if (laneStatus == ErrorCode::kOk) {
-      RowType** hits = reinterpret_cast<RowType**>(shared->operands[hitsIdx]->base);
-      copy(hits[shared->blockBase + threadIdx.x], shared->blockBase + threadIdx.x);
+template <typename RowType, int32_t hitsIdx, typename CopyRow>
+void __device__ __forceinline__
+joinRow(ErrorCode laneStatus, WaveShared* shared, CopyRow copy) {
+  if (laneStatus == ErrorCode::kOk) {
+    RowType** hits =
+        reinterpret_cast<RowType**>(shared->operands[hitsIdx]->base);
+    copy(
+        hits[shared->blockBase + threadIdx.x], shared->blockBase + threadIdx.x);
   }
 }
 
