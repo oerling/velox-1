@@ -94,7 +94,8 @@ class MockMemoryPool : public velox::memory::MemoryPool {
         "standalone_pool", MemoryPool::Kind::kAggregate, nullptr);
   }
 
-  void* allocate(int64_t size) override {
+  void* allocate(int64_t size, std::optional<uint32_t> alignment = std::nullopt)
+      override {
     updateLocalMemoryUsage(size);
     return allocator_->allocateBytes(size);
   }
@@ -165,6 +166,7 @@ class MockMemoryPool : public velox::memory::MemoryPool {
       const std::string& name,
       MemoryPool::Kind kind,
       bool /*unused*/,
+      const std::function<size_t(size_t)>& /*unused*/,
       std::unique_ptr<memory::MemoryReclaimer> /*unused*/) override {
     return std::make_shared<MockMemoryPool>(
         name, kind, parent, parent->capacity());

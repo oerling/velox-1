@@ -441,7 +441,7 @@ bool SsdFile::write(
   try {
     writeFile_->write(iovecs, offset, length);
     return true;
-  } catch (const std::exception& e) {
+  } catch (const std::exception&) {
     VELOX_SSD_CACHE_LOG(ERROR)
         << "Failed to write to SSD, file name: " << fileName_
         << ", size: " << iovecs.size() << ", offset: " << offset
@@ -968,8 +968,12 @@ void SsdFile::readCheckpoint() {
         memory::memoryManager()->cachePool());
   } catch (std::exception& e) {
     ++stats_.openCheckpointErrors;
-    VELOX_SSD_CACHE_LOG(WARNING)
-        << fmt::format("Error openning checkpoint file {}: ", e.what());
+    // Either the checkpoint file is corrupted or the file is just created, we
+    // can start here and the writer threads will create the checkpoint file
+    // later on flush
+    VELOX_SSD_CACHE_LOG(WARNING) << fmt::format(
+        "Error opening checkpoint file {}: Starting without checkpoint",
+        e.what());
     return;
   }
 

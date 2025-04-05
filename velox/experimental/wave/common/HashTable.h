@@ -20,7 +20,7 @@
 #include <string.h>
 #include <string>
 #endif
-#include <cstdint>
+#include <stdint.h>
 
 /// Structs for tagged GPU hash table. Can be inclued in both Velox .cpp and
 /// .cu.

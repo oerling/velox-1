@@ -14,13 +14,15 @@
 
 import json
 import unittest
+import os
 import pyarrow
+import random
 import tempfile
 
 from velox.py.arrow import to_velox
 from velox.py.plan_builder import PlanBuilder
 from velox.py.file import DWRF
-from velox.py.type import BIGINT, ROW
+from velox.py.type import BIGINT, ROW, DOUBLE, VARCHAR
 from velox.py.runner import LocalRunner, register_hive, register_tpch, unregister
 
 
@@ -88,7 +90,42 @@ class TestPyVeloxRunner(unittest.TestCase):
         )
         self.assertEqual(output, expected_result)
 
-    def test_runner_with_join(self):
+    def test_runner_with_hash_join(self):
+        batch_size = 100
+        probe = list(range(batch_size))
+        build = [i for i in probe if i % 2 == 0]
+        random.shuffle(probe)
+        random.shuffle(build)
+
+        probe_vector = to_velox(
+            pyarrow.record_batch([pyarrow.array(probe)], names=["c0"])
+        )
+        build_vector = to_velox(
+            pyarrow.record_batch([pyarrow.array(build)], names=["c1"])
+        )
+
+        plan_builder = PlanBuilder()
+        plan_builder.values([probe_vector]).hash_join(
+            left_keys=["c0"],
+            right_keys=["c1"],
+            build_plan_node=(
+                plan_builder.new_builder().values([build_vector]).get_plan_node()
+            ),
+            output=["c0"],
+        )
+        plan_builder.aggregate(aggregations=["sum(c0)"])
+
+        runner = LocalRunner(plan_builder.get_plan_node())
+        iterator = runner.execute()
+        vector = next(iterator)
+
+        self.assertRaises(StopIteration, next, iterator)
+        self.assertEqual(vector.size(), 1)
+
+        result = int(vector.child_at(0)[0])
+        self.assertEqual(result, sum(build))
+
+    def test_runner_with_merge_join(self):
         batch_size = 10
         array = pyarrow.array([42] * batch_size)
         batch = to_velox(pyarrow.record_batch([array], names=["c0"]))
@@ -197,35 +234,46 @@ class TestPyVeloxRunner(unittest.TestCase):
         register_tpch("tpch")
         register_hive("hive")
 
+        num_output_files = 16
+
         # Generate lineitem, write to an output file, then read it back.
         with tempfile.TemporaryDirectory() as temp_dir:
-            output_file = f"{temp_dir}/output_file"
-
             plan_builder = PlanBuilder()
             plan_builder.tpch_gen(
                 table_name="lineitem",
                 connector_id="tpch",
                 scale_factor=0.001,
+                num_parts=num_output_files,
+                columns=["l_orderkey", "l_partkey", "l_quantity", "l_comment"],
             ).table_write(
-                output_file=DWRF(output_file),
+                output_path=DWRF(temp_dir),
                 connector_id="hive",
             )
 
             # Execute and write to output file.
             runner = LocalRunner(plan_builder.get_plan_node())
-            iterator = runner.execute()
-            output = next(iterator)
-            self.assertRaises(StopIteration, next, iterator)
+            output_files = []
+            expected_type = ROW(
+                ["l_orderkey", "l_partkey", "l_quantity", "l_comment"],
+                [BIGINT(), BIGINT(), DOUBLE(), VARCHAR()],
+            )
 
-            output_file_from_table_writer = self.extract_file(output)
-            self.assertEqual(output_file, output_file_from_table_writer)
+            for vector in runner.execute(max_drivers=num_output_files):
+                output_file = os.path.join(temp_dir, self.extract_file(vector))
+                output_dwrf_file = DWRF(output_file)
+
+                # Assert files have the right schema.
+                self.assertEqual(output_dwrf_file.get_schema(), expected_type)
+                output_files.append(output_dwrf_file)
+
+            self.assertEqual(num_output_files, len(output_files))
 
             # Now scan it back.
             scan_plan_builder = PlanBuilder()
             scan_plan_builder.table_scan(
                 output_schema=ROW(["l_orderkey", "l_partkey"], [BIGINT()] * 2),
                 connector_id="hive",
-                input_files=[DWRF(output_file)],
+                input_files=output_files,
             )
 
             runner = LocalRunner(scan_plan_builder.get_plan_node())

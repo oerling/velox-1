@@ -37,70 +37,34 @@ namespace facebook::velox::py {
 
 namespace py = pybind11;
 
-folly::once_flag registerOnceFlag;
-
-void registerAllResourcesOnce() {
-  velox::filesystems::registerLocalFileSystem();
-
-  velox::dwrf::registerDwrfWriterFactory();
-  velox::dwrf::registerDwrfReaderFactory();
-
-  velox::dwio::common::LocalFileSink::registerFactory();
-
-  velox::parse::registerTypeResolver();
-
-  velox::core::PlanNode::registerSerDe();
-  velox::Type::registerSerDe();
-  velox::common::Filter::registerSerDe();
-  velox::connector::hive::LocationHandle::registerSerDe();
-  velox::connector::hive::HiveSortingColumn::registerSerDe();
-  velox::connector::hive::HiveBucketProperty::registerSerDe();
-  velox::connector::hive::HiveTableHandle::registerSerDe();
-  velox::connector::hive::HiveColumnHandle::registerSerDe();
-  velox::connector::hive::HiveInsertTableHandle::registerSerDe();
-  velox::core::ITypedExpr::registerSerDe();
-
-  // Register functions.
-  // TODO: We should move this to a separate module so that clients could
-  // register only when needed.
-  velox::functions::prestosql::registerAllScalarFunctions();
-  velox::aggregate::prestosql::registerAllAggregateFunctions();
-}
-
-void registerAllResources() {
-  folly::call_once(registerOnceFlag, registerAllResourcesOnce);
-}
-
 PyPlanNode::PyPlanNode(
     core::PlanNodePtr planNode,
-    const TScanFilesPtr& scanFiles)
-    : planNode_(std::move(planNode)), scanFiles_(scanFiles) {
+    const std::shared_ptr<PyPlanContext>& planContext)
+    : planNode_(std::move(planNode)), planContext_(planContext) {
   if (planNode_ == nullptr) {
     throw std::runtime_error("Velox plan node cannot be nullptr.");
   }
 }
 
-PyPlanBuilder::PyPlanBuilder(
-    const std::shared_ptr<core::PlanNodeIdGenerator>& generator,
-    const TScanFilesPtr& scanFiles)
-    : planNodeIdGenerator_(
-          generator ? generator
-                    : std::make_shared<core::PlanNodeIdGenerator>()),
-      scanFiles_(scanFiles ? scanFiles : std::make_shared<TScanFiles>()) {
-  auto rootPool = memory::memoryManager()->addRootPool();
-  auto leafPool = rootPool->addLeafChild("py_plan_builder_pool");
-  planBuilder_ = exec::test::PlanBuilder(planNodeIdGenerator_, leafPool.get());
+PyPlanBuilder::PyPlanBuilder(const std::shared_ptr<PyPlanContext>& planContext)
+    : planContext_(
+          planContext ? planContext : std::make_shared<PyPlanContext>()) {
+  rootPool_ = memory::memoryManager()->addRootPool();
+  leafPool_ = rootPool_->addLeafChild("py_plan_builder_pool");
+  planBuilder_ = exec::test::PlanBuilder(
+      planContext_->planNodeIdGenerator, leafPool_.get());
 }
 
 std::optional<PyPlanNode> PyPlanBuilder::planNode() const {
   if (planBuilder_.planNode() != nullptr) {
-    return PyPlanNode(planBuilder_.planNode(), scanFiles_);
+    return PyPlanNode(planBuilder_.planNode(), planContext_);
   }
   return std::nullopt;
 }
 
 PyPlanBuilder& PyPlanBuilder::tableWrite(
-    const PyFile& outputFile,
+    const std::optional<PyFile>& outputFile,
+    const std::optional<PyFile>& outputPath,
     const std::string& connectorId,
     const std::optional<PyType>& outputSchema) {
   exec::test::PlanBuilder::TableWriterBuilder builder(planBuilder_);
@@ -117,10 +81,24 @@ PyPlanBuilder& PyPlanBuilder::tableWrite(
     builder.outputType(outputRowSchema);
   }
 
-  builder.outputFileName(outputFile.filePath())
-      .fileFormat(outputFile.fileFormat())
-      .connectorId(connectorId)
-      .endTableWriter();
+  if (!outputFile && !outputPath) {
+    throw std::runtime_error(
+        "Either outputFile or outputPath need to be specified.");
+  }
+
+  if (outputFile) {
+    builder.outputFileName(outputFile->filePath())
+        .fileFormat(outputFile->fileFormat());
+  }
+
+  // outputPath takes precedence and overwrites outputFile if both are
+  // specified.
+  if (outputPath) {
+    builder.outputDirectoryPath(outputPath->filePath())
+        .fileFormat(outputPath->fileFormat());
+  }
+
+  builder.connectorId(connectorId).endTableWriter();
   return *this;
 }
 
@@ -128,6 +106,8 @@ PyPlanBuilder& PyPlanBuilder::tableScan(
     const PyType& outputSchema,
     const py::dict& aliases,
     const py::dict& subfields,
+    const std::vector<std::string>& filters,
+    const std::string& remainingFilter,
     const std::string& rowIndexColumnName,
     const std::string& connectorId,
     const std::optional<std::vector<PyFile>>& inputFiles) {
@@ -199,6 +179,16 @@ PyPlanBuilder& PyPlanBuilder::tableScan(
     builder.assignments(std::move(assignments));
   }
 
+  // If there are filters to push down.
+  if (!filters.empty()) {
+    builder.subfieldFilters(filters);
+  }
+
+  // If there are remaining filters to push down.
+  if (!remainingFilter.empty()) {
+    builder.remainingFilter(remainingFilter);
+  }
+
   builder.outputType(outputRowSchema)
       .columnAliases(std::move(aliasMap))
       .connectorId(connectorId)
@@ -213,7 +203,7 @@ PyPlanBuilder& PyPlanBuilder::tableScan(
     }
   }
 
-  (*scanFiles_)[planBuilder_.planNode()->id()] = std::move(splits);
+  planContext_->scanFiles[planBuilder_.planNode()->id()] = std::move(splits);
   return *this;
 }
 
@@ -262,6 +252,23 @@ PyPlanBuilder& PyPlanBuilder::orderBy(
 PyPlanBuilder&
 PyPlanBuilder::limit(int64_t count, int64_t offset, bool isPartial) {
   planBuilder_.limit(offset, count, isPartial);
+  return *this;
+}
+
+PyPlanBuilder& PyPlanBuilder::hashJoin(
+    const std::vector<std::string>& leftKeys,
+    const std::vector<std::string>& rightKeys,
+    const PyPlanNode& buildPlanSubtree,
+    const std::vector<std::string>& output,
+    const std::string& filter,
+    core::JoinType joinType) {
+  planBuilder_.hashJoin(
+      leftKeys,
+      rightKeys,
+      buildPlanSubtree.planNode(),
+      filter,
+      output,
+      joinType);
   return *this;
 }
 
@@ -319,7 +326,12 @@ PyPlanBuilder& PyPlanBuilder::tpchGen(
         connectorId, numParts, i));
   }
 
-  (*scanFiles_)[planBuilder_.planNode()->id()] = std::move(splits);
+  planContext_->scanFiles[planBuilder_.planNode()->id()] = std::move(splits);
+
+  // If the user is specifying multiple parts, it's likely because they want to
+  // write this exact number of files. Saving this as a config.
+  planContext_->queryConfigs[core::QueryConfig::kTaskWriterCount] =
+      std::to_string(numParts);
   return *this;
 }
 

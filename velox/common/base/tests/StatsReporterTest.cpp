@@ -282,7 +282,7 @@ class TestMemoryPool : public memory::MemoryPool {
  public:
   explicit TestMemoryPool() : MemoryPool("", Kind::kAggregate, nullptr, {}) {}
 
-  void* allocate(int64_t size) override {
+  void* allocate(int64_t size, std::optional<uint32_t> /* unused */) override {
     return nullptr;
   }
 
@@ -409,6 +409,7 @@ class TestMemoryPool : public memory::MemoryPool {
       const std::string& /* unused */,
       Kind /* unused */,
       bool /* unused */,
+      const std::function<size_t(size_t)>& /* unused */,
       std::unique_ptr<memory::MemoryReclaimer> /* unused */) override {
     return nullptr;
   }

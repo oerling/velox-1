@@ -29,7 +29,7 @@
 #include "velox/dwio/dwrf/writer/Writer.h"
 #include "velox/exec/fuzzer/FuzzerUtil.h"
 #include "velox/exec/fuzzer/PrestoQueryRunner.h"
-#include "velox/exec/fuzzer/ToSQLUtil.h"
+#include "velox/exec/fuzzer/PrestoSql.h"
 #include "velox/exec/tests/utils/QueryAssertions.h"
 #include "velox/functions/prestosql/types/IPAddressType.h"
 #include "velox/functions/prestosql/types/IPPrefixType.h"
@@ -348,16 +348,16 @@ std::optional<std::string> PrestoQueryRunner::toSql(
     } else if (
         auto cast =
             std::dynamic_pointer_cast<const core::CastTypedExpr>(projection)) {
-      sql << toCastSql(cast);
+      sql << toCastSql(*cast);
     } else if (
         auto concat = std::dynamic_pointer_cast<const core::ConcatTypedExpr>(
             projection)) {
-      sql << toConcatSql(concat);
+      sql << toConcatSql(*concat);
     } else if (
         auto constant =
             std::dynamic_pointer_cast<const core::ConstantTypedExpr>(
                 projection)) {
-      sql << toConstantSql(constant);
+      sql << toConstantSql(*constant);
     } else {
       VELOX_NYI();
     }
@@ -451,16 +451,19 @@ bool PrestoQueryRunner::isConstantExprSupported(
 bool PrestoQueryRunner::isSupported(const exec::FunctionSignature& signature) {
   // TODO: support queries with these types. Among the types below, hugeint is
   // not a native type in Presto, so fuzzer should not use it as the type of
-  // cast-to or constant literals. Hyperloglog can only be casted from varbinary
-  // and cannot be used as the type of constant literals. Interval year to month
-  // can only be casted from NULL and cannot be used as the type of constant
-  // literals. Json, Ipaddress, Ipprefix, and UUID require special handling,
-  // because Presto requires literals of these types to be valid, and doesn't
-  // allow creating HIVE columns of these types.
+  // cast-to or constant literals. Hyperloglog and TDigest can only be casted
+  // from varbinary and cannot be used as the type of constant literals.
+  // Interval year to month can only be casted from NULL and cannot be used as
+  // the type of constant literals. Json, Ipaddress, Ipprefix, and UUID require
+  // special handling, because Presto requires literals of these types to be
+  // valid, and doesn't allow creating HIVE columns of these types.
   return !(
+      usesTypeName(signature, "bingtile") ||
       usesTypeName(signature, "interval year to month") ||
       usesTypeName(signature, "hugeint") ||
       usesTypeName(signature, "hyperloglog") ||
+      usesTypeName(signature, "tdigest") ||
+      usesInputTypeName(signature, "json") ||
       usesInputTypeName(signature, "ipaddress") ||
       usesInputTypeName(signature, "ipprefix") ||
       usesInputTypeName(signature, "uuid"));

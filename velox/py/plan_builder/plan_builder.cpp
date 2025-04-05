@@ -82,6 +82,8 @@ PYBIND11_MODULE(plan_builder, m) {
           py::arg("output_schema") = velox::py::PyType{},
           py::arg("aliases") = py::dict{},
           py::arg("subfields") = py::dict{},
+          py::arg("filters") = std::vector<std::string>{},
+          py::arg("remaining_filter") = "",
           py::arg("row_index") = "",
           py::arg("connector_id") = "hive",
           py::arg("input_files") = std::nullopt,
@@ -98,6 +100,11 @@ PYBIND11_MODULE(plan_builder, m) {
           subfields: Used to project individual items from columns instead
                      of reading entire containers. It maps from the column
                      name to a list of items to be projected out.
+          filters: A list of SQL filters to be applied to the data as it is
+                   decoded/read.
+          remainingFilter: SQL expression for the additional conjunct. May
+                           include multiple columns and SQL functions. The
+                           remainingFilter is AND'ed with the other filters.
           row_index: If defined, creates an output column with this name
                      producing $row_ids. This name needs to be part of the
                      `output` as BIGINT.
@@ -108,7 +115,8 @@ PYBIND11_MODULE(plan_builder, m) {
       .def(
           "table_write",
           &velox::py::PyPlanBuilder::tableWrite,
-          py::arg("output_file"),
+          py::arg("output_file") = std::nullopt,
+          py::arg("output_path") = std::nullopt,
           py::arg("connector_id") = "hive",
           py::arg("output_schema") = std::nullopt,
           py::doc(R"(
@@ -116,6 +124,12 @@ PYBIND11_MODULE(plan_builder, m) {
 
         Args:
           output_file: Name of the file to be written.
+          output_path: The output path where output files will be written.
+                       Specify this parameter instead of `outputFile` if the
+                       task is supposed to write files in parallel using
+                       multiple drivers. The actual file names in this path
+                       will be automatically generated and returned as the
+                       TableWriter output. Takes precedence over output_file.
           connector_id: ID of the connector to use for this scan.
           output_schema: An optional RowType containing the schema to be
                          written to the file. By default write the schema
@@ -189,6 +203,27 @@ PYBIND11_MODULE(plan_builder, m) {
                       to the query output.
       )"))
       .def(
+          "hash_join",
+          &velox::py::PyPlanBuilder::hashJoin,
+          py::arg("left_keys"),
+          py::arg("right_keys"),
+          py::arg("build_plan_node"),
+          py::arg("output") = std::vector<std::string>{},
+          py::arg("filter") = "",
+          py::arg("join_type") = velox::core::JoinType::kInner,
+          py::doc(R"(
+        Adds a hash join node. Uses the build_plan_node subtree to build the
+        hash table, and the current subtree as the probe side.
+
+        Args:
+          left_keys: List of keys from the left table (probe).
+          right_keys: List of keys from the right table (build).
+          build_plan_node: The plan node defined the subplan to join with.
+          output: List of columns to be projected out of the join.
+          filter: Optional join filter expression.
+          join_type: Join type (inner, left, right, full, etc).
+      )"))
+      .def(
           "merge_join",
           &velox::py::PyPlanBuilder::mergeJoin,
           py::arg("left_keys"),
@@ -198,7 +233,8 @@ PYBIND11_MODULE(plan_builder, m) {
           py::arg("filter") = "",
           py::arg("join_type") = velox::core::JoinType::kInner,
           py::doc(R"(
-        Adds a merge join node.
+        Adds a merge join node. Merge join requires that left and right sides
+        and sorted based on the join keys.
 
         Args:
           left_keys: List of keys from the left table.
@@ -206,6 +242,7 @@ PYBIND11_MODULE(plan_builder, m) {
           right_plan_node: The plan node defined the subplan to join with.
           output: List of columns to be projected out of the join.
           filter: Optional join filter expression.
+          join_type: Join type (inner, left, right, full, etc).
       )"))
       .def(
           "sorted_merge",

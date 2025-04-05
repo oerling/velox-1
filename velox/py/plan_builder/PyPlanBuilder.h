@@ -23,11 +23,6 @@
 
 namespace facebook::velox::py {
 
-/// Called when the Python module is loaded/initialized to register Velox
-/// resources like serde functions, type resolver, local filesystem and Presto
-/// functions (scalar and aggregate).
-void registerAllResources();
-
 class PyVector;
 
 // Stores the data associated with a table scan leaf operator. Map from the plan
@@ -35,7 +30,24 @@ class PyVector;
 using TScanFiles = std::unordered_map<
     core::PlanNodeId,
     std::vector<std::shared_ptr<connector::ConnectorSplit>>>;
-using TScanFilesPtr = std::shared_ptr<TScanFiles>;
+using TQueryConfigs = std::unordered_map<std::string, std::string>;
+
+/// Stores the context for a particular plan generation, since a single plan may
+/// be composed of multiple plan builders.
+struct PyPlanContext {
+  std::shared_ptr<core::PlanNodeIdGenerator> planNodeIdGenerator{
+      std::make_shared<core::PlanNodeIdGenerator>()};
+
+  /// For API convenience, we allow clients to specify the files themselves when
+  /// they add scans, so that we can automatically create and attach splits to
+  /// the task. If specified in the .tableScan() call, store these files here.
+  TScanFiles scanFiles;
+
+  /// As we create the plan, we may capture query configs that will need to be
+  /// passed to the runner while executing the task. These configs may get
+  /// overwritten if clients explicitly add configs to the runner object.
+  TQueryConfigs queryConfigs;
+};
 
 /// Thin wrapper class used to expose Velox plan nodes to Python. It is only
 /// used to maintain the internal Velox structure and expose basic string
@@ -44,7 +56,9 @@ class PyPlanNode {
  public:
   /// Creates a new PyPlanNode wrapper given a Velox plan node. Throws if
   /// planNode is nullptr.
-  PyPlanNode(core::PlanNodePtr planNode, const TScanFilesPtr& scanFiles);
+  PyPlanNode(
+      core::PlanNodePtr planNode,
+      const std::shared_ptr<PyPlanContext>& planContext);
 
   const core::PlanNodePtr& planNode() const {
     return planNode_;
@@ -66,36 +80,38 @@ class PyPlanNode {
     return planNode_->toString(detailed, recursive);
   }
 
-  const TScanFilesPtr& scanFiles() const {
-    return scanFiles_;
+  const TScanFiles& scanFiles() const {
+    return planContext_->scanFiles;
+  }
+
+  const TQueryConfigs& queryConfigs() const {
+    return planContext_->queryConfigs;
   }
 
  private:
   const core::PlanNodePtr planNode_;
-  const TScanFilesPtr scanFiles_;
+  std::shared_ptr<PyPlanContext> planContext_;
 };
 
 /// Wrapper class for PlanBuilder. It allows us to avoid exposing all details of
 /// the class to users making it easier to use.
 class PyPlanBuilder {
  public:
-  /// Constructs a new PyPlanBuilder. If provided, the planNodeIdGenerator is
-  /// used; otherwise a new one is created.
-  PyPlanBuilder(
-      const std::shared_ptr<core::PlanNodeIdGenerator>& generator = nullptr,
-      const TScanFilesPtr& scanFiles = nullptr);
+  /// Constructs a new PyPlanBuilder. If provided, the planContext is used;
+  /// otherwise a new one is created.
+  PyPlanBuilder(const std::shared_ptr<PyPlanContext>& planContext = nullptr);
 
-  // Returns the plan node at the head of the internal plan builder. If there is
-  // no plan node (plan builder is empty), then std::nullopt will signal pybind
-  // to return None to the Python client.
+  /// Returns the plan node at the head of the internal plan builder. If there
+  /// is no plan node (plan builder is empty), then std::nullopt will signal
+  /// pybind to return None to the Python client.
   std::optional<PyPlanNode> planNode() const;
 
-  // Returns a new builder sharing the plan node id generator, such that the new
-  // builder can safely be used to build other parts/pipelines of the same plan.
+  /// Returns a new builder sharing the plan node id generator, such that the
+  /// new builder can safely be used to build other parts/pipelines of the same
+  /// plan.
   PyPlanBuilder newBuilder() {
-    DCHECK(planNodeIdGenerator_ != nullptr);
-    DCHECK(scanFiles_ != nullptr);
-    return PyPlanBuilder{planNodeIdGenerator_, scanFiles_};
+    DCHECK(planContext_ != nullptr);
+    return PyPlanBuilder{planContext_};
   }
 
   /// Add table scan node with basic functionality. This API is Hive-connector
@@ -114,6 +130,13 @@ class PyPlanBuilder {
   /// container. It's a dictionary mapping from column name (string) to the list
   /// of subitems to project from it. For now, a list of integers representing
   /// the subfields in a flatmap/struct.
+  ///
+  /// @param filters A list of SQL filters to be applied to the data as it is
+  /// decoded/read.
+  ///
+  /// @param remainingFilter SQL expression for the additional conjunct. May
+  /// include multiple columns and SQL functions. The remainingFilter is
+  /// AND'ed with the other filters.
   ///
   /// @param rowIndexColumnName If defined, create an output column with that
   /// name producing $row_ids. This name needs to be part of `output`.
@@ -143,6 +166,8 @@ class PyPlanBuilder {
       const PyType& outputSchema,
       const pybind11::dict& aliases,
       const pybind11::dict& subfields,
+      const std::vector<std::string>& filters,
+      const std::string& remainingFilter,
       const std::string& rowIndexColumnName,
       const std::string& connectorId,
       const std::optional<std::vector<PyFile>>& inputFiles);
@@ -150,13 +175,19 @@ class PyPlanBuilder {
   /// Adds a table writer node to write to an output file(s).
   ///
   /// @param outputFile The output file to be written.
+  /// @param outputPath The output path where output files will be written.
+  /// Specify this parameter instead of `outputFile` if the task is supposed to
+  /// write files in parallel using multiple drivers. The actual file names in
+  /// this path will be automatically generated and returned as the TableWriter
+  /// output. Takes precedence over outputFile.
   /// @param connectorId The id of the connector to use during the write
   /// process.
   /// @param outputSchema An optional schema to be used when writing the file
   /// (columns and types). By default use the schema produced by the upstream
   /// operator.
   PyPlanBuilder& tableWrite(
-      const PyFile& outputFile,
+      const std::optional<PyFile>& outputFile,
+      const std::optional<PyFile>& outputPath,
       const std::string& connectorId,
       const std::optional<PyType>& outputSchema);
 
@@ -192,6 +223,26 @@ class PyPlanBuilder {
   /// @param is_partial If this is restricting partial results and hence can be
   /// applied once per driver, or if it's applied to the query output.
   PyPlanBuilder& limit(int64_t count, int64_t offset, bool isPartial);
+
+  /// Adds a hash join node. Uses the build_plan_node subtree to build the
+  /// hash table, and the current subtree as the probe side.
+  ///
+  /// @param leftKeys Set of join keys from the left (current plan builder)
+  /// plan subtree.
+  /// @param leftKeys Set of join keys from the right plan subtree.
+  /// @param buildPlanSubtree Subtree to join to.
+  /// @param output List of column names to project in the output of the
+  /// join.
+  /// @param filter An optional filter specified as a SQL expression to be
+  /// applied during the join.
+  /// @param joinType The type of join (kInner, kLeft, kRight, or kFull)
+  PyPlanBuilder& hashJoin(
+      const std::vector<std::string>& leftKeys,
+      const std::vector<std::string>& rightKeys,
+      const PyPlanNode& buildPlanSubtree,
+      const std::vector<std::string>& output,
+      const std::string& filter,
+      core::JoinType joinType);
 
   /// Add a merge join node to the plan. Assumes that both left and right
   /// subtrees will produce input sorted in join key order.
@@ -246,13 +297,11 @@ class PyPlanBuilder {
   // TODO: Add other nodes.
 
  private:
-  exec::test::PlanBuilder planBuilder_;
-  std::shared_ptr<core::PlanNodeIdGenerator> planNodeIdGenerator_;
+  std::shared_ptr<memory::MemoryPool> rootPool_;
+  std::shared_ptr<memory::MemoryPool> leafPool_;
 
-  // For API convenience, we allow clients to specify the files themselves when
-  // they add scans, so that we can automatically create and attach splits to
-  // the task. If specified in the .tableScan() call, store these files here.
-  TScanFilesPtr scanFiles_;
+  exec::test::PlanBuilder planBuilder_;
+  std::shared_ptr<PyPlanContext> planContext_;
 };
 
 } // namespace facebook::velox::py

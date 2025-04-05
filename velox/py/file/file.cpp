@@ -18,16 +18,41 @@
 #include <pybind11/stl.h>
 
 #include "velox/py/file/PyFile.h"
+#include "velox/py/lib/PyInit.h"
 
 namespace py = pybind11;
 
 PYBIND11_MODULE(file, m) {
   using namespace facebook;
 
+  velox::py::initializeVeloxMemory();
+  velox::py::registerAllResources();
+
+  // Need types for the get_schema() output.
+  py::module::import("velox.py.type");
+
   // File wrapper abstraction.
-  py::class_<velox::py::PyFile>(m, "File").def(
-      "__str__", &velox::py::PyFile::toString, py::doc(R"(
+  py::class_<velox::py::PyFile>(m, "File")
+      .def(
+          py::init<const std::string&, const std::string&>(),
+          py::arg("path"),
+          py::arg("format_str"),
+          py::doc(R"(
+        Constructs a File object given a path and a file format string.
+
+        Args:
+          path: The file or directory path.
+          aliases: A string containing the lowercase name of the format.
+      )"))
+      .def("__eq__", &velox::py::PyFile::equals, py::doc(R"(
+        Returns if two PyFiles are the same.
+      )"))
+      .def("__str__", &velox::py::PyFile::toString, py::doc(R"(
         Returns a short and recursive description of the file.
+      )"))
+      .def("get_schema", &velox::py::PyFile::getSchema, py::doc(R"(
+        Returns the schema from a given file. This function will open and
+        read metadata from the file using the corresponding file reader.
       )"));
 
   m.def("PARQUET", &velox::py::PyFile::createParquet);

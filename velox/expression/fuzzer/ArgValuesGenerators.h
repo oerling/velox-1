@@ -30,4 +30,31 @@ class JsonParseArgValuesGenerator : public ArgValuesGenerator {
       ExpressionFuzzerState& state) override;
 };
 
+class StringEscapeArgValuesGenerator : public ArgValuesGenerator {
+ public:
+  ~StringEscapeArgValuesGenerator() override = default;
+
+  std::vector<core::TypedExprPtr> generate(
+      const CallableSignature& signature,
+      const VectorFuzzer::Options& options,
+      FuzzerGenerator& rng,
+      ExpressionFuzzerState& state) override;
+};
+
+class PhoneNumberArgValuesGenerator : public ArgValuesGenerator {
+ public:
+  explicit PhoneNumberArgValuesGenerator(std::string functionName) {
+    functionName_ = std::move(functionName);
+  }
+  ~PhoneNumberArgValuesGenerator() override = default;
+
+  std::vector<core::TypedExprPtr> generate(
+      const CallableSignature& signature,
+      const VectorFuzzer::Options& options,
+      FuzzerGenerator& rng,
+      ExpressionFuzzerState& state) override;
+
+ private:
+  std::string functionName_;
+};
 } // namespace facebook::velox::fuzzer
