@@ -421,7 +421,7 @@ AdvanceResult AbstractHashJoinExpand::canAdvance(
     }
     if (gridStatus->anyContinuable) {
       stream.clearGridStatus<HashJoinExpandGridStatus>(status);
-      return AdvanceResult{.continueLabel = continueLabel, .isRetry = true};
+      return AdvanceResult{ .numRows = bits::roundUp(stream.numRows(), kBlockSize), .continueLabel = continueLabel, .isRetry = true};
     }
     return {};
 }

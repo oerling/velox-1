@@ -382,7 +382,7 @@ RowVectorPtr WaveDriver::getOutput() {
               if (maybeWaitForPeers()) {
                 return nullptr;
               }
-	      pipelineFinished(i);
+	      pipelineFinished(i - 2);
               break;
             } else {
               // Last finished.

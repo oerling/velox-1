@@ -269,7 +269,9 @@ __device__ inline T& flatResult(Operand* op, int32_t blockBase) {
     shared->isContinue = params.startPC != nullptr;                            \
     if (shared->isContinue) {                                                  \
       shared->startLabel = params.startPC[shared->programIdx];                 \
-    }                                                                          \
+    } else { \
+      shared->startLabel = -1; \
+      }\
     shared->extraWraps = params.extraWraps;                                    \
     shared->numExtraWraps = params.numExtraWraps;                              \
     shared->hasContinue = false;                                               \

@@ -1241,7 +1241,7 @@ void Program::getOperatorStates(WaveStream& stream, std::vector<void*>& ptrs) {
 
 bool Program::isSink() const {
   int32_t size = instructions_.size();
-  return instructions_[size - 1]->isSink();
+  return size > 0 && instructions_[size - 1]->isSink();
 }
 
   exec::BlockingReason Program::isBlocked(WaveStream& stream, ContinueFuture* future) {

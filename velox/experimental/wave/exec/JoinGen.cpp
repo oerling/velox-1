@@ -180,7 +180,7 @@ void JoinBuild::visitReferences(
 void JoinBuild::generateMain(CompileState& state, int32_t syncLabel) {
   makeBuildOps(state, *this);
   auto& out = state.generated();
-  state.declareNamed(fmt::format("GpuHashTable* table{};", id));
+  state.declareNamed("GpuHashTable*", fmt::format("table{}", id), "0xdeadbeef");
   checkNullBuildKey(state, keys, syncLabel);
   out << "  table" << id << " = reinterpret_cast<GpuHashTable*>(shared->states["
       << state.stateOrdinal(*this->state)
@@ -280,7 +280,7 @@ void JoinProbe::generateMain(CompileState& state, int32_t syncLabel) {
   state.declareNamed(fmt::format("uint64_t hash{};", id));
 
   auto stateOrd = state.stateOrdinal(*this->state);
-  state.declareNamed(fmt::format("  GpuHashTable* table{};", id));
+  state.declareNamed("GpuHashTable*", fmt::format("table{}", id), "0xdeadbeef");
   out << fmt::format("  nullProbe{} = false;\n", id);
   makeHash(state, keys, false, fmt::format("  nullProbe{} = true;", id), id);
   auto hitsOrdinal = state.declareVariable(*hits);
@@ -360,14 +360,21 @@ void JoinExpand::generateMain(CompileState& state, int32_t syncLabel) {
   auto hitsOrd = state.ordinal(*hits);
   out << fmt::format(" sync{}: ;\n", syncLabel);
   auto duplicatesStr = fmt::format(" table{}->hasDuplicates", id);
-  
+  auto* status = this->state->instruction->mutableInstructionStatus();
+
+  // the table must be loaded on all lanes, active or not, continue or
+  // not. See the access to 'hasDuplicates'.
+  out << "  table" << id << " = reinterpret_cast<GpuHashTable*>(shared->states["
+      << state.stateOrdinal(*this->state)
+      << "]);\n";
+
   out << fmt::format(
       "  if (joinResult<HashRow{}, {}, {}, {}, {}, {}>(",
       id,
       state.ordinal(*indices),
-      status.gridState,
-      status.gridStateSize,
-      status.blockState,
+      status->gridState,
+      status->gridStateSize,
+      status->blockState,
       state.ordinal(*hits));
   out << state.operandValue(hits) << ", "
       << (filter ? state.operandValue(filter) : "true")
@@ -380,7 +387,7 @@ void JoinExpand::generateMain(CompileState& state, int32_t syncLabel) {
   out << "  laneStatus = threadIdx.x < shared->numRows ? ErrorCode::kOk : ErrorCode::kInactive;\n"
 << "  if (laneStatus != ErrorCode::kOk) {goto skip" << syncLabel << "; }\n";
 
-  auto tpl = fmt::format("HashRow{}, {}, {}", id, state.ordinal(*hits), state.ordinal(*indices));
+  auto tpl = fmt::format("HashRow{}, {}", id, state.ordinal(*hits));
   out << "  joinRow<" << tpl << ">(laneStatus, shared, ";
   makeCopyRow(state, *this);
   out << ");\n";
@@ -389,12 +396,13 @@ void JoinExpand::generateMain(CompileState& state, int32_t syncLabel) {
 
 std::string JoinExpand::preContinueCode(CompileState& state) {
   std::stringstream out;
+  auto* status = this->state->instruction->mutableInstructionStatus();
   int32_t ord = state.ordinal(*hits);
   out << fmt::format(
       "  r{} = loadJoinNext<{}, {}>(shared, laneStatus);\n",
       ord,
-      status.gridStateSize,
-      status.blockState);
+      status->gridStateSize,
+      status->blockState);
   if (state.flags(*hits).needStore) {
     out << fmt::format(
         "  flatOperand<int64_t>(operands, {}, blockBase) = r{};\n", ord, ord);

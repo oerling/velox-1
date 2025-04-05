@@ -20,8 +20,7 @@
 #include "velox/experimental/wave/exec/WaveCore.cuh"
 
 namespace facebook::velox::wave {
-
-
+  
 inline __device__ JoinShared* joinShared(WaveShared* shared) {
   return reinterpret_cast<JoinShared*>(&shared->data);
 }
@@ -76,8 +75,9 @@ bool __device__ __forceinline__ joinResult(
           reinterpret_cast<int32_t*>(shared->operands[indicesIdx]->base);
       indices[shared->blockBase + nth] = shared->blockBase + threadIdx.x;
     }
+    __syncthreads();
     if (threadIdx.x == kBlockSize - 1) {
-      shared->numRows = nth + (hit && filterResult);;
+      shared->numRows = nth + (hit && filterResult);
     }
 
     if (!hasDuplicates) {
@@ -120,13 +120,14 @@ bool __device__ __forceinline__ joinResult(
       laneFull = true;
     }
   }
+  // Make sure joinShared is seen on all threads.
+  __syncthreads();
   if (!laneFull && hit) {
       auto* next = *hit->nextPtr();
       joinShared(shared)->blockStatus->next[threadIdx.x] = next;
       hitAsInt = reinterpret_cast<int64_t>(next);
   }
 
-  __syncthreads();
   if (threadIdx.x == 0 && shared->numRows > kBlockSize) {
     shared->numRows = kBlockSize;
   }
@@ -149,15 +150,14 @@ bool __device__ __forceinline__ joinResult(
   return shared->localContinue;
 }
 
-  template <typename RowType, int32_t hitsIdx, int32_t indicesIdx, typename CopyRow>
+  template <typename RowType, int32_t hitsIdx, typename CopyRow>
 void __device__ __forceinline__ joinRow(
     ErrorCode laneStatus,
     WaveShared* shared,
     CopyRow copy) {
     if (laneStatus == ErrorCode::kOk) {
       RowType** hits = reinterpret_cast<RowType**>(shared->operands[hitsIdx]->base);
-      int32_t* indices = reinterpret_cast<int32_t*>(shared->operands[indicesIdx]->base);
-      copy(hits[indices[shared->blockBase + threadIdx.x]], shared->blockBase + threadIdx.x);
+      copy(hits[shared->blockBase + threadIdx.x], shared->blockBase + threadIdx.x);
   }
 }
 

@@ -177,9 +177,6 @@ struct KernelStep {
   const T& as() const {
     return *reinterpret_cast<const T*>(this);
   }
-
-  /// Placeholder for instruction return status.
-  InstructionStatus status;
 };
 
 struct ValuesStep : public KernelStep {
@@ -677,7 +674,6 @@ struct JoinExpand : public KernelStep {
   int32_t numKeys;
   bool nullableKeys;
   AbstractOperand* filter{nullptr};
-  InstructionStatus status;
   int32_t nthWrap{-1};
   WrapInfo wrapInfo_;
   int32_t continueLabel_{-1};
@@ -932,6 +928,9 @@ class CompileState {
 
   void declareNamed(const std::string& line);
 
+  void declareNamed(const std::string& type, const std::string& name, const std::string& debugInit);
+
+  
   int32_t ordinal(const AbstractOperand& op);
 
   int32_t stateOrdinal(const AbstractState& state);
