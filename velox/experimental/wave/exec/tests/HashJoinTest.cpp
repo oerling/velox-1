@@ -19,6 +19,7 @@
 #include "velox/exec/ExchangeSource.h"
 #include "velox/exec/PlanNodeStats.h"
 #include "velox/exec/tests/utils/AssertQueryBuilder.h"
+#include "velox/exec/tests/utils/HashJoinTestBase.h"
 #include "velox/exec/tests/utils/HiveConnectorTestBase.h"
 #include "velox/exec/tests/utils/LocalExchangeSource.h"
 #include "velox/exec/tests/utils/PlanBuilder.h"
@@ -27,7 +28,6 @@
 #include "velox/experimental/wave/exec/tests/utils/FileFormat.h"
 #include "velox/experimental/wave/exec/tests/utils/WaveTestSplitReader.h"
 #include "velox/vector/fuzzer/VectorFuzzer.h"
-#include "velox/exec/tests/utils/HashJoinTestBase.h"
 
 DECLARE_int32(wave_max_reader_batch_rows);
 DECLARE_int32(max_streams_per_driver);
@@ -38,9 +38,7 @@ using namespace facebook::velox::core;
 using namespace facebook::velox::exec;
 using namespace facebook::velox::exec::test;
 
-
 class HashJoinTest : public virtual exec::test::HashJoinTestBase {
-
  protected:
   void SetUp() override {
     HashJoinTestBase::SetUp();
@@ -62,36 +60,34 @@ class HashJoinTest : public virtual exec::test::HashJoinTestBase {
     wave::test::Table::dropAll();
     HiveConnectorTestBase::TearDown();
   }
-
-
 };
-
-
-  
 
 TEST_F(HashJoinTest, twoKeys) {
   probeType_ = ROW({"t_k1", "t_k2", "t_data"}, {BIGINT(), BIGINT(), BIGINT()});
   buildType_ = ROW({"u_k1", "u_k2", "u_data"}, {BIGINT(), BIGINT(), BIGINT()});
 
-  auto build = makeRowVector({"u_k1", "u_k2", "u_data"},
-			     { makeFlatVector<int64_t>(1000, [&](auto r) { return r;}),
-			       makeFlatVector<int64_t>(1000, [&](auto r) { return r;}),
-			       makeFlatVector<int64_t>(1000, [&](auto r) { return r;})});
-  auto probe = makeRowVector({"t_k1", "t_k2", "t_data"}, { makeFlatVector<int64_t>(1000, [&](auto r) { return r + 100;}),
-			       makeFlatVector<int64_t>(1000, [&](auto r) { return r + 100;}),
-			       makeFlatVector<int64_t>(1000, [&](auto r) { return r + 2;})});
+  auto build = makeRowVector(
+      {"u_k1", "u_k2", "u_data"},
+      {makeFlatVector<int64_t>(1000, [&](auto r) { return r; }),
+       makeFlatVector<int64_t>(1000, [&](auto r) { return r; }),
+       makeFlatVector<int64_t>(1000, [&](auto r) { return r; })});
+  auto probe = makeRowVector(
+      {"t_k1", "t_k2", "t_data"},
+      {makeFlatVector<int64_t>(1000, [&](auto r) { return r + 100; }),
+       makeFlatVector<int64_t>(1000, [&](auto r) { return r + 100; }),
+       makeFlatVector<int64_t>(1000, [&](auto r) { return r + 2; })});
 
   HashJoinBuilder(*pool_, duckDbQueryRunner_, driverExecutor_.get())
       .numDrivers(1)
-    .probeType(probeType_)
-    .probeKeys({"t_k1", "t_k2"})
-							      .probeVectors({probe})
+      .probeType(probeType_)
+      .probeKeys({"t_k1", "t_k2"})
+      .probeVectors({probe})
 
-    .buildType(buildType_)
-    .buildKeys({"u_k1", "u_k2"})
-							      .buildVectors({build})
-    .injectSpill(false)
-    .referenceQuery(
+      .buildType(buildType_)
+      .buildKeys({"u_k1", "u_k2"})
+      .buildVectors({build})
+      .injectSpill(false)
+      .referenceQuery(
           "SELECT t_k1, t_k2, t_data, u_k1, u_k2, u_data FROM t, u WHERE t_k1 = u_k1 AND t_k2 = u_k2")
       .run();
 }
@@ -101,26 +97,30 @@ TEST_F(HashJoinTest, manyHits) {
   buildType_ = ROW({"u_k1", "u_k2", "u_data"}, {BIGINT(), BIGINT(), BIGINT()});
 
   int32_t numRepeats = 20;
-  auto build = makeRowVector({"u_k1", "u_k2", "u_data"},
-			     { makeFlatVector<int64_t>(15000, [&](auto r) { return (r /numRepeats) * 9;}),
-			       makeFlatVector<int64_t>(15000, [&](auto r) { return (r / numRepeats) * 9;}),
-			       makeFlatVector<int64_t>(15000, [&](auto r) { return r;})});
-  auto probe = makeRowVector({"t_k1", "t_k2", "t_data"}, { makeFlatVector<int64_t>(1000, [&](auto r) { return r * 3;}),
-			       makeFlatVector<int64_t>(1000, [&](auto r) { return r * 3;}),
-			       makeFlatVector<int64_t>(1000, [&](auto r) { return r;})});
+  auto build = makeRowVector(
+      {"u_k1", "u_k2", "u_data"},
+      {makeFlatVector<int64_t>(
+           15000, [&](auto r) { return (r / numRepeats) * 9; }),
+       makeFlatVector<int64_t>(
+           15000, [&](auto r) { return (r / numRepeats) * 9; }),
+       makeFlatVector<int64_t>(15000, [&](auto r) { return r; })});
+  auto probe = makeRowVector(
+      {"t_k1", "t_k2", "t_data"},
+      {makeFlatVector<int64_t>(1000, [&](auto r) { return r * 3; }),
+       makeFlatVector<int64_t>(1000, [&](auto r) { return r * 3; }),
+       makeFlatVector<int64_t>(1000, [&](auto r) { return r; })});
 
   HashJoinBuilder(*pool_, duckDbQueryRunner_, driverExecutor_.get())
       .numDrivers(1)
-    .probeType(probeType_)
-    .probeKeys({"t_k1", "t_k2"})
-							      .probeVectors({probe})
+      .probeType(probeType_)
+      .probeKeys({"t_k1", "t_k2"})
+      .probeVectors({probe})
 
-    .buildType(buildType_)
-    .buildKeys({"u_k1", "u_k2"})
-							      .buildVectors({build})
-    .injectSpill(false)
-    .referenceQuery(
+      .buildType(buildType_)
+      .buildKeys({"u_k1", "u_k2"})
+      .buildVectors({build})
+      .injectSpill(false)
+      .referenceQuery(
           "SELECT t_k1, t_k2, t_data, u_k1, u_k2, u_data FROM t, u WHERE t_k1 = u_k1 AND t_k2 = u_k2")
       .run();
 }
-
