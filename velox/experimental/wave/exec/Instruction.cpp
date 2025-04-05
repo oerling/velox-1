@@ -541,10 +541,10 @@ AdvanceResult AbstractHashBuild::canAdvance(
     return {};
   }
   if (gridState->needMore) {
-    TR(&stream, fmt::format("Build need more retry: card={}"));
+    TR(&stream, "Build need more retry: card={}");
     stream.checkBlockStatuses();
-    stream.clearGridStatus<AggregateReturn>(status);
-    // The hash table needs memory or rehash. Request a Task-wide break to
+    stream.clearGridStatus<BuildReturn>(status);
+    // The hash table needs memory. Request a Task-wide break to
     // resupply the device side hash table.
     return {
         .numRows = stream.numRows(),

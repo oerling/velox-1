@@ -364,7 +364,6 @@ void JoinExpand::generateMain(CompileState& state, int32_t syncLabel) {
   if (filter) {
     state.generateIsTrue(*filter);
   }
-  auto hitsOrd = state.ordinal(*hits);
   out << fmt::format(" sync{}: ;\n", syncLabel);
   auto duplicatesStr = fmt::format(" table{}->hasDuplicates", id);
   auto* status = this->state->instruction->mutableInstructionStatus();

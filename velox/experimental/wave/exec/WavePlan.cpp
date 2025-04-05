@@ -1075,7 +1075,6 @@ void CompileState::markWraps(int32_t pipelineIdx) {
   auto& pipeline = selectedPipelines_[pipelineIdx];
   // Mark wraps that need to be rewindable. A continuable wrap or a wrap with a
   // continuable instruction in front needs to be rewindable.
-  auto hasContinue = false;
   for (int32_t kernelSeq = pipeline.steps.size() - 1; kernelSeq >= 0;
        --kernelSeq) {
     auto& boxes = pipeline.steps[kernelSeq];
@@ -1085,13 +1084,11 @@ void CompileState::markWraps(int32_t pipelineIdx) {
       for (auto j = 0; j < boxes.size(); ++j) {
         for (auto& step : boxes[j].steps) {
           if (step->continueLabel().has_value()) {
-            hasContinue = true;
             break;
           }
         }
       }
     } else {
-      int32_t wrapKernel = -1;
       int32_t wrapStep = -1;
       bool hasWrap = false;
       auto& box = boxes[0];
@@ -1099,7 +1096,6 @@ void CompileState::markWraps(int32_t pipelineIdx) {
         auto* step = box.steps[stepIdx];
         if (step->isWrap() != AbstractOperand::kNoWrap) {
           hasWrap = true;
-          wrapKernel = kernelSeq;
           wrapStep = stepIdx;
         }
         if (step->continueLabel().has_value()) {
