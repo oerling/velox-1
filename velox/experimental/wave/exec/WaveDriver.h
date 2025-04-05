@@ -51,6 +51,9 @@ struct Pipeline {
   bool makesHostResult{false};
   bool canAdvance{false};
   bool noMoreInput{false};
+
+  /// true if pipelineFinished has been called.
+  bool finishCalled{false};
 };
 
 /// Synchronizes between WaveDrivers on different Drivers of a Task
@@ -260,6 +263,10 @@ class WaveDriver : public exec::SourceOperator {
   // end is ready to consume by another pipeline. This is called once,
   // after there is guaranteed no more input.
   void flush(int32_t pipelineIdx);
+
+  // Calls pipelinefinished on abstract instructions. Called on one stream of
+  // last Driver to finish for the Task pipeline.
+  void pipelineFinished(int32_t pipelineIdx);
 
   // Copies from 'waveStats_' to runtimeStates consumed by
   // exec::Driver.

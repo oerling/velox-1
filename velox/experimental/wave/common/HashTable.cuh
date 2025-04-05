@@ -203,9 +203,9 @@ class GpuHashTable : public GpuHashTableBase {
       }
   }
 
-  template <typename RowType, typename Ops, typename Init>
-  bool __device__ addJoinRow(Ops ops, Init init) {
-    auto* row = allocators[0].allocate<RowType>();
+  template <typename RowType, typename Init>
+  bool __device__ addJoinRow(Init init) {
+    auto* row = allocators[0].allocateRow<RowType>();
     if (!row) {
       return false;
     }
@@ -422,11 +422,11 @@ class GpuHashTable : public GpuHashTableBase {
 
   template <typename RowType, typename Ops>
   void __device__
-  joinBuild(RowType** rows, int32_t numRows, Ops ops) {
+  joinBuild(RowType* rows, int32_t numRows, Ops ops) {
     int32_t stride = blockDim.x * gridDim.x;
     for (auto idx = threadIdx.x + blockDim.x * blockIdx.x; idx < numRows;
          idx += stride) {
-      auto* row = rows[idx];
+      auto* row = rows + idx;
       uint64_t h = ops.hashRow(row);
       auto bucketIdx = h & sizeMask;
       uint32_t tagWord = hashTag(h);
@@ -444,11 +444,11 @@ class GpuHashTable : public GpuHashTableBase {
 	  auto candidate = bucket->loadWithWait<RowType>(hitIdx);
 	  if (ops.compare(row, candidate)) {
 	    for (;;) {
-	      auto previous = asDeviceAtomic<RowType*>(candidate->nextPtr()).load(cuda::memory_order_relaxed);
-		if (atomicCAS((unsigned long long*)&candidate->next, (unsigned long long)row, (unsigned long long)previous)) {
+	      auto previous = asDeviceAtomic<RowType*>(candidate->nextPtr())->load(cuda::memory_order_relaxed);
+		if ((unsigned long long)previous == atomicCAS((unsigned long long*)&candidate->next, (unsigned long long)previous, (unsigned long long)row)) {
 		  *row->nextPtr() = previous;
 		  // Set duplicates flag, no need to set if already set.
-		  atomicCAS(&hasDuplicates, 1, 0);
+		  atomicCAS(&hasDuplicates, 0, 1);
 		  goto next;
 		}
 	    }
@@ -470,7 +470,7 @@ class GpuHashTable : public GpuHashTableBase {
     next:;
     }
     __syncthreads();
-  }
+}
 
   int32_t __device__ partitionIdx(uint64_t h) const {
     return partitionMask == 0 ? 0 : (h >> 41) & partitionMask;

@@ -298,6 +298,8 @@ struct AggregateOperatorState : public OperatorState {
   // affecting surrounding data.
   DeviceAggregation* alignedHead;
 
+  GpuHashTableBase* hashTable{nullptr};
+
   // Used bytes counting from 'alignedHead'.
   int32_t alignedHeadSize;
 
@@ -332,11 +334,20 @@ struct AggregateOperatorState : public OperatorState {
   WaveBufferPtr temp;
 };
 
-struct HashTableHolder : public AggregateOperatorState {};
+struct HashTableHolder : public AggregateOperatorState {
+  HashTableHolder(std::shared_ptr<GpuArena> arena)
+      : AggregateOperatorState(std::move(arena)) {}
+
+  void* devicePtr() const override {
+    return hashTable;
+  }
+};
 
 struct OperatorStateMap {
   std::mutex mutex;
   folly::F14FastMap<int32_t, std::shared_ptr<OperatorState>> states;
+
+  void addIfNew(int32_t id, const std::shared_ptr<OperatorState>& state);
 };
 
 /// Represents a kernel or data transfer. Many executables can be in one kernel
@@ -561,6 +572,9 @@ class Program : public std::enable_shared_from_this<Program> {
     return output_;
   }
 
+  /// Calls pipelineFinished() on instructions.
+  void pipelineFinished(WaveStream& stream);
+
   const std::string& label() const {
     return label_;
   }
@@ -582,6 +596,8 @@ class Program : public std::enable_shared_from_this<Program> {
     return !instructions_.empty() &&
         instructions_.front()->opCode == OpCode::kReadAggregate;
   }
+
+  exec::BlockingReason isBlocked(WaveStream& stream, ContinueFuture* future);
 
   /// If partially executed instructions in the call of 'control',
   /// returns the point where to pick up. If fully executed or not
@@ -948,11 +964,17 @@ class WaveStream {
 
   OperatorState* operatorState(int32_t id);
 
+  std::shared_ptr<OperatorState> operatorStateShared(int32_t id);
+
   OperatorState* newState(ProgramState& init);
 
   /// Initializes 'state' to the device side state for 'inst'. Returns after
   /// 'state' is ready to use on device.
   void makeAggregate(AbstractAggregation& inst, AggregateOperatorState& state);
+
+  /// Initializes 'state' to the device side state for 'inst'. Returns after
+  /// 'state' is ready to use on device.
+  void makeHashBuild(AbstractHashBuild& inst, HashTableHolder& state);
 
   std::unique_ptr<Executable> recycleExecutable(
       Program* program,
@@ -1065,6 +1087,9 @@ class WaveStream {
   Event* newEvent();
 
   LaunchControl* lastControl() const;
+
+  void
+  makeHashTable(AggregateOperatorState& state, int32_t rowSize, bool makeTable);
 
   static std::unique_ptr<Event> eventFromReserve();
   static void releaseEvent(std::unique_ptr<Event>&& event);

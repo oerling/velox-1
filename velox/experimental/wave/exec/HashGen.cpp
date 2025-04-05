@@ -24,6 +24,7 @@ void makeKeyMembers(
     std::stringstream& out) {
   for (auto i = 0; i < keys.size(); ++i) {
     auto* key = keys[i];
+    VELOX_CHECK_NOT_NULL(key);
     out << cudaTypeName(*key->type) << " " << prefix << i << ";\n";
   }
 }
@@ -57,7 +58,13 @@ void makeHash(
     state.ensureOperand(op);
     std::string stmt;
     if (!nullableKeys && !op->notNull) {
-      stmt = fmt::format("  if ({}) {{ goto nullKey; }}\n", state.isNull(op));
+      stmt = fmt::format(
+          "  if ({}) {{ goto nullKey; }}\n"
+          "   hash{} = hashMix(hash{}, hashValue({}));\n",
+          state.isNull(op),
+          id,
+          id,
+          state.operandValue(op));
     } else {
       if (!keys[i]->notNull) {
         stmt = fmt::format(

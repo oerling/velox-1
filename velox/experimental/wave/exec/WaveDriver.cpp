@@ -382,11 +382,17 @@ RowVectorPtr WaveDriver::getOutput() {
               if (maybeWaitForPeers()) {
                 return nullptr;
               }
+              pipelineFinished(i - 2);
               break;
             } else {
               // Last finished.
               finished_ = true;
               updateStats();
+              if (maybeWaitForPeers()) {
+                return nullptr;
+              }
+              pipelineFinished(i);
+
               return nullptr;
             }
           }
@@ -439,6 +445,16 @@ void WaveDriver::flush(int32_t pipelineIdx) {
   ;
 }
 
+void WaveDriver::pipelineFinished(int32_t pipelineIdx) {
+  auto& pipeline = pipelines_[pipelineIdx];
+  VELOX_CHECK(pipeline.arrived.empty());
+  VELOX_CHECK(pipeline.running.empty());
+  VELOX_CHECK(!pipeline.finished.empty());
+  for (auto i = 0; i < pipeline.operators.size(); ++i) {
+    pipeline.operators[i]->pipelineFinished(*pipeline.finished[0]);
+  }
+}
+
 namespace {
 void moveTo(
     std::vector<std::unique_ptr<WaveStream>>& from,
@@ -462,7 +478,8 @@ exec::BlockingReason WaveDriver::processArrived(Pipeline& pipeline) {
   for (auto streamIdx = 0; streamIdx < pipeline.arrived.size(); ++streamIdx) {
     bool continued = false;
     for (int32_t i = pipeline.operators.size() - 1; i >= 0; --i) {
-      auto reason = pipeline.operators[i]->isBlocked(&blockingFuture_);
+      auto reason = pipeline.operators[i]->isBlocked(
+          *pipeline.arrived[streamIdx], &blockingFuture_);
       if (reason != exec::BlockingReason::kNotBlocked) {
         return reason;
       }
@@ -705,6 +722,9 @@ RowVectorPtr WaveDriver::makeResult(
   std::vector<VectorPtr> children(rowType->size());
   int32_t numRows = stream.getOutput(
       operatorId, *operatorCtx_->pool(), resultOrder_, children.data());
+  if (last.isSink()) {
+    return nullptr;
+  }
   auto result = std::make_shared<RowVector>(
       operatorCtx_->pool(),
       rowType,

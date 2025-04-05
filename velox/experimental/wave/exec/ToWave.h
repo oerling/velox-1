@@ -114,7 +114,7 @@ struct KernelStep {
   virtual bool autoContinueLabel() const {
     return true;
   }
-  
+
   /// Returns code to execute before jumping to continueLabel() when continuing
   /// from this step.
   virtual std::string preContinueCode(CompileState& state) {
@@ -177,9 +177,6 @@ struct KernelStep {
   const T& as() const {
     return *reinterpret_cast<const T*>(this);
   }
-
-  /// Placeholder for instruction return status.
-  InstructionStatus status;
 };
 
 struct ValuesStep : public KernelStep {
@@ -559,6 +556,11 @@ struct JoinBuild : public KernelStep {
   StepKind kind() const override {
     return StepKind::kJoinBuild;
   }
+
+  bool isBarrier() const override {
+    return true;
+  }
+
   void visitReferences(
       std::function<void(AbstractOperand*)> visitor) const override;
 
@@ -585,6 +587,8 @@ struct JoinBuild : public KernelStep {
   core::JoinType joinType;
   int32_t id{-1};
   int32_t continueLabel_;
+  std::shared_ptr<exec::HashJoinBridge> joinBridge;
+  AbstractHashBuild* abstractHashBuild{nullptr};
 };
 
 struct JoinExpand;
@@ -637,9 +641,13 @@ struct JoinExpand : public KernelStep {
   bool autoContinueLabel() const override {
     return false;
   }
-  
+
   bool isBarrier() const override {
     return true;
+  }
+
+  int32_t sharedMemorySize() const {
+    return sizeof(WaveShared) + sizeof(JoinShared);
   }
 
   void visitReferences(
@@ -665,12 +673,13 @@ struct JoinExpand : public KernelStep {
   int32_t numKeys;
   bool nullableKeys;
   AbstractOperand* filter{nullptr};
-  InstructionStatus status;
   int32_t nthWrap{-1};
   WrapInfo wrapInfo_;
   int32_t continueLabel_{-1};
   int32_t id{-1};
+  std::string planNodeId;
   RowTypePtr tableType;
+  std::shared_ptr<exec::HashJoinBridge> joinBridge;
 };
 
 struct KernelBox {
@@ -918,6 +927,11 @@ class CompileState {
 
   void declareNamed(const std::string& line);
 
+  void declareNamed(
+      const std::string& type,
+      const std::string& name,
+      const std::string& debugInit);
+
   int32_t ordinal(const AbstractOperand& op);
 
   int32_t stateOrdinal(const AbstractState& state);
@@ -943,8 +957,9 @@ class CompileState {
   // wraps. 'id' is a sequence number from nextWrapId().
   int32_t wrapLiteral(const WrapInfo& info, int32_t id);
 
-  void generateWrap(WrapInfo& wrap, int32_t nthWrap, const AbstractOperand* indices);
-  
+  void
+  generateWrap(WrapInfo& wrap, int32_t nthWrap, const AbstractOperand* indices);
+
   void setInsideNullPropagating(bool flag) {
     insideNullPropagating_ = flag;
   }
@@ -1018,6 +1033,20 @@ class CompileState {
 
   std::optional<int32_t> tryErrorLabel() const {
     return tryErrorLabel_;
+  }
+
+  template <typename T>
+  const T* inputPlanNode(int32_t nodeIndex) {
+    const core::PlanNode* node;
+    if (nodeIndex >= driverFactory_.planNodes.size()) {
+      node = driverFactory_.consumerNode.get();
+    } else {
+      node = driverFactory_.planNodes[nodeIndex].get();
+    }
+    VELOX_CHECK_NOT_NULL(node);
+    auto result = dynamic_cast<const T*>(node);
+    VELOX_CHECK_NOT_NULL(node);
+    return result;
   }
 
  private:
@@ -1251,6 +1280,9 @@ class CompileState {
 
   // Query wide counter for kernels.
   int32_t kernelCounter_{0};
+
+  // PlanNodeId of the first operator. Used in makeing unique kernel name.
+  std::string startNodeId_;
 
   Branches branches_;
   std::vector<Segment> segments_;
