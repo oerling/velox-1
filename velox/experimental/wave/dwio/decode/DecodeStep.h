@@ -95,7 +95,8 @@ enum class DecodeStep {
   kFlatMapNode,
   kRowCountNoFilter,
   kCountBits,
-  kUnsupported,
+    kLemgth,
+    kUnsupported,
 };
 
 enum class DictMode {

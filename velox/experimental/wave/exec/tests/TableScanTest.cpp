@@ -321,7 +321,7 @@ TEST_P(TableScanTest, basic) {
 
 TEST_P(TableScanTest, filter) {
   auto type =
-      ROW({"c0", "c1", "c2", "c3"}, {BIGINT(), BIGINT(), BIGINT(), BIGINT()});
+    ROW({"c0", "c1", "c2", "c3"}, {BIGINT(), BIGINT(), VARCHAR(), ARRAY(BIGINT())});
   auto splits = makeData(type, numBatches_, batchSize_);
 
   auto plan = PlanBuilder(pool_.get())
@@ -357,7 +357,7 @@ TEST_P(TableScanTest, filterNull) {
 
 TEST_P(TableScanTest, filterInScan) {
   auto type =
-      ROW({"c0", "c1", "c2", "c3"}, {BIGINT(), BIGINT(), BIGINT(), BIGINT()});
+    ROW({"c0", "c1", "c2", "c3"}, {BIGINT(), BIGINT(), VARCHAR(), ARRAY(BIGINT())});
   auto splits = makeData(type, numBatches_, batchSize_);
 
   auto plan = PlanBuilder(pool_.get())
