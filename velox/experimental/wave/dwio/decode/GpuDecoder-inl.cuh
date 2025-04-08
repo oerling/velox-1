@@ -1158,7 +1158,10 @@ __device__ void decodeSwitch(GpuDecode& op) {
     case DecodeStep::kCountBits:
       countBits<kBlockSize>(op);
       break;
-    case DecodeStep::kTrivial:
+  case DecodeStep::kLengths:
+    !!;
+    break;
+  case DecodeStep::kTrivial:
       detail::decodeTrivial(op);
       break;
     case DecodeStep::kDictionaryOnBitpack:

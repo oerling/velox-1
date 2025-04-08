@@ -19,6 +19,7 @@
 #include "velox/experimental/wave/common/Buffer.h"
 #include "velox/experimental/wave/common/GpuArena.h"
 #include "velox/experimental/wave/common/ResultStaging.h"
+#include "velox/experimental/wave/common/StringView.h"
 #include "velox/experimental/wave/vector/Operand.h"
 
 namespace facebook::velox::wave {
@@ -46,9 +47,12 @@ struct alignas(16) WaveFilterBase {
     int64_t int64Range[2];
     float floatRange[2];
     double doubleRange[2];
+    StringView stringRange[2];
     struct {
-      int32_t size;
+      /// Pointer to single key GpuHashTable of right type
       void* table;
+      /// place for returning the hit row from 'table'. if nullptr, hit row is not returned.
+      void** hitRows;
     } values;
   } _;
   // flags for float/double range.
@@ -62,8 +66,12 @@ struct alignas(16) WaveFilterBase {
 /// or pre/post processing other than decoding.
 enum class DecodeStep {
   kSelective32,
-  kCompact64,
   kSelective64,
+  kSelectiveString,
+    kCompact8,
+    kCompact16,
+    kCompact32,
+    kCompact64,
   kConstant32,
   kConstant64,
   kConstantChar,
@@ -95,7 +103,8 @@ enum class DecodeStep {
   kFlatMapNode,
   kRowCountNoFilter,
   kCountBits,
-    kLemgth,
+    kLength,
+    kResultLength,
     kUnsupported,
 };
 
@@ -379,8 +388,39 @@ struct alignas(16) GpuDecode {
     void* source;
     /// Null flags. nullptr if not nullable.
     uint8_t* sourceNull;
+    /// An extra column to compact that is aligned with 'source', e.g. pushed down hash join result rows. nullptr if not needed.
+    uint64_t* sourceExtra;
   };
 
+
+  /// Calculates the vector of end offsets for variable length data
+  /// (strings, arrays, maps). Done as part of griddize for variable
+  /// length columns. ends returned in 'result'. 
+  struct Length {
+    /// Place to return the total length.
+    int32_t* totalResult;
+  };
+  
+  /// Calculates the result ends for a selective read of repeated. 'rows' is the selected rows, 'result' is the returned array of ends (inclusive prefix sum of lengths).
+  struct Resultlength {
+    // if not -1, gives one past the largest used array subscript.
+    int32_t maxLength;
+    /// All lengths. 
+    int32_t* lengths;
+
+    /// Place for returning the total.
+    int32_t* totalReturn;
+  };
+
+  /// Makes an inner row set or reading nested row in array/map. rows is the rowset, result goes in 'deviceResult'
+  struct InnerRows {
+    /// result from griddize of lengths.
+    int32_t* ends;
+
+    /// Result from Resultlengths.
+    int32_t* resultEnds;
+  };
+  
   union {
     Trivial trivial;
     MainlyConstant mainlyConstant;

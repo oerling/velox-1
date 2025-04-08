@@ -73,6 +73,10 @@ class ColumnReader {
     return formatData_.get();
   }
 
+  const TypePtr& type() const {
+    return requestedType_;
+  }
+  
   std::vector<std::unique_ptr<SplitStaging>>& splitStaging() {
     return staging_;
   }

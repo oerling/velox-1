@@ -61,7 +61,7 @@ class TestFormatData : public wave::FormatData {
       const ColumnOp* previousFilter,
       ResultStaging& deviceStaging,
       ResultStaging& resultStaging,
-      SplitStaging& staging,
+       SplitStaging& staging,
       DecodePrograms& program,
       ReadStream& stream) override;
 
@@ -97,6 +97,28 @@ class TestFormatData : public wave::FormatData {
   // Device side decoded alphabet for dictionary encoding.
   void* decodedAlphabet_{nullptr};
   uint32_t* filterBitmap_{nullptr};
+
+  // if type has lengths (string/array/map) then this is the ends from
+  // griddize. Inclusive prefix sum of all lengths in range of
+  // griddize.
+  uint32_t* ends_{nullptr};
+
+  // If type has lengths and is read selectively, this is the array of
+  // end offsets for each variable length content in the result
+  // elements/characters array.
+  int32_t* resultEnds_{nullptr};
+
+  /// Last element of 'ends_' in host readable memory.
+  int32_t* totalLength_{nullptr};
+
+  // translation of selected row set to rows in 'children_'. one element per element in repeated runs corresponding to selected rows at enclosing level.to selected 
+  int32_t* nestedRows_{nullptr};
+  
+  // Last element of 'resultEnds_' in host memory.
+  int32_t totalResultLength_{nullptr};
+  
+  // Format data for nested data (array/map keys/values or struct members).
+  std::vector<std::unique_ptr<TestFormatData>> children_;
 };
 
 class TestFormatParams : public wave::FormatParams {

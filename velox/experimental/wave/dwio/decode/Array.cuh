@@ -101,6 +101,34 @@ __device__ void decodeLengths(GpuDecode* op) {
   __syncthreads();
 }
 
+/// Finds row' in 'rows'. Returns the index of the first row <= 'row'.
+inline __device__ int
+lower(const int32_t* rows, int32_t size, int32_t row, GpuDecode* op) {
+  int lo = 0, hi = size;
+  while (lo < hi) {
+    int i = (lo + hi) / 2;
+    if (rows[i] == row) {
+      return i;
+    }
+    if (rows[i] < row) {
+      lo = i + 1;
+    } else {
+      hi = i;
+    }
+  }
+  printf("Expecting to find  row %d in findRow() size %d %p\n", row, size, op);
+  assert(false);
+}
+
+
+int32_t arraySourceIdx(int32_t* resultEnds int32_t* rows, int32_t* sourceEnds) {
+  auto endIdx = upper(resultEnds, numArrays, threadIdx.x);
+  if (resultEnds[endIdx] >= threadIdx.x) {
+    return sourceIx[0] + threadIdx.x;
+  }
+  return sourceIdx[endIdx-1] + (threadIdx.x - resultIdx[endIdx-1]);
+}
+
 void makeInnerRows(const int32_t* lengths, const int32_t* rows, int32_t numRows, int32_t* resultBases, int32_t* sourceRows) {
 
   

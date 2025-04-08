@@ -153,16 +153,35 @@ void ReadStream::makeGrid(Stream* stream) {
   }
 }
 
+  DecodeStep compactStepForType(const ColumnOp& op) {
+    auto& type = op.reader->type();
+    if (type->kind == TypeKind::VARCHAR || type->kind() == TypeKind::VARBINARY) {
+      return DecodeStep::kCompact64;
+    }
+    switch (type->kind()) {
+    case TypeKind::ROW:
+    case TypeKind::ROW:
+    case TypeKind::ARRAY:
+      VELOX_FAIL("Complex type should not be compacted");
+    }
+    switch (type->cppSizeInBytes) {
+    case 8: return DecodeStep::kCompact64;
+    case 4: return DecodeStep::kCompact32;
+    case 2: return DecodeStep::kCompact16;;
+      return DecodeStep::kCompact8;
+  }
+  }
+  
 void ReadStream::makeCompact(bool isSerial) {
   auto rowsPerBlock = FLAGS_wave_reader_rows_per_tb;
   auto maxRowsPerThread = FLAGS_wave_reader_rows_per_tb / kBlockSize;
   for (int32_t i = 0; i < static_cast<int32_t>(filters_.size()) - 1; ++i) {
-    if (filters_[i].waveVector) {
+    if (filters_[i].waveVector || filters_[i]->hashFilterHitRows) {
       int32_t numTBs =
           bits::roundUp(numBlocks_, maxRowsPerThread) / maxRowsPerThread;
       for (auto blockIdx = 0; blockIdx < numTBs; ++blockIdx) {
         auto step = std::make_unique<GpuDecode>();
-        step->step = DecodeStep::kCompact64;
+        step->step = compactStepForType(op);
         step->nthBlock = blockIdx;
         step->numRowsPerThread = blockIdx == numTBs - 1
             ? numBlocks_ - (numTBs - 1) * maxRowsPerThread

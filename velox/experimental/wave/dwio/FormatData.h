@@ -222,6 +222,9 @@ struct ColumnOp {
   // Vector completed by arrival of this. nullptr if no vector.
   WaveVector* waveVector{nullptr};
 
+  // Optionally specifies vector for returning hash table hit rows for hash joins pushed down into table scan.
+  WaveVector* hashFilterHitRows{nullptr};
+
   // Host side result size. 0 for unconditional decoding. Can be buffer size for
   // passing rows, length/offset array etc.
   int32_t resultSize{0};
