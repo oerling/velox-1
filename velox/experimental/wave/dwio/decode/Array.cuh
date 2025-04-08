@@ -130,7 +130,7 @@ int32_t arraySourceIdx(int32_t* resultEnds int32_t* rows, int32_t* sourceEnds) {
 }
 
 void makeInnerRows(const int32_t* lengths, const int32_t* rows, int32_t numRows, int32_t* resultBases, int32_t* sourceRows) {
-
+x
   
 }
 
