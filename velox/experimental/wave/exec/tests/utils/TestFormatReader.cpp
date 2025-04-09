@@ -56,6 +56,16 @@ BufferId TestFormatData::stageNulls(
   return nullsBufferId_;
 }
 
+  TestFormatData::decodeLengths(
+    ColumnOp& op,
+    Column* alphabet,
+    ResultStaging& deviceStaging,
+    ResultStaging& resultStaging,
+    SplitStaging& splitStaging,
+    DecodePrograms& program,
+    ReadStream& stream) {
+    // Densely decode ints possibly with nulls.
+  }
 void TestFormatData::decodeAlphabet(
     ColumnOp& op,
     Column* alphabet,
@@ -141,7 +151,7 @@ SyncFlag TestFormatData::griddize(
   if (griddized_) {
     return;
   }
-  op.griddizeDome = true;
+  op.griddizeDone = true;
   griddized_ = true;
   if (column_->encoding == kDict) {
     auto alphabet = column_->alphabet.get();
@@ -151,8 +161,10 @@ SyncFlag TestFormatData::griddize(
     decodeAlphabet(
         op, alphabet, deviceStaging, resultStaging, staging, programs, stream);
   }
-  if (!column_->nulls) {
-    return;
+  auto kind = column->kind;
+  bool hasLengths = kind == TypeKind::VARCHAR || kind == TypeKind::ARRAY || kind == TypeKind::MAP;
+  if (!column_->nulls && !hasLengths) {
+    return SyncFlag::kDone;
   }
   // If the whole stripe is covered by a single TB, there is no need for a
   // separate griddize kernel.

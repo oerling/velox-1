@@ -185,6 +185,10 @@ struct ColumnGridInfo {
   /// block starts at index 'nonNullCount[i - 1]' in encoded values. nullptr if
   /// non nulls.
   int32_t* numNonNull{nullptr};
+
+  /// For variable length types, array of ends. If lengths are 3, 4, then ends is 3, 7.
+  int32_t* ends{nullptr};
+  BufferId endsId{kNoBuffer};
 };
 
   /// Return value for a griddize.
