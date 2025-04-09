@@ -94,6 +94,9 @@ struct AbstractOperand {
 
   bool isHostReturn{false};
 
+  /// If type is a complex type, contains child operands 1:1 to children of type.
+  std::vector<AbstractOperand*> children;
+  
   /// Corresponding Expr. Needs to be set if inlinable.
   const exec::Expr* expr{nullptr};
 

@@ -187,6 +187,15 @@ struct ColumnGridInfo {
   int32_t* numNonNull{nullptr};
 };
 
+  /// Return value for a griddize.
+  enum SyncFlag : int8_t {
+			  // Result is on device after kernel completes.
+			  kReady,
+			  /// There is a next operation that depends on the kernel completing but no host side interpretation of results.
+			  kNextWave,
+			  /// There is a next operation that depends on data transferred to host from this kernel.
+			  kHost}; 
+  
 // Specifies an action on a column. A column is not indivisible. It
 // has parts and another column's decode may depend on one part of
 // another column but not another., e.g. a child of a nullable struct
@@ -207,12 +216,17 @@ struct ColumnOp {
   static constexpr int32_t kNoPrerequisite = -1;
   static constexpr int32_t kNoOperand = -1;
 
+  /// True after griddize() is complete.
+  bool griddizeDone{false};
+  
   // Is the op completed after this? If so, any dependent action can be
   // queued as soon as this is set.
   bool isFinal{false};
   // True if needs a result on the host before proceeding.
   bool needsResult{false};
   OperandId producesOperand{kNoOperand};
+  /// Index of ColumnOp this depends on for griddize step.
+  int32_t gridDependsOn{kNoPrerequisite};
   // Index of another op in column ops array in ReadStream.
   int32_t prerequisite{kNoPrerequisite};
   ColumnAction action;
@@ -292,8 +306,8 @@ class FormatData {
   /// 3600, ... as starts for the varints. The FormatData stores the
   /// intermediates. This is a no-op for encodings that are random
   /// access capable, e.g. non-null bit packings. this is a also a
-  /// no-op if there are less than 'blockSize' rows left.
-  virtual void griddize(
+  /// no-op if there are less than 'blockSize' rows left. Return indicates if follow up needed.
+  virtual SyncFlag griddize(
       ColumnOp& op,
       int32_t blockSize,
       int32_t numBlocks,

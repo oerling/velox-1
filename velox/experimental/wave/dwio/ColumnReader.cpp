@@ -21,8 +21,10 @@ namespace facebook::velox::wave {
 void ColumnReader::makeOp(
     ReadStream* readStream,
     ColumnAction action,
-    ColumnOp& op) {
+    std::vector<ColumnOp>& ops) {
   VELOX_CHECK(action == ColumnAction::kValues, "Only values supported");
+  ops.emplace_back();
+  auto& op = ops.back();
   op.action = action;
   op.reader = this;
   op.waveVector = readStream->operandVector(operand_->id, requestedType_);

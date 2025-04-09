@@ -304,6 +304,53 @@ class TestStructColumnReader : public StructColumnReader {
   }
 };
 
+  class testArrayColumnReader : public ArrayColumnReader {
+  public:
+    TestArrayColumnReader(
+      const TypePtr& requestedType,
+      const std::shared_ptr<const dwio::common::TypeWithId>& fileType,
+      TestFormatParams& params,
+      common::ScanSpec& scanSpec,
+      std::vector<std::unique_ptr<Subfield::PathElement>>& path,
+      const DefinesMap& defines)
+      : ArrayColumnReader(
+            requestedType,
+            fileType,
+            pathToOperand(defines, path),
+            params,
+            scanSpec,
+            false) {
+      path.push_back(std::make_unique<Subfield::AllSubscripts>()); 
+      elementReader_ = TestFormatReader::build(
+					       requestedType->childAt(0),
+					       fileType->childAt(0),
+    params,
+					       *scanSpec.children()[0],
+					       elementPath,
+					       defines,
+					       false);
+      path.pop_back();
+
+      children_.push_back(elementReader_.get());
+    }
+
+void     makeOp(
+	   ReadStream* readStream,
+	   ColumnAction action,
+	   std::vector<ColumnOp>& ops) {
+    int32_t opIdx = ops.size();
+    ColumnReader::makeOp(streamReader, action, ops);
+    elementReader_->makeOp(readStream, action, ops);
+    for (auto i = opIdx + 1; i < ops.size(); ++i) {
+      if (ops[i].prerequisite == kNoPrerequisite) {
+	ops[i].prerequisite = opIdx;
+      }
+    }
+  
+      
+}
+  };
+  
 std::unique_ptr<ColumnReader> buildIntegerReader(
     const TypePtr& requestedType,
     const std::shared_ptr<const dwio::common::TypeWithId>& fileType,
@@ -329,6 +376,15 @@ std::unique_ptr<ColumnReader> TestFormatReader::build(
     case TypeKind::BIGINT:
       return buildIntegerReader(
           requestedType, fileType, params, scanSpec, path, defines);
+
+  case typeKind::VARCHAR:
+    return std::make_unique<ColumnReader>(
+      requestedType, fileType, pathToOperand(defines, path), params, scanSpec);
+
+    
+  case TypeKind::ARRAY:
+    return std::make_unique<TestArrayColumnReader>(
+						    requestedType, fileType, params, scanSpec, path, defines);
 
     case TypeKind::ROW:
       return std::make_unique<TestStructColumnReader>(
