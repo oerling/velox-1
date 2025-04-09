@@ -128,7 +128,7 @@ void TestFormatData::decodeAlphabet(
   }
 }
 
-void TestFormatData::griddize(
+SyncFlag TestFormatData::griddize(
     ColumnOp& op,
     int32_t blockSize,
     int32_t numBlocks,
@@ -141,6 +141,7 @@ void TestFormatData::griddize(
   if (griddized_) {
     return;
   }
+  op.griddizeDome = true;
   griddized_ = true;
   if (column_->encoding == kDict) {
     auto alphabet = column_->alphabet.get();
@@ -172,6 +173,7 @@ void TestFormatData::griddize(
   count->data.countBits.resultStride = kCountStride;
   programs.programs.emplace_back();
   programs.programs.back().push_back(std::move(count));
+  return SyncFlag::kDone;
 }
 
 void TestFormatData::startOp(
