@@ -708,7 +708,7 @@ void  __global__ singleSumKernel(SumParams* sums, bool inlineIota) {
     for (auto i = threadIdx.x; i < sums[blockIdx.x].size; i += blockDim.x) {
       __syncthreads();
       auto end = sums[blockIdx.x].size;
-      auto sum = inclusiveSum<int32_t, 256>(i < end ? sums[blockIdx.x].in[i] + carry: 0, &carry, &temp[0]);
+      auto sum = inclusiveSum<int32_t, 256>(i < end ? sums[blockIdx.x].in[i] + (threadIdx.x == 0 ? carry : 0) : 0, &carry, &temp[0]);
       if (i < end){
 	sums[blockIdx.x].out[i] = sum;
       }
@@ -743,7 +743,7 @@ void  __global__ blockSumKernel(SumParams* sums) {
 void   __global__ baseSumKernel(SumParams* sums, int32_t n) {
     __shared__ int32_t temp[8];
     
-    auto sum = inclusiveSum<int32_t, 256>(threadIdx.x < n ? *sums[blockIdx.x * n + threadIdx.x].total : 0, nullptr, temp);
+    auto sum = exclusiveSum<int32_t, 256>(threadIdx.x < n ? *sums[blockIdx.x * n + threadIdx.x].total : 0, nullptr, temp);
     if (threadIdx.x < n) {
       *sums[blockIdx.x * n + threadIdx.x].total = sum;
     }
@@ -775,14 +775,14 @@ void  __global__ finalSumKernel(SumParams* sums, int32_t n, bool inlineIota) {
 
   
 
-void BlockTestStream::sums(int32_t numSums, SumParams* sums, bool singleBlock, bool inlineIota, bool searchIota) {
+  void BlockTestStream::sums(int32_t numSums, int32_t numControl, SumParams* sums, bool singleBlock, bool inlineIota, bool searchIota) {
   if (singleBlock) {
-    singleSumKernel<<<numSums, 256, 0, stream_->stream>>>(sums, inlineIota);
+    singleSumKernel<<<numControl, 256, 0, stream_->stream>>>(sums, inlineIota);
   } else {
-    int32_t blocksInSum = roundUp(sums[0].size, 256) / 256;
-    blockSumKernel<<<numSums, 256, 0, stream_->stream>>>(sums);
-    baseSumKernel<<<numSums / blocksInSum, 256, 0, stream_->stream>>>(sums, blocksInSum);
-    finalSumKernel<<<numSums, 256, 0, stream_->stream>>>(sums, blocksInSum, inlineIota);
+    int32_t blocksInSum = numControl / numSums;
+    blockSumKernel<<<numControl, 256, 0, stream_->stream>>>(sums);
+    baseSumKernel<<<numControl / blocksInSum, 256, 0, stream_->stream>>>(sums, blocksInSum);
+    finalSumKernel<<<numControl, 256, 0, stream_->stream>>>(sums, blocksInSum, inlineIota);
   }
 }
 

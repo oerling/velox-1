@@ -328,24 +328,24 @@ void sumsMeter(int32_t numSums, int32_t numIn, bool singleBlock, int32_t pitch, 
   if (singleBlock) {
     for (auto i = 0; i < numSums; ++i) {
       control[i] = SumParams();
-      control[i].in = &in[numSums * i];
-      control[i].size = numSums;
-      control[i].out = &out[numSums * i];
-      control[i].iotas= &iotas[i * numSums * pitch];
+      control[i].in = &in[numIn * i];
+      control[i].size = numIn;
+      control[i].out = &out[numIn * i];
+      control[i].iotas= &iotas[i * numIn * pitch];
     }
   } else {
     int32_t fill = 0;
     for (auto b = 0; b < numSums; ++b) {
-      for (auto i = 0; i < numSums; i += 256) {
+      for (auto i = 0; i < numIn; i += 256) {
       auto* c = &control[fill++];
       c->total = &totals[fill - 1];
-      c->in = &in[b * numSums + i];
-      c->out = &out[b * numSums + i];
-      c->size = std::min<int32_t>(numSums - b * 256, 256);
+      c->in = &in[b * numIn + i];
+      c->out = &out[b * numIn + i];
+      c->size = std::min<int32_t>(numIn - i, 256);
     }
     }
   }
-  auto numControl = controlBuffer->size() / sizeof(SumParams);
+  auto numControl = singleBlock ? numSums : numSums * (bits::roundUp(numIn, 256) / 256);
   prefetch(stream, inBuffer);
   prefetch(stream, outBuffer);
   prefetch(stream, controlBuffer);
@@ -354,8 +354,9 @@ void sumsMeter(int32_t numSums, int32_t numIn, bool singleBlock, int32_t pitch, 
   {  
     MicrosecondTimer t(&gpuTime);
     for (auto count = 0; count < kNumReps; ++count) {
-      stream.sums(numControl, control, singleBlock, inlineIota, searchIota);
+      stream.sums(numSums, numControl, control, singleBlock, inlineIota, searchIota);
     }
+    stream.wait();
   }
   std::cout << fmt::format("{}/us t={} count= {}, size={} pitch={}  singleBlock={}", (float)numSums * numIn / gpuTime / kNumReps, gpuTime / kNumReps, numSums, numIn, pitch, singleBlock);
       }
@@ -576,5 +577,9 @@ TEST_F(BlockTest, nonNull) {
 }
 
 TEST_F(BlockTest, sums) {
+  sumsMeter(10, 300, true, 2, false, false);
+  sumsMeter(10, 300, false, 2, false,  false);
 
+  sumsMeter(1, 30000, 1, true, false, false);
+  sumsMeter(1, 30000, 1, false, false, false);
 }

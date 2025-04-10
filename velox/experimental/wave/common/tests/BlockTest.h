@@ -193,7 +193,7 @@ class BlockTestStream : public Stream {
       int32_t* indices,
       int32_t* temp);
 
-  void sums(int32_t numBlocks, SumParams* sums, bool singleBlock, bool iotaInline, bool searchIota);
+  void sums(int32_t numSums, int32_t numBlocks, SumParams* sums, bool singleBlock, bool iotaInline, bool searchIota);
 };
 
 } // namespace facebook::velox::wave
