@@ -129,12 +129,14 @@ void ReadStream::makeGrid(Stream* stream) {
     ioStats_->incRawBytesRead(bytes);
     stats.bytesToDevice += bytes;
     ++stats.numKernels;
-    stats.numPrograms += programs_.programs.size();
-    stats.numThreads +=
-        programs_.programs.size() * std::min<int32_t>(rows_.size(), kBlockSize);
     setBlockStatusAndTemp();
     deviceStaging_.makeDeviceBuffer(waveStream->arena());
     currentStaging_->transfer(*waveStream, *stream, true);
+    setBlockWidth(programs);
+    stats.numPrograms += programs_.programs.size();
+    stats.numThreads +=
+        programs_.programs.size() * std::min<int32_t>(rows_.size(), kBlockSize);
+
     LaunchParams params(waveStream->deviceArena());
     WaveBufferPtr extra;
     {

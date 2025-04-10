@@ -446,6 +446,21 @@ struct alignas(16) GpuDecode {
   /// Sets the pushed down filter from ScanSpec of 'reader'. Uses 'stream' to
   /// setup device-side data like hash tables.
   void setFilter(ColumnReader* reader, Stream* stream);
+
+  bool canWiden();
+
+  /// Estimate cost for processing standard block width of input
+  /// rows. There is no unit but quantities for different decode steps
+  /// should be comparable and linearly correlated to the time to
+  /// process kBlockSize rows.
+  float costPerBlock();
+
+  /// Divides the work performed by 'this' over 'numBlocks'
+  /// independent thread blocks. 'this' is block 0, more[0] is block
+  /// 1, more[1] is block 2.  and so on. All pointers to staging must
+  /// be set to the final addresses. This sets the pointers in the new
+  /// GpuDecodes to ranges inside the memory regions in 'this'.
+  void widen(int32_t numBlocks, std::vector<std::vector<std::unique_ptr<GpuDecode>>& more);
 };
 
 struct DecodePrograms {

@@ -688,6 +688,7 @@ void __global__ nonNullIndexKernel(
   __syncthreads();
 }
 
+  
 void BlockTestStream::nonNullIndex(
     char* nulls,
     int32_t* rows,
@@ -697,6 +698,94 @@ void BlockTestStream::nonNullIndex(
   nonNullIndexKernel<<<1, 256, 0, stream_->stream>>>(
       nulls, rows, numRows, indices, temp);
 }
+
+void  __global__ singleSumKernel(SumParams* sums, bool inlineIota) {
+    __shared__ int32_t carry;
+    __shared__ int32_t temp[8];
+    if (threadIdx.x == 0) {
+      carry = 0;
+    }
+    for (auto i = threadIdx.x; i < sums[blockIdx.x].size; i += blockDim.x) {
+      __syncthreads();
+      auto end = sums[blockIdx.x].size;
+      auto sum = inclusiveSum<int32_t, 256>(i < end ? sums[blockIdx.x].in[i] + carry: 0, &carry, &temp[0]);
+      if (i < end){
+	sums[blockIdx.x].out[i] = sum;
+      }
+      if (inlineIota) {
+	__syncthreads();
+	if (i < end) {
+	  auto iotaEnd = sums[blockIdx.x].out[i];
+	  auto iotaBegin = i == 0 ? 0 : sums[blockIdx.x].out[i - 1];
+	  auto iotas = sums[blockIdx.x].iotas;
+	  for (auto iotaIdx = iotaBegin; iotaIdx < iotaEnd; ++iotaIdx) {
+	    iotas[iotaIdx] = iotaIdx - iotaBegin;
+	  }
+	}
+      }
+    }
+  }
+
+void  __global__ blockSumKernel(SumParams* sums) {
+    __shared__ int32_t temp[8];
+    auto i = threadIdx.x;
+    auto end = sums[blockIdx.x].size;
+    auto sum = inclusiveSum<int32_t, 256>(i < end ? sums[blockIdx.x].in[i]: 0, nullptr, temp);
+    if (i < end){
+      sums[blockIdx.x].out[i] = sum;
+    }
+    if (threadIdx.x == blockDim.x - 1) {
+      *sums[blockIdx.x].total = sum;
+    }
+    __syncthreads();
+  }
+
+void   __global__ baseSumKernel(SumParams* sums, int32_t n) {
+    __shared__ int32_t temp[8];
+    
+    auto sum = inclusiveSum<int32_t, 256>(threadIdx.x < n ? *sums[blockIdx.x * n + threadIdx.x].total : 0, nullptr, temp);
+    if (threadIdx.x < n) {
+      *sums[blockIdx.x * n + threadIdx.x].total = sum;
+    }
+    __syncthreads();
+}
+
+void  __global__ finalSumKernel(SumParams* sums, int32_t n, bool inlineIota) {
+    __shared__ int32_t base;
+    if (threadIdx.x == 0) {
+      base = blockIdx.x / n;
+    }
+    auto end = sums[blockIdx.x].size;
+    if (threadIdx.x < end) {
+      sums[blockIdx.x].out[threadIdx.x] += *sums[blockIdx.x].total;
+    }
+    __syncthreads();
+    if (inlineIota) {
+      int32_t iotaBegin = 0;
+      if (threadIdx.x!= 0 || blockIdx.x % n != 0) {
+	iotaBegin = sums[blockIdx.x].out[(int)threadIdx.x - 1];
+      }
+      auto iotaEnd = sums[blockIdx.x].out[threadIdx.x];
+      auto* iotas = sums[base].iotas;
+      for (auto iotaIdx = iotaBegin; iotaIdx < iotaEnd; ++iotaIdx) {
+	iotas[iotaIdx] = iotaIdx - iotaBegin;
+      }
+    }
+  }
+
+  
+
+void BlockTestStream::sums(int32_t numSums, SumParams* sums, bool singleBlock, bool inlineIota, bool searchIota) {
+  if (singleBlock) {
+    singleSumKernel<<<numSums, 256, 0, stream_->stream>>>(sums, inlineIota);
+  } else {
+    int32_t blocksInSum = roundUp(sums[0].size, 256) / 256;
+    blockSumKernel<<<numSums, 256, 0, stream_->stream>>>(sums);
+    baseSumKernel<<<numSums / blocksInSum, 256, 0, stream_->stream>>>(sums, blocksInSum);
+    finalSumKernel<<<numSums, 256, 0, stream_->stream>>>(sums, blocksInSum, inlineIota);
+  }
+}
+
 
 REGISTER_KERNEL("testSort", testSort);
 REGISTER_KERNEL("boolToIndices", boolToIndicesKernel);

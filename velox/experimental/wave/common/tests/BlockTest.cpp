@@ -304,6 +304,62 @@ class BlockTest : public testing::Test {
               << std::endl;
   }
 
+void sumsMeter(int32_t numSums, int32_t numIn, bool singleBlock, int32_t pitch, bool inlineIota, bool searchIota) {
+  constexpr int32_t kNumReps = 10;
+  uint64_t gpuTime = 0;
+    BlockTestStream stream;
+
+  auto inBuffer = arena_->allocate<int32_t>(numSums * numIn);
+  auto outBuffer = arena_->allocate<int32_t>(numSums * numIn);
+  auto tempBuffer = arena_->allocate<int32_t>(numSums * bits::roundUp(numIn, 256) / 256);
+  auto iotaBuffer = arena_->allocate<int32_t>(numSums * numIn * pitch);
+  int32_t numBlocks = singleBlock ? numSums : numSums * bits::roundUp(numIn, 256) / 256;
+  auto controlBuffer = arena_->allocate<SumParams>(numBlocks);
+  auto* in = inBuffer->as<int32_t>();
+  auto* out = outBuffer->as<int32_t>();
+  auto* totals = tempBuffer->as<int32_t>();
+  auto* iotas = iotaBuffer->as<int32_t>();
+  auto* control = controlBuffer->as<SumParams>();
+  for (auto n = 0; n < numSums; ++n) {
+    for (auto i = 0; i < numIn; ++i) {
+      in[n * numIn + i] = pitch;
+    }
+  }
+  if (singleBlock) {
+    for (auto i = 0; i < numSums; ++i) {
+      control[i] = SumParams();
+      control[i].in = &in[numSums * i];
+      control[i].size = numSums;
+      control[i].out = &out[numSums * i];
+      control[i].iotas= &iotas[i * numSums * pitch];
+    }
+  } else {
+    int32_t fill = 0;
+    for (auto b = 0; b < numSums; ++b) {
+      for (auto i = 0; i < numSums; i += 256) {
+      auto* c = &control[fill++];
+      c->total = &totals[fill - 1];
+      c->in = &in[b * numSums + i];
+      c->out = &out[b * numSums + i];
+      c->size = std::min<int32_t>(numSums - b * 256, 256);
+    }
+    }
+  }
+  auto numControl = controlBuffer->size() / sizeof(SumParams);
+  prefetch(stream, inBuffer);
+  prefetch(stream, outBuffer);
+  prefetch(stream, controlBuffer);
+  prefetch(stream, iotaBuffer);
+  stream.wait();
+  {  
+    MicrosecondTimer t(&gpuTime);
+    for (auto count = 0; count < kNumReps; ++count) {
+      stream.sums(numControl, control, singleBlock, inlineIota, searchIota);
+    }
+  }
+  std::cout << fmt::format("{}/us t={} count= {}, size={} pitch={}  singleBlock={}", (float)numSums * numIn / gpuTime / kNumReps, gpuTime / kNumReps, numSums, numIn, pitch, singleBlock);
+      }
+  
   Device* device_;
   GpuAllocator* allocator_;
   std::unique_ptr<GpuArena> arena_;
@@ -517,4 +573,8 @@ TEST_F(BlockTest, nonNull) {
       ;
     }
   }
+}
+
+TEST_F(BlockTest, sums) {
+
 }

@@ -68,6 +68,19 @@ struct AllocatorTestResult {
   int64_t* strings[200000];
 };
 
+  struct SumParams {
+    // How many ints in 'in' and 'out'.
+    int32_t size;
+    int32_t* in;
+    int32_t* out;
+    // Place to store the total of ints.
+    int32_t* total; 
+
+    // An array of '*total' ints. Filled so that iotas[i] is i - start of run. A run ends at each 'out'.
+    int32_t* iotas{nullptr};
+  };
+
+    
 class BlockTestStream : public Stream {
  public:
   /// In each block of 256 bools in bools[i], counts the number of
@@ -179,6 +192,8 @@ class BlockTestStream : public Stream {
       int32_t numRows,
       int32_t* indices,
       int32_t* temp);
+
+  void sums(int32_t numBlocks, SumParams* sums, bool singleBlock, bool iotaInline, bool searchIota);
 };
 
 } // namespace facebook::velox::wave

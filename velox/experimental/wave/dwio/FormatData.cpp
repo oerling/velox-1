@@ -196,8 +196,8 @@ std::unique_ptr<GpuDecode> FormatData::makeStep(
     SplitStaging& splitStaging,
     ReadStream& stream,
     WaveTypeKind columnKind,
-    int32_t blockIdx) {
-  auto rowsPerBlock = FLAGS_wave_reader_rows_per_tb;
+    int32_t blockIdx,
+						int32_t rowsPerBlock) {
   auto maxRowsPerThread = (rowsPerBlock / kBlockSize);
   int32_t numBlocks =
       bits::roundUp(op.rows.size(), rowsPerBlock) / rowsPerBlock;
@@ -304,8 +304,8 @@ std::unique_ptr<GpuDecode> FormatData::makeAlphabetStep(
     ReadStream& stream,
     WaveTypeKind columnKind,
     int32_t blockIdx,
-    int32_t numRows) {
-  auto rowsPerBlock = FLAGS_wave_reader_rows_per_tb;
+    int32_t numRows,
+    int32_t rowsPerBlock) {
   auto maxRowsPerThread = (rowsPerBlock / kBlockSize);
 
   auto rowsInBlock =

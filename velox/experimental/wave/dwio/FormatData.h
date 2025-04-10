@@ -341,7 +341,8 @@ class FormatData {
       SplitStaging& splitStaging,
       ReadStream& stream,
       WaveTypeKind columnKind,
-      int32_t blockIdx);
+      int32_t blockIdx,
+      int32_t rowsPerBlock);
 
   std::unique_ptr<GpuDecode> makeAlphabetStep(
       ColumnOp& op,
@@ -350,7 +351,8 @@ class FormatData {
       ReadStream& stream,
       WaveTypeKind columnKind,
       int32_t blockIdx,
-      int32_t numRows);
+      int32_t numRows,
+      int32_t rowsPerBlock);
 
   // Staging id for nulls.
   int32_t nullsStagingId_{SplitStaging::kNoStaging};

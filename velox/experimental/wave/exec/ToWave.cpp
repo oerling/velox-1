@@ -110,9 +110,15 @@ AbstractOperand* CompileState::newOperand(AbstractOperand& other) {
 AbstractOperand* CompileState::newOperand(
     const TypePtr& type,
     const std::string& label) {
+  std::vector<AbstractOperand*> children;
+  if (type->kind() == TypeKind::ARRAY) {
+    auto eltLabel = label + "_elements";
+    children.push_back(newOperand(type->childAt(0), eltLabel))
+  }
   operands_.push_back(
       std::make_unique<AbstractOperand>(operandCounter_++, type, label));
   auto op = operands_.back().get();
+  op->children = std::move(children);
   op->definingSegment = segments_.size() - 1;
   return op;
 }
