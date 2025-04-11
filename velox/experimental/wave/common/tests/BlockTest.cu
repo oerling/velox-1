@@ -773,7 +773,38 @@ void  __global__ finalSumKernel(SumParams* sums, int32_t n, bool inlineIota) {
     }
   }
 
-  
+/// Finds the index of smallest value > 'row'. With data '3, 5, 8' row 2 gets 0, row 3 gets 5, row 11 is an error.
+inline __device__ int
+lower(const int32_t* rows, int32_t size, int32_t row) {
+						       int lo = 0, hi = size;
+  while (lo < hi) {
+    int i = (lo + hi) / 2;
+    if (rows[i] < row) {
+      lo = i + 1;
+    } else if (rows[i] == row) {
+	return i + 1;
+      } else {
+      hi = i;
+    }
+  }
+  return lo;
+  }
+
+  void   __global__ searchedIota(int32_t* ends, int32_t numEnds, int32_t* iotas, int32_t numLoops, int32_t numIotas) {
+
+    int32_t base = blockIdx.x * numLoops;
+    int32_t end = base + blockDim.x * numLoops;
+    if (end > numIotas) {
+      end = numIotas;
+    }
+    for (auto i = base + threadIdx.x; i < end; i += blockDim.x) {
+      auto pos = closestEnd(ends, numEnds, i);
+      iotas[i] = pos == 0 ? i : i - ends[pos - 1];
+    }
+      
+    }
+  }
+
 
   void BlockTestStream::sums(int32_t numSums, int32_t numControl, SumParams* sums, bool singleBlock, bool inlineIota, bool searchIota) {
   if (singleBlock) {

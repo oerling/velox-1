@@ -26,6 +26,15 @@
 
 #include <folly/Random.h>
 
+
+DEFINE_int32(num_sums, 0, "Number of sums");
+DEFINE_int32(num_in_sum, 1000, "Number of sums");
+DEFINE_int32(sum_pitch, 1, "Number iotas to make per sum");
+DEFINE_bool(single_block_sum, true, "Each sum in a single TB");
+DEFINE_bool(inline_iota, false, "Do a iota inline after sum");
+DEFINE_bool(search_iota, false, "Do a iota by binary search in wide grid");
+
+
 using namespace facebook::velox;
 using namespace facebook::velox::wave;
 
@@ -341,6 +350,7 @@ void sumsMeter(int32_t numSums, int32_t numIn, bool singleBlock, int32_t pitch, 
       c->total = &totals[fill - 1];
       c->in = &in[b * numIn + i];
       c->out = &out[b * numIn + i];
+      c->iotas = &iotas[b * numIn * pitch + i * pitch];
       c->size = std::min<int32_t>(numIn - i, 256);
     }
     }
@@ -358,7 +368,7 @@ void sumsMeter(int32_t numSums, int32_t numIn, bool singleBlock, int32_t pitch, 
     }
     stream.wait();
   }
-  std::cout << fmt::format("{}/us t={} count= {}, size={} pitch={}  singleBlock={}", (float)numSums * numIn / gpuTime / kNumReps, gpuTime / kNumReps, numSums, numIn, pitch, singleBlock);
+  std::cout << fmt::format("{}/us t={} count= {}, size={} pitch={}  singleBlock={}\n", (float)numSums * numIn / ((float)gpuTime / kNumReps), gpuTime / kNumReps, numSums, numIn, pitch, singleBlock);
       }
   
   Device* device_;
@@ -577,9 +587,34 @@ TEST_F(BlockTest, nonNull) {
 }
 
 TEST_F(BlockTest, sums) {
+  if (FLAGS_num_sums) {
+    sumsMeter(FLAGS_num_sums, FLAGS_num_in_sum, FLAGS_single_block_sum, FLAGS_sum_pitch, FLAGS_inline_iota, FLAGS_search_iota);
+    sumsMeter(FLAGS_num_sums, FLAGS_num_in_sum, FLAGS_single_block_sum, FLAGS_sum_pitch, FLAGS_inline_iota, FLAGS_search_iota);
+    return;
+  }
+  sumsMeter(10, 300, true, 2, false, false);
   sumsMeter(10, 300, true, 2, false, false);
   sumsMeter(10, 300, false, 2, false,  false);
 
-  sumsMeter(1, 30000, 1, true, false, false);
-  sumsMeter(1, 30000, 1, false, false, false);
+  sumsMeter(1, 30000, true, 2, false, false);
+  sumsMeter(1, 30000, false, 2, false, false);
 }
+
+
+int numbers[] = {6, 9, 11, 16};
+
+int closestEnd(const int32_t* rows, int32_t size, int32_t row) {
+  int lo = 0, hi = size;
+  while (lo < hi) {
+    int i = (lo + hi) / 2;
+    if (rows[i] < row) {
+      lo = i + 1;
+    } else if (rows[i] == row) {
+	return i + 1;
+      } else {
+      hi = i;
+    }
+  }
+  return lo;
+  }
+
