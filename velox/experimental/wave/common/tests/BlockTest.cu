@@ -775,7 +775,7 @@ void  __global__ finalSumKernel(SumParams* sums, int32_t n, bool inlineIota) {
 
 /// Finds the index of smallest value > 'row'. With data '3, 5, 8' row 2 gets 0, row 3 gets 5, row 11 is an error.
 inline __device__ int
-lower(const int32_t* rows, int32_t size, int32_t row) {
+closestEnd(const int32_t* rows, int32_t size, int32_t row) {
 						       int lo = 0, hi = size;
   while (lo < hi) {
     int i = (lo + hi) / 2;
@@ -790,31 +790,49 @@ lower(const int32_t* rows, int32_t size, int32_t row) {
   return lo;
   }
 
-  void   __global__ searchedIota(int32_t* ends, int32_t numEnds, int32_t* iotas, int32_t numLoops, int32_t numIotas) {
-
-    int32_t base = blockIdx.x * numLoops;
-    int32_t end = base + blockDim.x * numLoops;
-    if (end > numIotas) {
-      end = numIotas;
+  void   __global__ searchedIotaKernel(SumParams* sums, int32_t blocksPerSum, int32_t numIotas) { 
+    __shared__ int32_t sumIdx;
+    __shared__ int32_t nthBlock;
+    if (threadIdx.x == 0) {
+      sumIdx = blockIdx.x / blocksPerSum;
+      nthBlock = blockIdx.x % blocksPerSum;
     }
-    for (auto i = base + threadIdx.x; i < end; i += blockDim.x) {
+    __syncthreads();
+    int32_t* ends = sums[sumIdx].out;
+    int32_t numEnds = sums[sumIdx].size;
+    int32_t base = nthBlock * blockDim.x;
+    int32_t* iotas = sums[sumIdx].iotas;
+    for (auto i = base + threadIdx.x; i < numIotas; i += blockDim.x * blocksPerSum) {
       auto pos = closestEnd(ends, numEnds, i);
       iotas[i] = pos == 0 ? i : i - ends[pos - 1];
-    }
-      
     }
   }
 
 
-  void BlockTestStream::sums(int32_t numSums, int32_t numControl, SumParams* sums, bool singleBlock, bool inlineIota, bool searchIota) {
-  if (singleBlock) {
+
+  void BlockTestStream::sums(int32_t numSums, int32_t numControl, SumParams* sums, bool singleBlock, bool inlineIota, int32_t searchIota) {
+
+    auto runSearchIota = [&]() {
+			   int pitch = sums[0].in[0];
+      int32_t numIotas = sums[0].size * pitch;
+      int32_t blocksPerSum = roundUp(numIotas, 256) / 256;
+      searchedIotaKernel<<<numSums * blocksPerSum, 256, 0, stream_->stream>>>(sums, blocksPerSum, numIotas);
+			 };
+
+    if (singleBlock) {
     singleSumKernel<<<numControl, 256, 0, stream_->stream>>>(sums, inlineIota);
+    if (searchIota) {
+      runSearchIota();
+    }
   } else {
     int32_t blocksInSum = numControl / numSums;
     blockSumKernel<<<numControl, 256, 0, stream_->stream>>>(sums);
     baseSumKernel<<<numControl / blocksInSum, 256, 0, stream_->stream>>>(sums, blocksInSum);
     finalSumKernel<<<numControl, 256, 0, stream_->stream>>>(sums, blocksInSum, inlineIota);
-  }
+    if (searchIota) {
+      runSearchIota();
+    }
+			   }
 }
 
 

@@ -27,12 +27,14 @@
 #include <folly/Random.h>
 
 
+DECLARE_int32(num_streams);
+
 DEFINE_int32(num_sums, 0, "Number of sums");
 DEFINE_int32(num_in_sum, 1000, "Number of sums");
 DEFINE_int32(sum_pitch, 1, "Number iotas to make per sum");
 DEFINE_bool(single_block_sum, true, "Each sum in a single TB");
 DEFINE_bool(inline_iota, false, "Do a iota inline after sum");
-DEFINE_bool(search_iota, false, "Do a iota by binary search in wide grid");
+DEFINE_int32(searched_iota, 0, "Do a iota by binary search in wide grid, this many elements per thread");
 
 
 using namespace facebook::velox;
@@ -313,10 +315,10 @@ class BlockTest : public testing::Test {
               << std::endl;
   }
 
-void sumsMeter(int32_t numSums, int32_t numIn, bool singleBlock, int32_t pitch, bool inlineIota, bool searchIota) {
+  void sumsMeter(int32_t numSums, int32_t numIn, bool singleBlock, int32_t pitch, bool inlineIota, int32_t searchIota, int32_t numStreams = 1) {
   constexpr int32_t kNumReps = 10;
   uint64_t gpuTime = 0;
-    BlockTestStream stream;
+  std::vector<BlockTestStream> streams(numStreams);
 
   auto inBuffer = arena_->allocate<int32_t>(numSums * numIn);
   auto outBuffer = arena_->allocate<int32_t>(numSums * numIn);
@@ -355,7 +357,8 @@ void sumsMeter(int32_t numSums, int32_t numIn, bool singleBlock, int32_t pitch, 
     }
     }
   }
-  auto numControl = singleBlock ? numSums : numSums * (bits::roundUp(numIn, 256) / 256);
+  auto controlsPerSum = singleBlock ? 1 : bits::roundUp(numIn, 256) / 256;
+  auto& stream = streams[0];
   prefetch(stream, inBuffer);
   prefetch(stream, outBuffer);
   prefetch(stream, controlBuffer);
@@ -364,9 +367,15 @@ void sumsMeter(int32_t numSums, int32_t numIn, bool singleBlock, int32_t pitch, 
   {  
     MicrosecondTimer t(&gpuTime);
     for (auto count = 0; count < kNumReps; ++count) {
-      stream.sums(numSums, numControl, control, singleBlock, inlineIota, searchIota);
+      for (auto streamIdx = 0; streamIdx < streams.size(); ++streamIdx) {
+	int32_t begin = (numSums / numStreams ) * streamIdx;
+	int32_t end = streamIdx == numStreams - 1 ? numSums : (numSums / numStreams) * (streamIdx + 1);
+	streams[streamIdx].sums(end - begin, (end - begin) * controlsPerSum, control + (begin * controlsPerSum), singleBlock, inlineIota, searchIota);
+      }
+      }
+    for (auto& stream : streams) {
+      stream.wait();
     }
-    stream.wait();
   }
   std::cout << fmt::format("{}/us t={} count= {}, size={} pitch={}  singleBlock={}\n", (float)numSums * numIn / ((float)gpuTime / kNumReps), gpuTime / kNumReps, numSums, numIn, pitch, singleBlock);
       }
@@ -588,8 +597,11 @@ TEST_F(BlockTest, nonNull) {
 
 TEST_F(BlockTest, sums) {
   if (FLAGS_num_sums) {
-    sumsMeter(FLAGS_num_sums, FLAGS_num_in_sum, FLAGS_single_block_sum, FLAGS_sum_pitch, FLAGS_inline_iota, FLAGS_search_iota);
-    sumsMeter(FLAGS_num_sums, FLAGS_num_in_sum, FLAGS_single_block_sum, FLAGS_sum_pitch, FLAGS_inline_iota, FLAGS_search_iota);
+    if (!FLAGS_num_streams) {
+      FLAGS_num_streams=1;
+    }
+    sumsMeter(FLAGS_num_sums, FLAGS_num_in_sum, FLAGS_single_block_sum, FLAGS_sum_pitch, FLAGS_inline_iota, FLAGS_searched_iota, FLAGS_num_streams);
+    sumsMeter(FLAGS_num_sums, FLAGS_num_in_sum, FLAGS_single_block_sum, FLAGS_sum_pitch, FLAGS_inline_iota, FLAGS_searched_iota, FLAGS_num_streams);
     return;
   }
   sumsMeter(10, 300, true, 2, false, false);
