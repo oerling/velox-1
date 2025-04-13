@@ -22,20 +22,11 @@
 
 namespace facebook::velox::wave {
 
-class Loader {
+  /// Encapsulates data needed for lazy loading.
+  class LoaderBase {
  public:
   virtual ~Loader() = default;
 
-  virtual void load(WaveBufferPtr indexBuffer, int32_t begin, int32_t end) = 0;
-
-  /// Notifies 'this' that a load should load, in ddition to the requested rows,
-  /// all rows above the last position given in the load indices.
-  void loadTailOnLoad() {
-    loadTail_ = true;
-  }
-
- protected:
-  bool loadTail_{false};
 };
 
 int32_t waveTypeKindSize(WaveTypeKind kind);
@@ -130,6 +121,15 @@ class WaveVector {
 
   std::string toString() const;
 
+  template <typename T>
+  T* loader() const {
+    return reinterpret_cast<T*>(loader_.get());
+  }
+
+  void setLoader(std::unique_ptr<LoaderBase> loader) {
+    loader_ = std::move(loader);
+  }
+  
  private:
   // Type of the content.
   TypePtr type_;

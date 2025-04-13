@@ -1,4 +1,24 @@
+/*
+ * Copyright (c) Facebook, Inc. and its affiliates.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 
+
+#include "velox/experimental/wave/common/Cuda.h"
+
+
+namespace facebook::velox::wave {
 struct Depends {
   int32_t block;
   bool fuseIfsingle{false};
@@ -15,8 +35,8 @@ struct BlockProxy {
   /// Single block throughput. Running all blocks that fit at a time gets 1/3 of this per block, so going from 1 block to 480 blocks is 130x more throughput.
   float maxRowsPerMicroPerBlock;
 
-  /// True if running this on many blocks needs a follow up kernel launch to add up results. E.g. a prefix sum on 10 blocks needs a kernel to add up the component sums and a third kernel to update the values from non-first blocks.
-  bool multiBlockNeedsGather{false};
+  /// Set if running this on many blocks needs a follow up kernel launch to add up results. E.g. a prefix sum on 10 blocks needs a kernel to add up the component sums and a third kernel to update the values from non-first blocks. The added gathers  will then go between  this and any that depends on this.
+  std::function<void(Blockproxy* op, std::vector<blockProxy>& newOps)> makeGather;
   
   std::vector<Depends> depends;
   
@@ -52,4 +72,5 @@ struct GridPlan {
   std::vector<WavePlan> waves;
 };
 
+}
 

@@ -1243,6 +1243,9 @@ struct LaunchControl {
 
   /// Continue info for each Program in the launch.
   std::vector<ProgramLaunch> programInfo;
+
+  // The selection from pushdown filters in table scan. Not set if no table scan or no pushdown filters.
+  int32_t readSelection_{nullptr};
 };
 
 } // namespace facebook::velox::wave
