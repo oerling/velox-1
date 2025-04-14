@@ -815,7 +815,7 @@ closestEnd(const int32_t* rows, int32_t size, int32_t row) {
     auto runSearchIota = [&]() {
 			   int pitch = sums[0].in[0];
       int32_t numIotas = sums[0].size * pitch;
-      int32_t blocksPerSum = roundUp(numIotas, 256) / 256;
+      int32_t blocksPerSum = roundUp(numIotas / searchIota, 256) / 256;
       searchedIotaKernel<<<numSums * blocksPerSum, 256, 0, stream_->stream>>>(sums, blocksPerSum, numIotas);
 			 };
 

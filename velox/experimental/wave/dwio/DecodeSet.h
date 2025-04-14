@@ -1,38 +1,61 @@
+/*
+ * Copyright (c) Facebook, Inc. and its affiliates.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+#pragma once
+
+#include "velox/experimental/common/BlockCost.h"
+#include "velox/experimental/common/ResultStaging.h"
+#include "velox/experimental/dwio/decode/DecodeStep.h"
+
+namespace facebook::velox::wave {
+
+  class SplitStaging;
 
 
-using InterpretReturnFunc = std::function<void(DecodeSet* set, int32_t opIdx, int32_t level, DecodeStep* step)>;
-
-using WidenFunc= std::function<void(DecodeSet* set, int32_t opIdx, int32_t level, int32_t numBlocks, DecodeStep* step,
-std::vector<std::unique_ptr<DecodeStep>>& moreSteps)>;
-
-  class DecodeSet {
+  class DecodeSet : public BlockProxySet {
  public:
-
-    float levelCost(int32_t levelIdx);
-    int32_t maxLevelBlocks(int32_t level);
+    DecodeSet(ResultStaging* deviceStaging, ResultStaging* resultStaging, SplitStaging* splitStaging)
+      : deviceStaging_(deviceStaging), resultStaging_(resultStaging), splitStaging_(splitStaging) {}
+        
+    SplitStaging* splitStaging() const {
+      return splitStaging_;
+    }
     
-  SplitStaging* splitStaging(int32_t level);
-  ResultStaging* resultStaging(int32_t level);
-  
-  /// Adds an action into a decode plan.
-  void addAction(
-	    std::unique_ptr<Decodestep> step,
-	    int32_t opIdx,
-	    int32_t level,
-	    DecodeStep* predecessor,
-	    InterpretReturnFunc interpretFunc,
-	    WidenFunc widen);
+    ResultStaging* resultStaging() const {
+      return resultStaging_;
+    };
 
-  /// Prepares a batch of decode. Applies to columns of 'ops' for the
-  /// rows that are active in 'readStream'.  There can be selection
-  /// from filters and joins on readStream in addition to selection
-  /// from pushdown filters. If wrap is given, this is a Operand that contains the wrap that applies to columns assigned in table scan. 
-  SyncFlag getActions(bool filters, operand* wrap, std::vector<ColumnOp*> ops, ReadStream& readStream, DecodePrograms& result, std::vector<SplitStaging*> toLoad);
+        
+    ResultStaging* deviceStaging() const {
+      return deviceStaging_;
+    };
 
-  std::vector<std::unique_ptr<DecodeStep> allSteps_;
-  std::vector<std::vector<DecodeStep*>> stepByOp_;
-  std::vector<std::unique_ptr<SplitStaging> splitStaging_;
+
+    int32_t addAction(
+		      Depends* depends,
+		      std::unique_ptr<Decodestep> step);
+
+    std::vector<std::unique_ptr<DecodeStep> allSteps_;
+    std::vector<std::vector<DecodeStep*>> stepByOp_;
+
+    SplitStaging* splitStaging_;
+    SplitStaging* Staging_;
+    SplitStaging* resultStaging_;
   
   };
   
 
+}

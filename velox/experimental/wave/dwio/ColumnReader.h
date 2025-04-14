@@ -117,6 +117,18 @@ class ColumnReader {
   std::unique_ptr<Event> griddizeEvent_;
 };
 
+class Loader : public LoaderBase {
+public:
+  Loader(ColumnReader* reader)
+    : reader_(reader) {}
+
+  
+private:
+  ColumnReader* reader;
+};
+  
+
+  
 class ReadStream : public Executable {
  public:
   ReadStream(
