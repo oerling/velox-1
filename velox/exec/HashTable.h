@@ -484,7 +484,7 @@ class HashTable : public BaseHashTable {
       uint32_t minTableSizeForParallelJoinBuild,
       memory::MemoryPool* pool);
 
-  ~HashTable() override = default;
+  ~HashTable() override;
 
   static std::unique_ptr<HashTable> createForAggregation(
       std::vector<std::unique_ptr<VectorHasher>>&& hashers,
@@ -741,10 +741,7 @@ class HashTable : public BaseHashTable {
   }
 
   // Returns the number of entries after which the table gets rehashed.
-  static uint64_t rehashSize(int64_t size) {
-    // This implements the F14 load factor: Resize if less than 1/8 unoccupied.
-    return size - (size / 8);
-  }
+  static uint64_t rehashSize(int64_t size);
 
   // Returns the number of entries with 'numNew' and existing 'numDistincts'
   // distincts to create a new hash table.

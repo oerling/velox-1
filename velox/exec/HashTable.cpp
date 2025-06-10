@@ -25,6 +25,10 @@
 #include "velox/exec/OperatorUtils.h"
 #include "velox/vector/VectorTypeUtils.h"
 
+#include <iostream>
+
+DEFINE_int32(hash_load_pct, 87, "Max load factor of join or aggregation hash table");
+
 using facebook::velox::common::testutil::TestValue;
 
 namespace facebook::velox::exec {
@@ -79,6 +83,11 @@ HashTable<ignoreNullKeys>::HashTable(
   nextOffset_ = rows_->nextOffset();
 }
 
+template <bool ignoreNullKeys>
+HashTable<ignoreNullKeys>::~HashTable() {
+  //std::cout << toString();
+}
+  
 class ProbeState {
  public:
   enum class Operation { kProbe, kInsert, kErase };
@@ -424,7 +433,11 @@ constexpr int32_t kPrefetchSize = 64;
 // up to make a tag byte and down so that non-lowest bits of
 // normalized key affect the hash table index.
 inline uint64_t mixNormalizedKey(uint64_t k, uint8_t bits) {
-  return folly::hasher<uint64_t>()(k);
+  uint64_t h = simd::crc32U64(19, k);
+  return (h | static_cast<uint64_t>(simd::crc32U64(h, k >> 32)) << 32);
+  //auto h = bits::hashMix(19, k);
+  //return h ^ (h >> 21);
+  //return folly::hasher<uint64_t>()(k);
 }
 
 void populateNormalizedKeys(HashLookup& lookup, int8_t sizeBits) {
@@ -752,6 +765,12 @@ void HashTable<ignoreNullKeys>::clear(bool freeTable) {
   numTombstones_ = 0;
 }
 
+template <bool ignoreNullKeys>
+uint64_t HashTable<ignoreNullKeys>::rehashSize(int64_t size) {
+  return size - (size / 100) * (100 - FLAGS_hash_load_pct);
+}
+
+ 
 template <bool ignoreNullKeys>
 void HashTable<ignoreNullKeys>::checkSize(
     int32_t numNew,
@@ -1620,16 +1639,17 @@ std::string HashTable<ignoreNullKeys>::toString() {
     // Each bucket has 16 slots. Hence, the number of non-empty slots is
     // between 0 and 16 (17 possible values).
     int64_t numBuckets[sizeof(TagVector) + 1] = {};
-    for (int64_t bucketOffset = 0; bucketOffset < sizeMask_;
-         bucketOffset += kBucketSize) {
-      auto tags = loadTags(bucketOffset);
-      auto filled = simd::toBitMask(tags != TagVector::broadcast(0));
-      auto numOccupied = __builtin_popcount(filled);
-
-      ++numBuckets[numOccupied];
-      occupied += numOccupied;
+    if (table_) {
+      for (int64_t bucketOffset = 0; bucketOffset < sizeMask_;
+	   bucketOffset += kBucketSize) {
+	auto tags = loadTags(bucketOffset);
+	auto filled = simd::toBitMask(tags != TagVector::broadcast(0));
+	auto numOccupied = __builtin_popcount(filled);
+	
+	++numBuckets[numOccupied];
+	occupied += numOccupied;
+      }
     }
-
     out << "Total buckets: " << (sizeMask_ / kBucketSize + 1) << std::endl;
     out << "Total slots used: " << occupied << std::endl;
     for (auto i = 1; i < sizeof(TagVector) + 1; ++i) {

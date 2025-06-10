@@ -61,6 +61,7 @@ void LocalRunner::start() {
   VELOX_CHECK_EQ(state_, State::kInitialized);
   auto lastStage = makeStages();
   params_.planNode = plan_->fragments().back().fragment.planNode;
+  params_.maxDrivers = options_.numDrivers;
   auto cursor = exec::TaskCursor::create(params_);
   stages_.push_back({cursor->task()});
   // Add table scan splits to the final gathere stage.

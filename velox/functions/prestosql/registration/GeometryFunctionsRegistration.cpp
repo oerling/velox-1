@@ -15,6 +15,7 @@
  */
 
 #include <string>
+#if 0
 #include "velox/functions/Registerer.h"
 #include "velox/functions/prestosql/GeometryFunctions.h"
 #include "velox/functions/prestosql/types/GeometryRegistration.h"
@@ -86,3 +87,13 @@ void registerGeometryFunctions(const std::string& prefix) {
 }
 
 } // namespace facebook::velox::functions
+
+#else
+
+
+
+namespace facebook::velox::functions {
+void registerGeometryFunctions(const std::string& prefix) {}
+} // namespace facebook::velox::functions
+
+#endif
