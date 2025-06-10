@@ -233,12 +233,29 @@ class FlatMapVector : public BaseVector {
     return mapValues_[index];
   }
 
-  /// Get the in map buffer for a given a map key channel.
+  /// Get the in map buffer for a given a map key channel. Throws if in maps
+  /// does not exist for this channel.
   const BufferPtr& inMapsAt(column_index_t index) const {
     VELOX_CHECK_LT(
         index,
         inMaps_.size(),
         "Trying to access non-existing key channel in FlatMapVector.");
+    return inMaps_[index];
+  }
+
+  /// Get the in map buffer reference for a given map key channel. If `resize`
+  /// is true, may resize up to `numDistinctKeys()` to ensure that the inMaps
+  /// vector has the appropriate length.
+  BufferPtr& inMapsAt(column_index_t index, bool resize = false) {
+    if (index < inMaps_.size()) {
+      return inMaps_[index];
+    } else if (!resize || index >= numDistinctKeys()) {
+      VELOX_CHECK_LT(
+          index,
+          inMaps_.size(),
+          "Trying to access non-existing key channel in FlatMapVector.");
+    }
+    inMaps_.resize(index + 1);
     return inMaps_[index];
   }
 
@@ -273,6 +290,16 @@ class FlatMapVector : public BaseVector {
   uint64_t hashValueAt(vector_size_t index) const override;
 
   std::unique_ptr<SimpleVector<uint64_t>> hashAll() const override;
+
+  /// Converts and copies `this` into a MapVector.
+  ///
+  /// It does so by wrapping the distinctKeys_ vector into a dictionary to
+  /// increase its cardinality accordingly, and copying each map values vector
+  /// into a single vector containing all flattened elements.
+  ///
+  /// This is an expensive operation that should be used mostly for
+  /// testing/validation purposes, and not for performance critical paths.
+  MapVectorPtr toMapVector() const;
 
  private:
   void setDistinctKeysImpl(VectorPtr distinctKeys) {
