@@ -29,6 +29,14 @@
 
 DEFINE_int32(hash_load_pct, 87, "Max load factor of join or aggregation hash table");
 
+DEFINE_int32(join_mode, 0, "Select alternate join mode: 0 tags 1 batch tags, 2 singles, 3 singles simd");
+
+DEFINE_bool(simd_compare, false, "Use simd in key comparison");
+
+	    DEFINE_int32(probe_batch, 1024, "Number of probes expected to fit in cache");
+
+DEFINE_int32(hash_prefetch_mode, 0, "Prefetch in join_mode > 0");
+
 using facebook::velox::common::testutil::TestValue;
 
 namespace facebook::velox::exec {
@@ -85,7 +93,7 @@ HashTable<ignoreNullKeys>::HashTable(
 
 template <bool ignoreNullKeys>
 HashTable<ignoreNullKeys>::~HashTable() {
-  //std::cout << toString();
+  std::cout << toString();
 }
   
 class ProbeState {
@@ -608,6 +616,10 @@ void HashTable<ignoreNullKeys>::joinProbe(HashLookup& lookup) {
   incrementProbes(lookup.rows.size());
   if (hashMode_ == HashMode::kArray) {
     arrayJoinProbe(lookup);
+    return;
+  }
+  if (FLAGS_join_mode) {
+    joinProbe2(lookup);
     return;
   }
   if (hashMode_ == HashMode::kNormalizedKey) {
@@ -1277,6 +1289,49 @@ FOLLY_ALWAYS_INLINE void HashTable<ignoreNullKeys>::insertForJoinWithPrefetch(
   }
 }
 
+
+template <bool ignoreNullKeys>
+  void HashTable<ignoreNullKeys>::insertForJoinSingles(
+    char** groups,
+    uint64_t* hashes,
+    int32_t numGroups,
+    TableInsertPartitionInfo* partitionInfo) {
+  bool useGroupsOf4 = (FLAGS_join_mode & 4) != 0;
+  for (auto i = 0; i < numGroups; ++i) {
+    auto hash = hashes[i];
+    auto offset = hash & singleSizeMask_;
+    bool groupsOf4 = useGroupsOf4;
+    for (;;) {
+      auto item = itemAt(offset);
+      if (!item) {
+	itemAt(offset) = pointerAndTag(hash, groups[i]);
+	break;
+      } else if (tagMatch(item, hash)) {
+	  char* existing = itemAs<char*>(item);
+	  if (compareKeys(groups[i], existing)) {
+	    pushNext(existing, groups[i]);
+	    break;
+	  }
+      }
+      if (groupsOf4) {
+	auto bucketStart = hash & single4SizeMask_;
+	if (offset == bucketStart) {
+	  offset += 8;
+	} else {
+	  offset = bucketStart;
+	}
+	groupsOf4 = false;
+      } else {
+	offset = (offset + sizeof(uint64_t)) & singleSizeMask_;
+	if (partitionInfo != nullptr && !partitionInfo->inRange(offset / 128)) {
+	  partitionInfo->addOverflow(groups[i]);
+	  break;
+	}
+      }
+    }
+  }
+}
+	
 template <bool ignoreNullKeys>
 void HashTable<ignoreNullKeys>::insertForJoin(
     char** groups,
@@ -1292,6 +1347,9 @@ void HashTable<ignoreNullKeys>::insertForJoin(
       arrayPushRow(groups[i], index);
     }
     return;
+  }
+  if (FLAGS_join_mode >= 2) {
+    insertForJoinSingles(groups, hashes, numGroups, partitionInfo);
   }
   if (hashMode_ == HashMode::kNormalizedKey) {
     insertForJoinWithPrefetch<true>(groups, hashes, numGroups, partitionInfo);
@@ -1601,7 +1659,7 @@ std::string HashTable<ignoreNullKeys>::toString() {
   out << "[HashTable keys: " << hashers_.size()
       << " hash mode: " << modeString(hashMode_) << " capacity: " << capacity_
       << " distinct count: " << numDistinct_
-      << " tombstones count: " << numTombstones_ << "]";
+      << " tombstones count: " << numTombstones_ << "]" << (hasDuplicates_ ? " has duplicates" : " no duplicates");
   if (table_ == nullptr) {
     out << " (no table)";
   }
@@ -1771,6 +1829,9 @@ void HashTable<ignoreNullKeys>::prepareJoinTable(
   numDistinct_ = rows()->numRows();
   for (const auto& other : otherTables_) {
     numDistinct_ += other->rows()->numRows();
+  }
+  if (FLAGS_join_mode) {
+    useValueIds = false;
   }
   if (!useValueIds) {
     if (hashMode_ != HashMode::kHash) {
@@ -2129,6 +2190,8 @@ void HashTable<ignoreNullKeys>::checkConsistency() const {
       numDistinct_);
 }
 
+#include "velox/exec/JoinProbe.cpp"
+  
 template class HashTable<true>;
 template class HashTable<false>;
 

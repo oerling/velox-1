@@ -20,6 +20,7 @@
 #include "velox/common/base/SimdUtil.h"
 #include "velox/common/memory/HashStringAllocator.h"
 #include "velox/type/FloatingPointUtil.h"
+DEFINE_bool(crc_hash, false, "Use crc32 for integer key hash");
 
 namespace facebook::velox::exec {
 
@@ -50,10 +51,10 @@ namespace facebook::velox::exec {
             "Unsupported value ID type: ", mapTypeKindToName(typeKind)); \
     }                                                                    \
   }()
-
+  
 namespace {
 template <bool typeProvidesCustomComparison, TypeKind Kind>
-uint64_t hashOne(DecodedVector& decoded, vector_size_t index) {
+uint64_t FOLLY_ALWAYS_INLINE hashOne(DecodedVector& decoded, vector_size_t index) {
   if constexpr (
       Kind == TypeKind::ROW || Kind == TypeKind::ARRAY ||
       Kind == TypeKind::MAP) {
@@ -71,6 +72,11 @@ uint64_t hashOne(DecodedVector& decoded, vector_size_t index) {
     } else if constexpr (std::is_floating_point_v<T>) {
       return util::floating_point::NaNAwareHash<T>()(value);
     } else {
+      if constexpr (Kind == TypeKind::INTEGER || Kind == TypeKind::BIGINT) {
+	  if (FLAGS_crc_hash) {
+	    return simd::crcHash64( value);
+	  }
+	}
       return folly::hasher<T>()(value);
     }
   }
@@ -109,8 +115,9 @@ void VectorHasher::hashValues(
       result[row] = mix ? bits::hashMix(result[row], hash) : hash;
     });
   } else {
+    bool maybeNull = decoded_.base()->mayHaveNulls();
     rows.applyToSelected([&](vector_size_t row) {
-      if (decoded_.isNullAt(row)) {
+      if (maybeNull && decoded_.isNullAt(row)) {
         result[row] = mix ? bits::hashMix(result[row], kNullHash) : kNullHash;
         return;
       }
