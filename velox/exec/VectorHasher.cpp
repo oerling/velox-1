@@ -51,10 +51,11 @@ namespace facebook::velox::exec {
             "Unsupported value ID type: ", mapTypeKindToName(typeKind)); \
     }                                                                    \
   }()
-  
+
 namespace {
 template <bool typeProvidesCustomComparison, TypeKind Kind>
-uint64_t FOLLY_ALWAYS_INLINE hashOne(DecodedVector& decoded, vector_size_t index) {
+uint64_t FOLLY_ALWAYS_INLINE
+hashOne(DecodedVector& decoded, vector_size_t index) {
   if constexpr (
       Kind == TypeKind::ROW || Kind == TypeKind::ARRAY ||
       Kind == TypeKind::MAP) {
@@ -73,38 +74,44 @@ uint64_t FOLLY_ALWAYS_INLINE hashOne(DecodedVector& decoded, vector_size_t index
       return util::floating_point::NaNAwareHash<T>()(value);
     } else {
       if constexpr (Kind == TypeKind::INTEGER || Kind == TypeKind::BIGINT) {
-	  if (FLAGS_crc_hash) {
-	    return simd::crcHash64( value);
-	  }
-	}
+        if (FLAGS_crc_hash) {
+          return simd::crcHash64(value);
+        }
+      }
       return folly::hasher<T>()(value);
     }
   }
 }
 } // namespace
-  template <typename T>
-  void hashFlatInts(DecodedVector& decoded, const SelectivityVector&rows, bool mix, uint64_t* result) {
-    auto base = decoded.base()->asUnchecked<FlatVector<T>>();
-    auto values = base->rawValues();
-    bool isCrc = FLAGS_crc_hash;
-    if (base->mayHaveNulls()) {
-      rows.applyToSelected([&](vector_size_t row) {
-	if (base->isNullAt(row)) {
-	  result[row] = mix ? bits::hashMix(result[row], VectorHasher::kNullHash) : VectorHasher::kNullHash;
+template <typename T>
+void hashFlatInts(
+    DecodedVector& decoded,
+    const SelectivityVector& rows,
+    bool mix,
+    uint64_t* result) {
+  auto base = decoded.base()->asUnchecked<FlatVector<T>>();
+  auto values = base->rawValues();
+  bool isCrc = FLAGS_crc_hash;
+  if (base->mayHaveNulls()) {
+    rows.applyToSelected([&](vector_size_t row) {
+      if (base->isNullAt(row)) {
+        result[row] = mix ? bits::hashMix(result[row], VectorHasher::kNullHash)
+                          : VectorHasher::kNullHash;
         return;
       }
-	uint64_t hash = isCrc ? simd::crcHash64(values[row]) : folly::hasher<T>()(values[row]);
-      result[row] = mix ? bits::hashMix(result[row], hash) : hash;
-    });      
-    } else {
-    rows.applyToSelected([&](vector_size_t row) {
-      uint64_t hash = isCrc ? simd::crcHash64(values[row]) : folly::hasher<T>()(values[row]);
+      uint64_t hash = isCrc ? simd::crcHash64(values[row])
+                            : folly::hasher<T>()(values[row]);
       result[row] = mix ? bits::hashMix(result[row], hash) : hash;
     });
-    }
+  } else {
+    rows.applyToSelected([&](vector_size_t row) {
+      uint64_t hash = isCrc ? simd::crcHash64(values[row])
+                            : folly::hasher<T>()(values[row]);
+      result[row] = mix ? bits::hashMix(result[row], hash) : hash;
+    });
   }
+}
 
-  
 template <bool typeProvidesCustomComparison, TypeKind Kind>
 void VectorHasher::hashValues(
     const SelectivityVector& rows,
@@ -136,7 +143,9 @@ void VectorHasher::hashValues(
       }
       result[row] = mix ? bits::hashMix(result[row], hash) : hash;
     });
-  } else if (decoded_.isIdentityMapping() && !typeProvidesCustomComparison && (Kind == TypeKind::INTEGER || Kind == TypeKind::BIGINT)) {
+  } else if (
+      decoded_.isIdentityMapping() && !typeProvidesCustomComparison &&
+      (Kind == TypeKind::INTEGER || Kind == TypeKind::BIGINT)) {
     if (Kind == TypeKind::INTEGER) {
       hashFlatInts<int32_t>(decoded_, rows, mix, result);
     }

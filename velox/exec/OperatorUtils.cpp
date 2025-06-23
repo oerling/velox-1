@@ -191,7 +191,8 @@ vector_size_t processConstantFilterResults(
   if (!rows.isAllSelected()) {
     auto* rawSelected = filterEvalCtx.getRawSelectedIndices(numSelected, pool);
 #if 1
-    simd::indicesOfSetBits(rows.asRange().bits(), rows.begin(), rows.end(), rawSelected);
+    simd::indicesOfSetBits(
+        rows.asRange().bits(), rows.begin(), rows.end(), rawSelected);
 #else
     vector_size_t passed = 0;
     rows.applyToSelected([&](auto row) { rawSelected[passed++] = row; });
@@ -224,8 +225,7 @@ vector_size_t processFlatFilterResults(
 #if 1
   return simd::indicesOfSetBits(selectedBits, 0, size, rawSelected);
 #else
-  bits::f
-    orEachSetBit(
+  bits::f orEachSetBit(
       selectedBits, 0, size, [&rawSelected, &passed](vector_size_t row) {
         rawSelected[passed++] = row;
       });

@@ -66,10 +66,10 @@ struct RunStats {
     if (!flags.empty()) {
       out << " flags: ";
       for (auto& pair : flags) {
-	out << pair.first << "=" << pair.second << " ";
+        out << pair.first << "=" << pair.second << " ";
       }
     }
-      out << std::endl << "======" << std::endl;
+    out << std::endl << "======" << std::endl;
     if (detail) {
       out << std::endl << output << std::endl;
     }
@@ -122,10 +122,9 @@ class QueryBenchmarkBase {
   std::shared_ptr<memory::MemoryAllocator> allocator_;
   std::shared_ptr<cache::AsyncDataCache> cache_;
 
-  // QueryConfig properties. May be part of parameter sweep. 
+  // QueryConfig properties. May be part of parameter sweep.
   std::unordered_map<std::string, std::string> config_;
 
-  
   // Parameter combinations to try. Each element specifies a flag and possible
   // values. All permutations are tried.
   std::vector<ParameterDim> parameters_;

@@ -112,7 +112,7 @@ HashProbe::HashProbe(
     int32_t operatorId,
     DriverCtx* driverCtx,
     const std::shared_ptr<const core::HashJoinNode>& joinNode,
-		     bool preserveInputOrder)
+    bool preserveInputOrder)
     : Operator(
           driverCtx,
           joinNode->outputType(),
