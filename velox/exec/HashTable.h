@@ -963,7 +963,7 @@ class HashTable : public BaseHashTable {
       const std::vector<vector_size_t>& columns,
       const char* row) const;
   void incrementHashTags(uint64_t& h);
-  void incrementHashSingle(uint64_t& h, int32_t n = 1);
+  uint64_t incrementHashSingle(uint64_t& h, int32_t n = 1);
   
   // Adds a row to a hash join table in kArray hash mode. Returns true
   // if a new entry was made and false if the row was added to an

@@ -37,6 +37,8 @@ DEFINE_bool(simd_compare, false, "Use simd in key comparison");
 
 DEFINE_int32(hash_prefetch_mode, 0, "Prefetch in join_mode > 0");
 
+DEFINE_int32(array_hash_max_size, facebook::velox::exec::BaseHashTable::kArrayHashMaxSize, "Max bytes in an array mode hash table");
+
 using facebook::velox::common::testutil::TestValue;
 
 namespace facebook::velox::exec {
@@ -93,7 +95,7 @@ HashTable<ignoreNullKeys>::HashTable(
 
 template <bool ignoreNullKeys>
 HashTable<ignoreNullKeys>::~HashTable() {
-  std::cout << toString();
+  //std::cout << toString();
 }
   
 class ProbeState {
@@ -1296,7 +1298,11 @@ template <bool ignoreNullKeys>
     uint64_t* hashes,
     int32_t numGroups,
     TableInsertPartitionInfo* partitionInfo) {
-  bool useGroupsOf4 = (FLAGS_join_mode & 4) != 0;
+  bool useGroupsOf4 = FLAGS_join_mode == 3;
+  // Rounds to multiple of 8.
+  singleSizeMask_ = bucketOffsetMask_ | 0xf8;
+  // Rounds to multiple of 32.
+  single4SizeMask_ = singleSizeMask_ & ~31UL;
   for (auto i = 0; i < numGroups; ++i) {
     auto hash = hashes[i];
     auto offset = hash & singleSizeMask_;
@@ -1350,8 +1356,7 @@ void HashTable<ignoreNullKeys>::insertForJoin(
   }
   if (FLAGS_join_mode >= 2) {
     insertForJoinSingles(groups, hashes, numGroups, partitionInfo);
-  }
-  if (hashMode_ == HashMode::kNormalizedKey) {
+  } else if (hashMode_ == HashMode::kNormalizedKey) {
     insertForJoinWithPrefetch<true>(groups, hashes, numGroups, partitionInfo);
   } else {
     insertForJoinWithPrefetch<false>(groups, hashes, numGroups, partitionInfo);
@@ -1586,14 +1591,14 @@ void HashTable<ignoreNullKeys>::decideHashMode(
     }
   }
 
-  if (rangesWithReserve < kArrayHashMaxSize && !disableRangeArrayHash_) {
+  if (rangesWithReserve < (FLAGS_array_hash_max_size ? FLAGS_array_hash_max_size : FLAGS_array_hash_max_size) && !disableRangeArrayHash_) {
     std::fill(useRange.begin(), useRange.end(), true);
     capacity_ = setHasherMode(hashers_, useRange, rangeSizes, distinctSizes);
     setHashMode(HashMode::kArray, numNew, spillInputStartPartitionBit);
     return;
   }
 
-  if (bestWithReserve < kArrayHashMaxSize ||
+  if (bestWithReserve < FLAGS_array_hash_max_size ||
       (disableRangeArrayHash_ && bestWithReserve < numDistinct_ * 2)) {
     capacity_ = setHasherMode(hashers_, useRange, rangeSizes, distinctSizes);
     setHashMode(HashMode::kArray, numNew, spillInputStartPartitionBit);
@@ -1612,7 +1617,7 @@ void HashTable<ignoreNullKeys>::decideHashMode(
     return;
   }
 
-  if (distinctsWithReserve < kArrayHashMaxSize) {
+  if (distinctsWithReserve < FLAGS_array_hash_max_size) {
     clearUseRange(useRange);
     capacity_ = setHasherMode(hashers_, useRange, rangeSizes, distinctSizes);
     setHashMode(HashMode::kArray, numNew, spillInputStartPartitionBit);
@@ -1657,7 +1662,7 @@ template <bool ignoreNullKeys>
 std::string HashTable<ignoreNullKeys>::toString() {
   std::stringstream out;
   out << "[HashTable keys: " << hashers_.size()
-      << " hash mode: " << modeString(hashMode_) << " capacity: " << capacity_
+      << " hash mode: " << modeString(hashMode_) << (singleSizeMask_ ? " Singles " : "") << " capacity: " << capacity_
       << " distinct count: " << numDistinct_
       << " tombstones count: " << numTombstones_ << "]" << (hasDuplicates_ ? " has duplicates" : " no duplicates");
   if (table_ == nullptr) {
@@ -1679,7 +1684,7 @@ std::string HashTable<ignoreNullKeys>::toString() {
         << std::endl;
   }
 
-  if (hashMode_ == HashMode::kArray) {
+  if (hashMode_ == HashMode::kArray || singleSizeMask_) {
     int64_t occupied = 0;
     if (table_ && tableAllocation_.data() && tableAllocation_.size()) {
       // 'size_' and 'table_' may not be set if initializing.
