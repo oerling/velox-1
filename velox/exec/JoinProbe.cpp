@@ -59,7 +59,7 @@ FOLLY_ALWAYS_INLINE void recordSimdHits(
     xsimd::batch<int32_t> orgIndices,
     uint8_t hits,
     int32_t i) {
-  if (hits = 0xff) {
+  if (hits == 0xff) {
     if (numPassed == i) {
       numPassed += 8;
       return;
@@ -71,26 +71,24 @@ FOLLY_ALWAYS_INLINE void recordSimdHits(
   simd::filter(orgIndices, hits)
       .store_unaligned(&state.keyIdxToCompare[numPassed]);
   numPassed += __builtin_popcount(hits);
-  if (hits != 0xff) {
-    uint16_t misses = hits ^ 0xff;
-    if (useRowMask) {
-      // The rows where the high bits are clear have no further hits.
-      misses &= simd::toBitMask((orgIndices & ~kRowNumberMask) != 0);
-    }
-    if (misses) {
-      if (state.bits) {
-        while (misses) {
-          auto nth = bits::getAndClearLastSetBit(misses);
-          if (state.bits[i + nth] != kNoMoreMatches) {
-            state.keyIdxToAdvance[state.numToAdvance++] =
-                state.keyIdxToCompare[i + nth];
-          }
-        }
-      } else {
-        simd::filter(orgIndices, misses)
-            .store_unaligned(&state.keyIdxToAdvance[state.numToAdvance]);
-        state.numToAdvance += __builtin_popcount(misses);
+  uint16_t misses = hits ^ 0xff;
+  if (useRowMask) {
+    // The rows where the high bits are clear have no further hits.
+    misses &= simd::toBitMask((orgIndices & ~kRowNumberMask) != 0);
+  }
+  if (misses) {
+    if (state.bits) {
+      while (misses) {
+	auto nth = bits::getAndClearLastSetBit(misses);
+	if (state.bits[i + nth] != kNoMoreMatches) {
+	  state.keyIdxToAdvance[state.numToAdvance++] =
+	    state.keyIdxToCompare[i + nth];
+	}
       }
+    } else {
+      simd::filter(orgIndices, misses)
+	.store_unaligned(&state.keyIdxToAdvance[state.numToAdvance]);
+      state.numToAdvance += __builtin_popcount(misses);
     }
   }
 }
