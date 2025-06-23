@@ -95,7 +95,10 @@ class NoisyCountIfGaussianAggregate : public exec::Aggregate {
       if (!isNull(group)) {
         auto* accumulator = value<AccumulatorType>(group);
         noiseScale = accumulator->noiseScale;
-        break;
+        // Only exit when a valid noise_scale is found.
+        if (noiseScale >= 0) {
+          break;
+        }
       }
     }
 
@@ -153,7 +156,14 @@ class NoisyCountIfGaussianAggregate : public exec::Aggregate {
         int64_t noise = 0;
         if (addNoise) {
           double rawNoise = dist(rng);
-
+          VELOX_USER_CHECK_GE(
+              rawNoise,
+              static_cast<double>(std::numeric_limits<int64_t>::min()),
+              "Noise is too large. Please reduce noise scale.");
+          VELOX_USER_CHECK_LE(
+              rawNoise,
+              static_cast<double>(std::numeric_limits<int64_t>::max()),
+              "Noise is too large. Please reduce noise scale.");
           noise = static_cast<int64_t>(
               std::round(rawNoise)); // Need to round back to int64_t because
                                      // we want to return int64_t
@@ -162,7 +172,7 @@ class NoisyCountIfGaussianAggregate : public exec::Aggregate {
         // Check and make sure the count is within int64_t range
         int64_t trueCount = static_cast<int64_t>(accumulator->count);
         VELOX_DCHECK_LT(trueCount, std::numeric_limits<int64_t>::max());
-        int64_t noisyCount = trueCount + noise;
+        int64_t noisyCount = checkedPlus(trueCount, noise);
 
         // Post-process the noisy count to make sure it is non-negative
         if (noisyCount < 0) {
@@ -184,18 +194,22 @@ class NoisyCountIfGaussianAggregate : public exec::Aggregate {
     decodedNoiseScale_.decode(*args[1], rows);
 
     // If intput has random seed, decode it
-    if (args.size() == 3 && args[2]->isConstantEncoding()) {
+    if (args.size() == 3) {
       decodedRandomSeed_.decode(*args[2], rows);
     }
 
     rows.applyToSelected([&](vector_size_t i) {
+      auto* group = groups[i];
+      auto* accumulator = value<AccumulatorType>(group);
+
+      if (args.size() == 3 && !decodedRandomSeed_.isNullAt(i)) {
+        accumulator->setRandomSeed(decodedRandomSeed_.valueAt<int64_t>(i));
+      }
+
       if (decodedValue_.isNullAt(i) || decodedNoiseScale_.isNullAt(i)) {
         return;
       }
 
-      auto* group = groups[i];
-
-      auto* accumulator = value<AccumulatorType>(group);
       if (decodedValue_.valueAt<bool>(i)) {
         accumulator->increaseCount(1);
       }
@@ -209,10 +223,6 @@ class NoisyCountIfGaussianAggregate : public exec::Aggregate {
             static_cast<double>(decodedNoiseScale_.valueAt<uint64_t>(i));
       }
       accumulator->checkAndSetNoiseScale(noiseScaleValue);
-
-      if (args.size() == 3 && !decodedRandomSeed_.isNullAt(i)) {
-        accumulator->setRandomSeed(decodedRandomSeed_.valueAt<int32_t>(i));
-      }
     });
   }
 
@@ -258,13 +268,17 @@ class NoisyCountIfGaussianAggregate : public exec::Aggregate {
     decodedNoiseScale_.decode(*args[1], rows);
 
     // Check if input has random seed and make sure it's constant for each row.
-    if (args.size() == 3 && args[2]->isConstantEncoding()) {
+    if (args.size() == 3) {
       decodedRandomSeed_.decode(*args[2], rows);
     }
 
     auto* accumulator = value<AccumulatorType>(group);
 
     rows.applyToSelected([&](vector_size_t i) {
+      if (args.size() == 3 && !decodedRandomSeed_.isNullAt(i)) {
+        accumulator->setRandomSeed(decodedRandomSeed_.valueAt<int64_t>(i));
+      }
+
       if (decodedValue_.isNullAt(i) || decodedNoiseScale_.isNullAt(i)) {
         return;
       }
@@ -281,10 +295,6 @@ class NoisyCountIfGaussianAggregate : public exec::Aggregate {
             static_cast<double>(decodedNoiseScale_.valueAt<uint64_t>(i));
       }
       accumulator->checkAndSetNoiseScale(noiseScaleValue);
-
-      if (args.size() == 3 && !decodedRandomSeed_.isNullAt(i)) {
-        accumulator->setRandomSeed(decodedRandomSeed_.valueAt<int32_t>(i));
-      }
     });
   }
 

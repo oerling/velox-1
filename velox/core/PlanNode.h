@@ -31,7 +31,7 @@ namespace facebook::velox::core {
 class PlanNodeVisitor;
 class PlanNodeVisitorContext;
 
-typedef std::string PlanNodeId;
+using PlanNodeId = std::string;
 
 /// Generic representation of InsertTable
 struct InsertTableHandle {
@@ -301,7 +301,7 @@ class PlanNode : public ISerializable {
       std::stringstream& stream,
       size_t indentationSize) const;
 
-  const std::string id_;
+  const PlanNodeId id_;
 };
 
 using PlanNodePtr = std::shared_ptr<const PlanNode>;
@@ -1294,6 +1294,8 @@ class AggregationNode : public PlanNode {
   const RowTypePtr outputType_;
 };
 
+using AggregationNodePtr = std::shared_ptr<const AggregationNode>;
+
 inline std::ostream& operator<<(
     std::ostream& out,
     const AggregationNode::Step& step) {
@@ -1322,7 +1324,7 @@ class TableWriteNode : public PlanNode {
       const PlanNodeId& id,
       const RowTypePtr& columns,
       const std::vector<std::string>& columnNames,
-      std::shared_ptr<AggregationNode> aggregationNode,
+      AggregationNodePtr aggregationNode,
       std::shared_ptr<InsertTableHandle> insertTableHandle,
       bool hasPartitioningScheme,
       RowTypePtr outputType,
@@ -1379,7 +1381,7 @@ class TableWriteNode : public PlanNode {
       return *this;
     }
 
-    Builder& aggregationNode(std::shared_ptr<AggregationNode> aggregationNode) {
+    Builder& aggregationNode(AggregationNodePtr aggregationNode) {
       aggregationNode_ = std::move(aggregationNode);
       return *this;
     }
@@ -1449,7 +1451,7 @@ class TableWriteNode : public PlanNode {
     std::optional<PlanNodeId> id_;
     std::optional<RowTypePtr> columns_;
     std::optional<std::vector<std::string>> columnNames_;
-    std::optional<std::shared_ptr<AggregationNode>> aggregationNode_;
+    std::optional<AggregationNodePtr> aggregationNode_;
     std::optional<std::shared_ptr<InsertTableHandle>> insertTableHandle_;
     std::optional<bool> hasPartitioningScheme_;
     std::optional<RowTypePtr> outputType_;
@@ -1498,7 +1500,7 @@ class TableWriteNode : public PlanNode {
   }
 
   /// Optional aggregation node for column statistics collection
-  std::shared_ptr<AggregationNode> aggregationNode() const {
+  const AggregationNodePtr& aggregationNode() const {
     return aggregationNode_;
   }
 
@@ -1520,7 +1522,7 @@ class TableWriteNode : public PlanNode {
   const std::vector<PlanNodePtr> sources_;
   const RowTypePtr columns_;
   const std::vector<std::string> columnNames_;
-  const std::shared_ptr<AggregationNode> aggregationNode_;
+  const AggregationNodePtr aggregationNode_;
   const std::shared_ptr<InsertTableHandle> insertTableHandle_;
   const bool hasPartitioningScheme_;
   const RowTypePtr outputType_;
@@ -1535,7 +1537,7 @@ class TableWriteMergeNode : public PlanNode {
   TableWriteMergeNode(
       const PlanNodeId& id,
       RowTypePtr outputType,
-      std::shared_ptr<AggregationNode> aggregationNode,
+      AggregationNodePtr aggregationNode,
       PlanNodePtr source)
       : PlanNode(id),
         aggregationNode_(std::move(aggregationNode)),
@@ -1564,7 +1566,7 @@ class TableWriteMergeNode : public PlanNode {
       return *this;
     }
 
-    Builder& aggregationNode(std::shared_ptr<AggregationNode> aggregationNode) {
+    Builder& aggregationNode(AggregationNodePtr aggregationNode) {
       aggregationNode_ = std::move(aggregationNode);
       return *this;
     }
@@ -1594,12 +1596,12 @@ class TableWriteMergeNode : public PlanNode {
    private:
     std::optional<PlanNodeId> id_;
     std::optional<RowTypePtr> outputType_;
-    std::optional<std::shared_ptr<AggregationNode>> aggregationNode_;
+    std::optional<AggregationNodePtr> aggregationNode_;
     std::optional<PlanNodePtr> source_;
   };
 
   /// Optional aggregation node for column statistics collection
-  std::shared_ptr<AggregationNode> aggregationNode() const {
+  AggregationNodePtr aggregationNode() const {
     return aggregationNode_;
   }
 
@@ -1625,7 +1627,7 @@ class TableWriteMergeNode : public PlanNode {
  private:
   void addDetails(std::stringstream& stream) const override;
 
-  const std::shared_ptr<AggregationNode> aggregationNode_;
+  const AggregationNodePtr aggregationNode_;
   const std::vector<PlanNodePtr> sources_;
   const RowTypePtr outputType_;
 };
@@ -2286,7 +2288,7 @@ class LocalPartitionNode : public PlanNode {
 
     VELOX_USER_CHECK_NOT_NULL(partitionFunctionSpec_);
 
-    for (auto i = 1; i < sources_.size(); ++i) {
+    for (size_t i = 1; i < sources_.size(); ++i) {
       VELOX_USER_CHECK(
           *sources_[i]->outputType() == *sources_[0]->outputType(),
           "All sources of the LocalPartitionedNode must have the same output type: {} vs. {}.",

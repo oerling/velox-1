@@ -139,6 +139,9 @@ class BaseHashTable {
 
   using MaskType = uint16_t;
 
+  /// The load factor of the hash table.
+  static constexpr double kHashTableLoadFactor = 0.7;
+
   /// 2M entries, i.e. 16MB is the largest array based hash table.
   static constexpr uint64_t kArrayHashMaxSize = 2L << 20;
 

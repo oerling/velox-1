@@ -167,11 +167,22 @@ Generic Configuration
      - 0
      - Specifies the max number of input batches to prefetch to do index lookup ahead. If it is zero,
        then process one input batch at a time.
+   * - index_lookup_join_split_output
+     - bool
+     - true
+     - If this is true, then the index join operator might split output for each input batch based
+       on the output batch size control. Otherwise, it tries to produce a single output for each input
+       batch.
    * - unnest_split_output_batch
      - bool
      - true
      - If this is true, then the unnest operator might split output for each input batch based on the
        output batch size control. Otherwise, it produces a single output for each input batch.
+   * - max_num_splits_listened_to
+     - integer
+     - 0
+     - Specifies The max number of input splits to listen to by SplitListener per table scan node per
+       worker. It's up to the SplitListener implementation to respect this config.
 
 .. _expression-evaluation-conf:
 
@@ -264,6 +275,11 @@ Memory Management
        memory limit for partial aggregation is automatically doubled up to `max_extended_partial_aggregation_memory`.
        This adaptation is disabled by default, since the value of `max_extended_partial_aggregation_memory` equals the
        value of `max_partial_aggregation_memory`. Specify higher value for `max_extended_partial_aggregation_memory` to enable.
+   * - query_memory_reclaimer_priority
+     - integer
+     - 2147483647
+     - Priority of the query in the memory pool reclaimer. Lower value means higher priority. This is used in
+       global arbitration victim selection.
 
 Spilling
 --------

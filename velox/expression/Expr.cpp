@@ -1970,8 +1970,7 @@ void ExprSet::clear() {
   for (auto* memo : memoizingExprs_) {
     memo->clearMemo();
   }
-  distinctFields_.clear();
-  multiplyReferencedFields_.clear();
+  memoizingExprs_.clear();
 }
 
 void ExprSet::clearCache() {
@@ -2040,8 +2039,8 @@ core::ExecCtx* SimpleExpressionEvaluator::ensureExecCtx() {
 VectorPtr tryEvaluateConstantExpression(
     const core::TypedExprPtr& expr,
     memory::MemoryPool* pool,
+    const std::shared_ptr<core::QueryCtx>& queryCtx,
     bool suppressEvaluationFailures) {
-  auto queryCtx = velox::core::QueryCtx::create();
   velox::core::ExecCtx execCtx{pool, queryCtx.get()};
   velox::exec::ExprSet exprSet({expr}, &execCtx);
 

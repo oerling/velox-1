@@ -33,7 +33,7 @@ DEFINE_int32(join_mode, 0, "Select alternate join mode: 0 tags 1 batch tags, 2 s
 
 DEFINE_bool(simd_compare, false, "Use simd in key comparison");
 
-	    DEFINE_int32(probe_batch, 1024, "Number of probes expected to fit in cache");
+	    DEFINE_int32(probe_batch, 256, "Number of probes expected to fit in cache");
 
 DEFINE_int32(hash_prefetch_mode, 0, "Prefetch in join_mode > 0");
 
@@ -952,6 +952,8 @@ void HashTable<ignoreNullKeys>::parallelJoinBuild() {
         partitionSteps, error, parallelJoinBuildStats_.partitionTimings, true);
     syncWorkItems(
         buildSteps, error, parallelJoinBuildStats_.buildTimings, true);
+    // Release the partition bounds to reduce memory usage.
+    buildPartitionBounds_ = raw_vector<PartitionBoundIndexType>(pool_);
   });
 
   const auto getTable = [this](size_t i) INLINE_LAMBDA {

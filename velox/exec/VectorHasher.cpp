@@ -20,7 +20,7 @@
 #include "velox/common/base/SimdUtil.h"
 #include "velox/common/memory/HashStringAllocator.h"
 #include "velox/type/FloatingPointUtil.h"
-DEFINE_bool(crc_hash, false, "Use crc32 for integer key hash");
+DEFINE_bool(crc_hash, true, "Use crc32 for integer key hash");
 
 namespace facebook::velox::exec {
 

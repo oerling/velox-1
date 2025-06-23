@@ -220,9 +220,9 @@ class Expr {
 
   void clearMemo() {
     baseOfDictionaryRepeats_ = 0;
-    baseOfDictionary_.reset();
-    baseOfDictionaryWeakPtr_.reset();
     baseOfDictionaryRawPtr_ = nullptr;
+    baseOfDictionaryWeakPtr_.reset();
+    baseOfDictionary_.reset();
     dictionaryCache_ = nullptr;
     cachedDictionaryIndices_ = nullptr;
   }
@@ -816,6 +816,7 @@ std::unique_ptr<ExprSet> makeExprSetFromFlag(
 VectorPtr tryEvaluateConstantExpression(
     const core::TypedExprPtr& expr,
     memory::MemoryPool* pool,
+    const std::shared_ptr<core::QueryCtx>& queryCtx,
     bool suppressEvaluationFailures = false);
 
 /// Returns a string representation of the expression trees annotated with

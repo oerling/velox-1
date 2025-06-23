@@ -607,6 +607,12 @@ class QueryConfig {
   static constexpr const char* kIndexLookupJoinMaxPrefetchBatches =
       "index_lookup_join_max_prefetch_batches";
 
+  /// If this is true, then the index join operator might split output for each
+  /// input batch based on the output batch size control. Otherwise, it tries to
+  /// produce a single output for each input batch.
+  static constexpr const char* kIndexLookupJoinSplitOutput =
+      "index_lookup_join_split_output";
+
   // Max wait time for exchange request in seconds.
   static constexpr const char* kRequestDataSizesMaxWaitSec =
       "request_data_sizes_max_wait_sec";
@@ -637,6 +643,17 @@ class QueryConfig {
   /// input batch based on the output batch size control. Otherwise, it produces
   /// a single output for each input batch.
   static constexpr const char* kUnnestSplitOutput = "unnest_split_output";
+
+  /// Priority of the query in the memory pool reclaimer. Lower value means
+  /// higher priority. This is used in global arbitration victim selection.
+  static constexpr const char* kQueryMemoryReclaimerPriority =
+      "query_memory_reclaimer_priority";
+
+  /// The max number of input splits to listen to by SplitListener per table
+  /// scan node per worker. It's up to the SplitListener implementation to
+  /// respect this config.
+  static constexpr const char* kMaxNumSplitsListenedTo =
+      "max_num_splits_listened_to";
 
   bool selectiveNimbleReaderEnabled() const {
     return get<bool>(kSelectiveNimbleReaderEnabled, false);
@@ -1129,6 +1146,10 @@ class QueryConfig {
     return get<uint32_t>(kIndexLookupJoinMaxPrefetchBatches, 0);
   }
 
+  bool indexLookupJoinSplitOutput() const {
+    return get<bool>(kIndexLookupJoinSplitOutput, true);
+  }
+
   std::string shuffleCompressionKind() const {
     return get<std::string>(kShuffleCompressionKind, "none");
   }
@@ -1160,6 +1181,15 @@ class QueryConfig {
 
   bool unnestSplitOutput() const {
     return get<bool>(kUnnestSplitOutput, true);
+  }
+
+  int32_t queryMemoryReclaimerPriority() const {
+    return get<int32_t>(
+        kQueryMemoryReclaimerPriority, std::numeric_limits<int32_t>::max());
+  }
+
+  int32_t maxNumSplitsListenedTo() const {
+    return get<int32_t>(kMaxNumSplitsListenedTo, 0);
   }
 
   template <typename T>
