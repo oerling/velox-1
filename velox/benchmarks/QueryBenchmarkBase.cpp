@@ -326,10 +326,14 @@ void QueryBenchmarkBase::runCombinations(int32_t level) {
       auto tvNanos = [](struct timeval tv) {
         return tv.tv_sec * 1000000000 + tv.tv_usec * 1000;
       };
-      stats.userNanos = tvNanos(final.ru_utime) - tvNanos(start.ru_utime);
-      stats.systemNanos = tvNanos(final.ru_stime) - tvNanos(start.ru_stime);
+      if (!stats.userNanos) {
+        stats.userNanos = tvNanos(final.ru_utime) - tvNanos(start.ru_utime);
+        stats.systemNanos = tvNanos(final.ru_stime) - tvNanos(start.ru_stime);
+      }
     }
-    stats.micros = micros;
+    if (!stats.micros) {
+      stats.micros = micros;
+    }
     stats.output = result.str();
     for (auto i = 0; i < parameters_.size(); ++i) {
       std::string name;

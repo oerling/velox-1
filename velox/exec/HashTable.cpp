@@ -48,6 +48,8 @@ DEFINE_int32(
     facebook::velox::exec::BaseHashTable::kArrayHashMaxSize,
     "Max bytes in an array mode hash table");
 
+DEFINE_int32(bloom_bits, 0, "Bloom filter for hash join: 0, 4 or 8 bits per entry");
+
 using facebook::velox::common::testutil::TestValue;
 
 namespace facebook::velox::exec {
@@ -1312,41 +1314,50 @@ void HashTable<ignoreNullKeys>::insertForJoinSingles(
   singleSizeMask_ = bucketOffsetMask_ | 0xf8;
   // Rounds to multiple of 32.
   single4SizeMask_ = singleSizeMask_ & ~31UL;
-  for (auto i = 0; i < numGroups; ++i) {
-    auto hash = hashes[i];
-    auto offset = hash & singleSizeMask_;
-    bool groupsOf4 = useGroupsOf4;
-    for (;;) {
-      auto item = itemAt(offset);
-      if (!item) {
-        itemAt(offset) = pointerAndTag(hash, groups[i]);
-        break;
-      } else if (tagMatch(item, hash)) {
-        char* existing = itemAs<char*>(item);
-        if (compareKeys(groups[i], existing)) {
-          pushNext(existing, groups[i]);
+  for (auto start = 0; start < numGroups; start += FLAGS_probe_batch) {
+    auto end = std::min<int32_t>(start + FLAGS_probe_batch, numGroups);
+    for (auto i = start; i < end; ++i) {
+      auto hash = hashes[i];
+      auto offset = hash & singleSizeMask_;
+      __builtin_prefetch(&itemAt(offset));
+    }
+    for (auto i = start; i < end; ++i) {
+      auto hash = hashes[i];
+      auto offset = hash & singleSizeMask_;
+      bool groupsOf4 = useGroupsOf4;
+      for (;;) {
+        auto item = itemAt(offset);
+        if (!item) {
+          itemAt(offset) = pointerAndTag(hash, groups[i]);
           break;
+        } else if (tagMatch(item, hash)) {
+          char* existing = itemAs<char*>(item);
+          if (compareKeys(groups[i], existing)) {
+            pushNext(existing, groups[i]);
+            break;
+          }
         }
-      }
-      if (groupsOf4) {
-        auto bucketStart = hash & single4SizeMask_;
-        if (offset == bucketStart) {
-          offset += 8;
+        if (groupsOf4) {
+          auto bucketStart = hash & single4SizeMask_;
+          if (offset == bucketStart) {
+            offset += 8;
+          } else {
+            offset = bucketStart;
+          }
+          groupsOf4 = false;
         } else {
-          offset = bucketStart;
-        }
-        groupsOf4 = false;
-      } else {
-        offset = (offset + sizeof(uint64_t)) & singleSizeMask_;
-        if (partitionInfo != nullptr && !partitionInfo->inRange(offset / 128)) {
-          partitionInfo->addOverflow(groups[i]);
-          break;
+          offset = (offset + sizeof(uint64_t)) & singleSizeMask_;
+          if (partitionInfo != nullptr &&
+              !partitionInfo->inRange(offset)) {
+            partitionInfo->addOverflow(groups[i]);
+            break;
+          }
         }
       }
     }
   }
 }
-
+  
 template <bool ignoreNullKeys>
 void HashTable<ignoreNullKeys>::insertForJoin(
     char** groups,

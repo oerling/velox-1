@@ -7,6 +7,7 @@ constexpr uint8_t kNoMoreMatches = 255;
 
 struct ProbeBatchState {
   bool useRowMask{false};
+  bool isLastCompare{false};
   // Number of build side rows to look at.
   int32_t numToCompare;
 
@@ -64,11 +65,26 @@ FOLLY_ALWAYS_INLINE void recordSimdHits(
       return;
     }
     orgIndices.store_unaligned(&state.keyIdxToCompare[numPassed]);
-    numPassed += 8;
+    // Move the rows downward too for the next key. No need to do for the last key.
+    if (state.isLastCompare) {
+      auto rowPtr = reinterpret_cast<int64_t*>(&state.rowToCompare);
+      auto r1 = xsimd::batch<int64_t>::load_unaligned(rowPtr + i);
+      auto r2 = xsimd::batch<int64_t>::load_unaligned(rowPtr + i + 4);
+      r1.store_unaligned(rowPtr + numPassed);
+      r2.store_unaligned(rowPtr + numPassed + 4);
+    }
+      numPassed += 8;
     return;
   }
   simd::filter(orgIndices, hits)
       .store_unaligned(&state.keyIdxToCompare[numPassed]);
+  if (!state.isLastCompare) {
+    auto rowPtr = reinterpret_cast<int64_t*>(&state.rowToCompare);
+    auto r1 = xsimd::batch<int64_t>::load_unaligned(rowPtr + i);
+    auto r2 = xsimd::batch<int64_t>::load_unaligned(rowPtr + i + 4);
+    simd::filter(r1, hits & 0xf).store_unaligned(rowPtr + numPassed);
+    simd::filter(r2, hits >> 4).store_unaligned(rowPtr + numPassed + __builtin_popcount(hits & 0xf));
+  }
   numPassed += __builtin_popcount(hits);
   uint16_t misses = hits ^ 0xff;
   if (useRowMask) {
@@ -335,6 +351,7 @@ void HashTable<ignoreNullKeys>::compareAllKeys(
     if (state.numToCompare == 0) {
       return;
     }
+    state.isLastCompare = i == lookup.hashers.size() - 1;
     auto& decoded = lookup.hashers[i]->decodedVector();
     const BaseVector* base = decoded.base();
     auto columnOffset = rows_->columnAt(i).offset();
@@ -716,11 +733,25 @@ void HashTable<ignoreNullKeys>::probeBatchSinglesSimd(
   }
 }
 
+void ck(HashLookup& lookup, int32_t& hit) {
+  auto v1 = lookup.hashers[0]->decodedVector().base()->as<FlatVector<int64_t>>();
+  auto v2 = lookup.hashers[1]->decodedVector().base()->as<FlatVector<int64_t>>();
+  for (auto i = 0;  i < v1->size(); ++i) {
+    if (v1->valueAt(i) == 1493 &&
+	v2->valueAt(i) == 1494) {
+      hit = i;
+      std::cout << "bing " << i << std::endl;
+    }
+  }
+}
+
 template <bool ignoreNullKeys>
 void HashTable<ignoreNullKeys>::joinProbe2(HashLookup& lookup) {
   if (!lookup.makeDenseHits) {
     std::fill(lookup.hits.begin(), lookup.hits.end(), nullptr);
   }
+  int32_t hit = -1;
+  ck(lookup, hit);
   int32_t batch = FLAGS_probe_batch;
   auto numProbe = lookup.rows.size();
   for (auto begin = 0; begin < numProbe; begin += batch) {
@@ -739,6 +770,11 @@ void HashTable<ignoreNullKeys>::joinProbe2(HashLookup& lookup) {
         break;
       default:
         VELOX_UNREACHABLE();
+    }
+  }
+  if (hit != -1) {
+    if (!lookup.hits[hit]) {
+      std::cout << "<Missed hit at " << hit << std::endl;
     }
   }
 }
