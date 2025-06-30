@@ -25,14 +25,14 @@
 #include "velox/dwio/common/BufferedInput.h"
 #include "velox/dwio/common/Reader.h"
 #include "velox/dwio/common/TypeWithId.h"
-#include "velox/dwio/common/exception/Exceptions.h"
 
 namespace facebook::velox::dwio::common {
 
 using memory::MemoryPool;
 using velox::common::CompressionKind;
+using velox::common::ScanSpec;
 
-// Shared state for a file between TextReaderImpl and TextRowReaderImpl
+// Shared state for a file between TextReader and TextRowReader
 struct FileContents {
   FileContents(MemoryPool& pool, const std::shared_ptr<const RowType>& t);
 
@@ -53,9 +53,41 @@ constexpr DelimType DelimTypeNone = 0;
 constexpr DelimType DelimTypeEOR = 1;
 constexpr DelimType DelimTypeEOE = 2;
 
-class TextRowReaderImpl : public RowReader {
+class TextReader : public Reader {
  public:
-  TextRowReaderImpl(
+  TextReader(
+      const ReaderOptions& options,
+      std::unique_ptr<BufferedInput> input);
+
+  std::optional<uint64_t> numberOfRows() const override;
+
+  std::unique_ptr<ColumnStatistics> columnStatistics(
+      uint32_t index) const override;
+
+  const RowTypePtr& rowType() const override;
+
+  CompressionKind getCompression() const;
+
+  const std::shared_ptr<const TypeWithId>& typeWithId() const override;
+
+  std::unique_ptr<RowReader> createRowReader(
+      const RowReaderOptions& options) const override;
+
+  uint64_t getFileLength() const;
+
+  uint64_t getMemoryUse();
+
+ private:
+  ReaderOptions options_;
+  mutable std::shared_ptr<const TypeWithId> typeWithId_;
+  std::shared_ptr<FileContents> contents_;
+  std::shared_ptr<const TypeWithId> schemaWithId_;
+  std::shared_ptr<const RowType> internalSchema_;
+};
+
+class TextRowReader : public RowReader {
+ public:
+  TextRowReader(
       std::shared_ptr<FileContents> fileContents,
       const RowReaderOptions& options);
 
@@ -83,10 +115,7 @@ class TextRowReaderImpl : public RowReader {
   uint64_t seekToRow(uint64_t rowNumber);
 
  private:
-  const RowReaderOptions& getDefaultOpts() {
-    static RowReaderOptions defaultOpts;
-    return defaultOpts;
-  }
+  const RowReaderOptions& getDefaultOpts();
 
   const std::shared_ptr<const RowType>& getType() const;
 
@@ -127,7 +156,11 @@ class TextRowReaderImpl : public RowReader {
   template <bool skipLF = false>
   char getByteUnchecked(DelimType& delim);
 
+  template <bool skipLF = false>
+  char getByteUncheckedOptimized(DelimType& delim);
+
   uint8_t getByte(DelimType& delim);
+  uint8_t getByteOptimized(DelimType& delim);
 
   bool getEOR(DelimType& delim, bool& isNull);
 
@@ -136,19 +169,16 @@ class TextRowReaderImpl : public RowReader {
   void resetLine();
 
   static StringView
-  getStringView(TextRowReaderImpl& th, bool& isNull, DelimType& delim);
+  getStringView(TextRowReader& th, bool& isNull, DelimType& delim);
 
   template <typename T>
-  static T getInteger(TextRowReaderImpl& th, bool& isNull, DelimType& delim);
+  static T getInteger(TextRowReader& th, bool& isNull, DelimType& delim);
 
-  static bool getBoolean(TextRowReaderImpl& th, bool& isNull, DelimType& delim);
+  static bool getBoolean(TextRowReader& th, bool& isNull, DelimType& delim);
 
-  static float getFloat(TextRowReaderImpl& th, bool& isNull, DelimType& delim);
+  static float getFloat(TextRowReader& th, bool& isNull, DelimType& delim);
 
-  static double
-  getDouble(TextRowReaderImpl& th, bool& isNull, DelimType& delim);
-
-  static void trim(std::string& s);
+  static double getDouble(TextRowReader& th, bool& isNull, DelimType& delim);
 
   void readElement(
       const std::shared_ptr<const Type>& t,
@@ -159,13 +189,14 @@ class TextRowReaderImpl : public RowReader {
 
   template <class T, class reqT>
   void putValue(
-      std::function<T(TextRowReaderImpl& th, bool& isNull, DelimType& delim)> f,
+      std::function<T(TextRowReader& th, bool& isNull, DelimType& delim)> f,
       BaseVector* FOLLY_NULLABLE data,
       vector_size_t insertionRow,
       DelimType& delim);
 
   const std::shared_ptr<FileContents> contents_;
   const std::shared_ptr<const TypeWithId> schemaWithId_;
+  const std::shared_ptr<velox::common::ScanSpec>& scanSpec_;
 
   mutable std::shared_ptr<const TypeWithId> selectedSchema_;
 
@@ -178,40 +209,11 @@ class TextRowReaderImpl : public RowReader {
   bool atSOL_;
   uint8_t depth_;
   std::string unreadData_;
-  uint64_t limit_;
+  int unreadIdx_;
+  uint64_t limit_; // lowest offset not in the range
   uint64_t fileLength_;
+  std::string ownedString_;
   StringViewBufferHolder stringViewBuffer_;
-};
-
-class TextReaderImpl : public Reader {
- public:
-  TextReaderImpl(
-      std::unique_ptr<BufferedInput> input,
-      const ReaderOptions& options);
-
-  std::optional<uint64_t> numberOfRows() const override;
-
-  std::unique_ptr<ColumnStatistics> columnStatistics(
-      uint32_t index) const override;
-
-  const RowTypePtr& rowType() const override;
-
-  CompressionKind getCompression() const;
-
-  const std::shared_ptr<const TypeWithId>& typeWithId() const override;
-
-  std::unique_ptr<RowReader> createRowReader(
-      const RowReaderOptions& options = RowReaderOptions()) const override;
-
-  uint64_t getFileLength() const;
-
-  uint64_t getMemoryUse();
-
- private:
-  const ReaderOptions& options_;
-  std::shared_ptr<FileContents> contents_;
-  std::shared_ptr<const TypeWithId> schemaWithId_;
-  std::shared_ptr<const RowType> internalSchema_;
 };
 
 } // namespace facebook::velox::dwio::common

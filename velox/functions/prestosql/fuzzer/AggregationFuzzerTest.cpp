@@ -37,8 +37,12 @@
 #include "velox/functions/prestosql/fuzzer/NoisyCountIfResultVerifier.h"
 #include "velox/functions/prestosql/fuzzer/NoisyCountInputGenerator.h"
 #include "velox/functions/prestosql/fuzzer/NoisyCountResultVerifier.h"
+#include "velox/functions/prestosql/fuzzer/NoisySumInputGenerator.h"
+#include "velox/functions/prestosql/fuzzer/NoisySumResultVerifier.h"
 #include "velox/functions/prestosql/fuzzer/QDigestAggInputGenerator.h"
 #include "velox/functions/prestosql/fuzzer/QDigestAggResultVerifier.h"
+#include "velox/functions/prestosql/fuzzer/TDigestAggregateInputGenerator.h"
+#include "velox/functions/prestosql/fuzzer/TDigestAggregateResultVerifier.h"
 #include "velox/functions/prestosql/registration/RegistrationFunctions.h"
 #include "velox/functions/prestosql/window/WindowFunctionsRegistration.h"
 #include "velox/vector/fuzzer/VectorFuzzer.h"
@@ -84,11 +88,13 @@ getCustomInputGenerators() {
       {"approx_distinct", std::make_shared<ApproxDistinctInputGenerator>()},
       {"approx_set", std::make_shared<ApproxDistinctInputGenerator>()},
       {"approx_percentile", std::make_shared<ApproxPercentileInputGenerator>()},
+      {"tdigest_agg", std::make_shared<TDigestAggregateInputGenerator>()},
       {"qdigest_agg", std::make_shared<QDigestAggInputGenerator>()},
       {"map_union_sum", std::make_shared<MapUnionSumInputGenerator>()},
       {"noisy_count_if_gaussian",
        std::make_shared<NoisyCountIfInputGenerator>()},
       {"noisy_count_gaussian", std::make_shared<NoisyCountInputGenerator>()},
+      {"noisy_sum_gaussian", std::make_shared<NoisySumInputGenerator>()},
   };
 }
 
@@ -156,8 +162,10 @@ int main(int argc, char** argv) {
   using facebook::velox::exec::test::MinMaxByResultVerifier;
   using facebook::velox::exec::test::NoisyCountIfResultVerifier;
   using facebook::velox::exec::test::NoisyCountResultVerifier;
+  using facebook::velox::exec::test::NoisySumResultVerifier;
   using facebook::velox::exec::test::QDigestAggResultVerifier;
   using facebook::velox::exec::test::setupReferenceQueryRunner;
+  using facebook::velox::exec::test::TDigestAggregateResultVerifier;
   using facebook::velox::exec::test::TransformResultVerifier;
 
   auto makeArrayVerifier = []() {
@@ -185,6 +193,7 @@ int main(int argc, char** argv) {
           {"approx_set", std::make_shared<ApproxDistinctResultVerifier>(true)},
           {"approx_percentile",
            std::make_shared<ApproxPercentileResultVerifier>()},
+          {"tdigest_agg", std::make_shared<TDigestAggregateResultVerifier>()},
           {"qdigest_agg", std::make_shared<QDigestAggResultVerifier>()},
           {"arbitrary", std::make_shared<ArbitraryResultVerifier>()},
           {"any_value", nullptr},
@@ -211,6 +220,7 @@ int main(int argc, char** argv) {
            std::make_shared<NoisyCountIfResultVerifier>()},
           {"noisy_count_gaussian",
            std::make_shared<NoisyCountResultVerifier>()},
+          {"noisy_sum_gaussian", std::make_shared<NoisySumResultVerifier>()},
       };
 
   using Runner = facebook::velox::exec::test::AggregationFuzzerRunner;

@@ -38,7 +38,7 @@ struct InsertTableHandle {
  public:
   InsertTableHandle(
       const std::string& connectorId,
-      const std::shared_ptr<connector::ConnectorInsertTableHandle>&
+      const connector::ConnectorInsertTableHandlePtr&
           connectorInsertTableHandle)
       : connectorId_(connectorId),
         connectorInsertTableHandle_(connectorInsertTableHandle) {}
@@ -47,8 +47,8 @@ struct InsertTableHandle {
     return connectorId_;
   }
 
-  const std::shared_ptr<connector::ConnectorInsertTableHandle>&
-  connectorInsertTableHandle() const {
+  const connector::ConnectorInsertTableHandlePtr& connectorInsertTableHandle()
+      const {
     return connectorInsertTableHandle_;
   }
 
@@ -57,8 +57,7 @@ struct InsertTableHandle {
   const std::string connectorId_;
 
   // Write request to a DataSink of that connector type
-  const std::shared_ptr<connector::ConnectorInsertTableHandle>
-      connectorInsertTableHandle_;
+  const connector::ConnectorInsertTableHandlePtr connectorInsertTableHandle_;
 };
 
 class SortOrder {
@@ -498,6 +497,8 @@ class ArrowStreamNode : public PlanNode {
   std::shared_ptr<ArrowArrayStream> arrowStream_;
 };
 
+using ArrowStreamNodePtr = std::shared_ptr<const ArrowStreamNode>;
+
 class TraceScanNode final : public PlanNode {
  public:
   TraceScanNode(
@@ -614,6 +615,8 @@ class TraceScanNode final : public PlanNode {
   const RowTypePtr outputType_;
 };
 
+using TraceScanNodePtr = std::shared_ptr<const TraceScanNode>;
+
 class FilterNode : public PlanNode {
  public:
   FilterNode(const PlanNodeId& id, TypedExprPtr filter, PlanNodePtr source)
@@ -705,6 +708,8 @@ class FilterNode : public PlanNode {
   const std::vector<PlanNodePtr> sources_;
   const TypedExprPtr filter_;
 };
+
+using FilterNodePtr = std::shared_ptr<const FilterNode>;
 
 class AbstractProjectNode : public PlanNode {
  public:
@@ -876,8 +881,21 @@ class ProjectNode : public AbstractProjectNode {
   static PlanNodePtr create(const folly::dynamic& obj, void* context);
 };
 
+using ProjectNodePtr = std::shared_ptr<const ProjectNode>;
+
 class TableScanNode : public PlanNode {
  public:
+  TableScanNode(
+      const PlanNodeId& id,
+      RowTypePtr outputType,
+      const connector::ConnectorTableHandlePtr& tableHandle,
+      const connector::ColumnHandleMap& assignments)
+      : PlanNode(id),
+        outputType_(std::move(outputType)),
+        tableHandle_(tableHandle),
+        assignments_(assignments) {}
+
+#ifdef VELOX_ENABLE_BACKWARD_COMPATIBILITY
   TableScanNode(
       const PlanNodeId& id,
       RowTypePtr outputType,
@@ -887,8 +905,11 @@ class TableScanNode : public PlanNode {
           std::shared_ptr<connector::ColumnHandle>>& assignments)
       : PlanNode(id),
         outputType_(std::move(outputType)),
-        tableHandle_(tableHandle),
-        assignments_(assignments) {}
+        tableHandle_(
+            std::static_pointer_cast<const connector::ConnectorTableHandle>(
+                tableHandle)),
+        assignments_(toColumnHandleMap(assignments)) {}
+#endif
 
   class Builder {
    public:
@@ -911,16 +932,12 @@ class TableScanNode : public PlanNode {
       return *this;
     }
 
-    Builder& tableHandle(
-        std::shared_ptr<connector::ConnectorTableHandle> tableHandle) {
+    Builder& tableHandle(connector::ConnectorTableHandlePtr tableHandle) {
       tableHandle_ = std::move(tableHandle);
       return *this;
     }
 
-    Builder& assignments(
-        std::unordered_map<
-            std::string,
-            std::shared_ptr<connector::ColumnHandle>> assignments) {
+    Builder& assignments(connector::ColumnHandleMap assignments) {
       assignments_ = std::move(assignments);
       return *this;
     }
@@ -944,12 +961,8 @@ class TableScanNode : public PlanNode {
    private:
     std::optional<PlanNodeId> id_;
     std::optional<RowTypePtr> outputType_;
-    std::optional<std::shared_ptr<connector::ConnectorTableHandle>>
-        tableHandle_;
-    std::optional<std::unordered_map<
-        std::string,
-        std::shared_ptr<connector::ColumnHandle>>>
-        assignments_;
+    std::optional<connector::ConnectorTableHandlePtr> tableHandle_;
+    std::optional<connector::ColumnHandleMap> assignments_;
   };
 
   bool supportsBarrier() const override {
@@ -969,13 +982,11 @@ class TableScanNode : public PlanNode {
     return true;
   }
 
-  const std::shared_ptr<connector::ConnectorTableHandle>& tableHandle() const {
+  const connector::ConnectorTableHandlePtr& tableHandle() const {
     return tableHandle_;
   }
 
-  const std::
-      unordered_map<std::string, std::shared_ptr<connector::ColumnHandle>>&
-      assignments() const {
+  const connector::ColumnHandleMap& assignments() const {
     return assignments_;
   }
 
@@ -988,13 +999,26 @@ class TableScanNode : public PlanNode {
   static PlanNodePtr create(const folly::dynamic& obj, void* context);
 
  private:
+#ifdef VELOX_ENABLE_BACKWARD_COMPATIBILITY
+  connector::ColumnHandleMap toColumnHandleMap(
+      const std::unordered_map<
+          std::string,
+          std::shared_ptr<connector::ColumnHandle>>& handles) {
+    connector::ColumnHandleMap constHandles;
+    for (const auto& [name, handle] : handles) {
+      constHandles.emplace(
+          name,
+          std::static_pointer_cast<const connector::ColumnHandle>(handle));
+    }
+    return constHandles;
+  }
+#endif
+
   void addDetails(std::stringstream& stream) const override;
 
   const RowTypePtr outputType_;
-  const std::shared_ptr<connector::ConnectorTableHandle> tableHandle_;
-  const std::
-      unordered_map<std::string, std::shared_ptr<connector::ColumnHandle>>
-          assignments_;
+  const connector::ConnectorTableHandlePtr tableHandle_;
+  const connector::ColumnHandleMap assignments_;
 };
 
 using TableScanNodePtr = std::shared_ptr<const TableScanNode>;
@@ -1325,7 +1349,7 @@ class TableWriteNode : public PlanNode {
       const RowTypePtr& columns,
       const std::vector<std::string>& columnNames,
       AggregationNodePtr aggregationNode,
-      std::shared_ptr<InsertTableHandle> insertTableHandle,
+      std::shared_ptr<const InsertTableHandle> insertTableHandle,
       bool hasPartitioningScheme,
       RowTypePtr outputType,
       connector::CommitStrategy commitStrategy,
@@ -1452,7 +1476,7 @@ class TableWriteNode : public PlanNode {
     std::optional<RowTypePtr> columns_;
     std::optional<std::vector<std::string>> columnNames_;
     std::optional<AggregationNodePtr> aggregationNode_;
-    std::optional<std::shared_ptr<InsertTableHandle>> insertTableHandle_;
+    std::optional<std::shared_ptr<const InsertTableHandle>> insertTableHandle_;
     std::optional<bool> hasPartitioningScheme_;
     std::optional<RowTypePtr> outputType_;
     std::optional<connector::CommitStrategy> commitStrategy_;
@@ -1482,7 +1506,7 @@ class TableWriteNode : public PlanNode {
     return columnNames_;
   }
 
-  const std::shared_ptr<InsertTableHandle>& insertTableHandle() const {
+  const std::shared_ptr<const InsertTableHandle>& insertTableHandle() const {
     return insertTableHandle_;
   }
 
@@ -1523,11 +1547,13 @@ class TableWriteNode : public PlanNode {
   const RowTypePtr columns_;
   const std::vector<std::string> columnNames_;
   const AggregationNodePtr aggregationNode_;
-  const std::shared_ptr<InsertTableHandle> insertTableHandle_;
+  const std::shared_ptr<const InsertTableHandle> insertTableHandle_;
   const bool hasPartitioningScheme_;
   const RowTypePtr outputType_;
   const connector::CommitStrategy commitStrategy_;
 };
+
+using TableWriteNodePtr = std::shared_ptr<const TableWriteNode>;
 
 class TableWriteMergeNode : public PlanNode {
  public:
@@ -1632,6 +1658,8 @@ class TableWriteMergeNode : public PlanNode {
   const RowTypePtr outputType_;
 };
 
+using TableWriteMergeNodePtr = std::shared_ptr<const TableWriteMergeNode>;
+
 /// For each input row, generates N rows with M columns according to
 /// specified 'projections'. 'projections' is an N x M matrix of expressions:
 /// a vector of N rows each having M columns. Each expression is either a
@@ -1734,6 +1762,8 @@ class ExpandNode : public PlanNode {
   const RowTypePtr outputType_;
   const std::vector<std::vector<TypedExprPtr>> projections_;
 };
+
+using ExpandNodePtr = std::shared_ptr<const ExpandNode>;
 
 /// Plan node used to implement aggregations over grouping sets. Duplicates
 /// the aggregation input for each set of grouping keys. The output contains
@@ -1903,6 +1933,8 @@ class GroupIdNode : public PlanNode {
   const std::string groupIdName_;
 };
 
+using GroupIdNodePtr = std::shared_ptr<const GroupIdNode>;
+
 class ExchangeNode : public PlanNode {
  public:
   ExchangeNode(
@@ -1988,6 +2020,8 @@ class ExchangeNode : public PlanNode {
   const RowTypePtr outputType_;
   const VectorSerde::Kind serdeKind_;
 };
+
+using ExchangeNodePtr = std::shared_ptr<const ExchangeNode>;
 
 class MergeExchangeNode : public ExchangeNode {
  public:
@@ -2088,6 +2122,8 @@ class MergeExchangeNode : public ExchangeNode {
   const std::vector<FieldAccessTypedExprPtr> sortingKeys_;
   const std::vector<SortOrder> sortingOrders_;
 };
+
+using MergeExchangeNodePtr = std::shared_ptr<const MergeExchangeNode>;
 
 class LocalMergeNode : public PlanNode {
  public:
@@ -2194,6 +2230,8 @@ class LocalMergeNode : public PlanNode {
   const std::vector<FieldAccessTypedExprPtr> sortingKeys_;
   const std::vector<SortOrder> sortingOrders_;
 };
+
+using LocalMergeNodePtr = std::shared_ptr<const LocalMergeNode>;
 
 /// Calculates partition number for each row of the specified vector.
 class PartitionFunction {
@@ -2417,6 +2455,8 @@ class LocalPartitionNode : public PlanNode {
   const std::vector<PlanNodePtr> sources_;
   const PartitionFunctionSpecPtr partitionFunctionSpec_;
 };
+
+using LocalPartitionNodePtr = std::shared_ptr<const LocalPartitionNode>;
 
 class PartitionedOutputNode : public PlanNode {
  public:
@@ -2646,6 +2686,8 @@ class PartitionedOutputNode : public PlanNode {
   const VectorSerde::Kind serdeKind_;
   const RowTypePtr outputType_;
 };
+
+using PartitionedOutputNodePtr = std::shared_ptr<const PartitionedOutputNode>;
 
 FOLLY_ALWAYS_INLINE std::ostream& operator<<(
     std::ostream& out,
@@ -3062,6 +3104,8 @@ class HashJoinNode : public AbstractJoinNode {
   const bool nullAware_;
 };
 
+using HashJoinNodePtr = std::shared_ptr<const HashJoinNode>;
+
 /// Represents inner/outer/semi/anti merge joins. Translates to an
 /// exec::MergeJoin operator. Assumes that both left and right input data is
 /// sorted on the join keys. A separate pipeline that puts its output into
@@ -3132,6 +3176,8 @@ class MergeJoinNode : public AbstractJoinNode {
   static PlanNodePtr create(const folly::dynamic& obj, void* context);
 };
 
+using MergeJoinNodePtr = std::shared_ptr<const MergeJoinNode>;
+
 struct IndexLookupCondition : public ISerializable {
   /// References to an index table column.
   FieldAccessTypedExprPtr key;
@@ -3151,6 +3197,7 @@ struct IndexLookupCondition : public ISerializable {
 
   virtual std::string toString() const = 0;
 };
+
 using IndexLookupConditionPtr = std::shared_ptr<IndexLookupCondition>;
 
 /// Represents IN-LIST index lookup condition: contains('list', 'key'). 'list'
@@ -3178,6 +3225,7 @@ struct InIndexLookupCondition : public IndexLookupCondition {
  private:
   void validate() const;
 };
+
 using InIndexLookupConditionPtr = std::shared_ptr<InIndexLookupCondition>;
 
 /// Represents BETWEEN index lookup condition: 'key' between 'lower' and
@@ -3213,6 +3261,7 @@ struct BetweenIndexLookupCondition : public IndexLookupCondition {
  private:
   void validate() const;
 };
+
 using BetweenIndexLookupConditionPtr =
     std::shared_ptr<BetweenIndexLookupCondition>;
 
@@ -3376,6 +3425,8 @@ class IndexLookupJoinNode : public AbstractJoinNode {
   const std::vector<IndexLookupConditionPtr> joinConditions_;
 };
 
+using IndexLookupJoinNodePtr = std::shared_ptr<const IndexLookupJoinNode>;
+
 /// Returns true if 'planNode' is index lookup join node.
 bool isIndexLookupJoin(const core::PlanNode* planNode);
 
@@ -3520,6 +3571,8 @@ class NestedLoopJoinNode : public PlanNode {
   const RowTypePtr outputType_;
 };
 
+using NestedLoopJoinNodePtr = std::shared_ptr<const NestedLoopJoinNode>;
+
 // Represents the 'SortBy' node in the plan.
 class OrderByNode : public PlanNode {
  public:
@@ -3661,6 +3714,8 @@ class OrderByNode : public PlanNode {
   const std::vector<PlanNodePtr> sources_;
 };
 
+using OrderByNodePtr = std::shared_ptr<const OrderByNode>;
+
 class TopNNode : public PlanNode {
  public:
   TopNNode(
@@ -3788,6 +3843,8 @@ class TopNNode : public PlanNode {
   const std::vector<PlanNodePtr> sources_;
 };
 
+using TopNNodePtr = std::shared_ptr<const TopNNode>;
+
 class LimitNode : public PlanNode {
  public:
   // @param isPartial Boolean indicating whether Limit node generates partial
@@ -3911,6 +3968,8 @@ class LimitNode : public PlanNode {
   const bool isPartial_;
   const std::vector<PlanNodePtr> sources_;
 };
+
+using LimitNodePtr = std::shared_ptr<const LimitNode>;
 
 /// Expands arrays and maps into separate columns. Arrays are expanded into a
 /// single column, and maps are expanded into two columns (key, value). Can be
@@ -4069,6 +4128,8 @@ class UnnestNode : public PlanNode {
   RowTypePtr outputType_;
 };
 
+using UnnestNodePtr = std::shared_ptr<const UnnestNode>;
+
 /// Checks that input contains at most one row. Return that row as is. If
 /// input is empty, returns a single row with all values set to null. If input
 /// contains more than one row raises an exception.
@@ -4137,6 +4198,8 @@ class EnforceSingleRowNode : public PlanNode {
 
   const std::vector<PlanNodePtr> sources_;
 };
+
+using EnforceSingleRowNodePtr = std::shared_ptr<const EnforceSingleRowNode>;
 
 /// Adds a new column named `idName` at the end of the input columns
 /// with unique int64_t value per input row.
@@ -4243,6 +4306,8 @@ class AssignUniqueIdNode : public PlanNode {
   RowTypePtr outputType_;
   std::shared_ptr<std::atomic_int64_t> uniqueIdCounter_;
 };
+
+using AssignUniqueIdNodePtr = std::shared_ptr<const AssignUniqueIdNode>;
 
 /// PlanNode used for evaluating Sql window functions.
 /// All window functions evaluated in the operator have the same
@@ -4491,6 +4556,8 @@ class WindowNode : public PlanNode {
   const RowTypePtr outputType_;
 };
 
+using WindowNodePtr = std::shared_ptr<const WindowNode>;
+
 /// Optimized version of a WindowNode for a single row_number function with an
 /// optional limit and no sorting.
 /// The output of this node contains all input columns followed by an optional
@@ -4625,6 +4692,8 @@ class RowNumberNode : public PlanNode {
   const RowTypePtr outputType_;
 };
 
+using RowNumberNodePtr = std::shared_ptr<const RowNumberNode>;
+
 /// The MarkDistinct operator marks unique rows based on distinctKeys.
 /// The result is put in a new markerName column alongside the original input.
 /// @param markerName Name of the output mask channel.
@@ -4734,6 +4803,8 @@ class MarkDistinctNode : public PlanNode {
 
   const RowTypePtr outputType_;
 };
+
+using MarkDistinctNodePtr = std::shared_ptr<const MarkDistinctNode>;
 
 /// Optimized version of a WindowNode for a single row_number function with a
 /// limit over sorted partitions.
@@ -4912,6 +4983,8 @@ class TopNRowNumberNode : public PlanNode {
 
   const RowTypePtr outputType_;
 };
+
+using TopNRowNumberNodePtr = std::shared_ptr<const TopNRowNumberNode>;
 
 class PlanNodeVisitorContext {
  public:
