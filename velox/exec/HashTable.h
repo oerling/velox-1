@@ -21,6 +21,7 @@
 #include "velox/exec/Operator.h"
 #include "velox/exec/RowContainer.h"
 #include "velox/exec/VectorHasher.h"
+#include "velox/common/base/BloomFilter.h"
 
 namespace facebook::velox::exec {
 
@@ -940,6 +941,8 @@ class HashTable : public BaseHashTable {
   // Shortcut for probe with normalized keys.
   void joinNormalizedKeyProbe(HashLookup& lookup);
 
+  void applyBloom(HashLookup& lookup);
+  
   void joinProbe2(HashLookup& lookup);
 
   void preprobeTags(HashLookup& lookup, int32_t begin, int32_t end);
@@ -1167,6 +1170,12 @@ class HashTable : public BaseHashTable {
   // entries.
   uint64_t single4SizeMask_{0};
 
+  char bloomBits_{0};
+  
+  BloomFilter<std::allocator<uint64_t>, 4> bloom4_;
+  
+  BloomFilter<std::allocator<uint64_t>, 8> bloom8_;
+  
   friend class ProbeState;
   friend test::HashTableTestHelper<ignoreNullKeys>;
 };

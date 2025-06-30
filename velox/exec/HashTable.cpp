@@ -632,14 +632,17 @@ void HashTable<ignoreNullKeys>::joinProbe(HashLookup& lookup) {
     return;
   }
   if (FLAGS_join_mode) {
+    applyBloom(lookup);
     joinProbe2(lookup);
     return;
   }
   if (hashMode_ == HashMode::kNormalizedKey) {
     populateNormalizedKeys(lookup, sizeBits_);
+    applyBloom(lookup);
     joinNormalizedKeyProbe(lookup);
     return;
   }
+  applyBloom(lookup);
   int32_t probeIndex = 0;
   int32_t numProbes = lookup.rows.size();
   const vector_size_t* rows = lookup.rows.data();
@@ -673,6 +676,33 @@ void HashTable<ignoreNullKeys>::joinProbe(HashLookup& lookup) {
   }
 }
 
+  template <bool ignoreNullKeys>
+  void HashTable<ignoreNullKeys>::applyBloom(HashLookup& lookup) {
+    int32_t numPassed = 0;
+    if (bloomBits_ == 0) {
+      return;
+    }
+    int32_t numProbe = lookup.rows.size();
+    auto* rowData = lookup.rows.data();
+    if (bloomBits_ == 4) {
+      for (auto i = 0; i < numProbe; ++i) {
+	auto r = rowData[i];
+	if (bloom4_.mayContain(lookup.hashes[r])) {
+	  rowData[numPassed++] = r;
+	}
+      }
+    }
+        if (bloomBits_ == 8) {
+      for (auto i = 0; i < numProbe; ++i) {
+	auto r = rowData[i];
+	if (bloom8_.mayContain(lookup.hashes[r])) {
+	  rowData[numPassed++] = r;
+	}
+      }
+    }
+    lookup.rows.resize(numPassed);
+  }
+  
 template <bool ignoreNullKeys>
 void HashTable<ignoreNullKeys>::arrayJoinProbe(HashLookup& lookup) {
   // Rows are nearly always consecutive.
@@ -761,7 +791,17 @@ void HashTable<ignoreNullKeys>::allocateTables(
   sizeBits_ = __builtin_popcountll(sizeMask_);
   checkHashBitsOverlap(spillInputStartPartitionBit);
   bucketOffsetMask_ = sizeMask_ & ~(kBucketSize - 1);
-  // The total size is 8 bytes per slot, in groups of 16 slots with 16 bytes of
+  if (ignoreNullKeys) {
+    if (FLAGS_bloom_bits == 4) {
+      bloomBits_ = 4;
+      bloom4_.reset(sizeMask_ >> 3);
+    } else if (FLAGS_bloom_bits == 8) {
+      bloomBits_ = 8;
+      bloom8_.reset(sizeMask_ >> 3);
+    }
+  }
+
+    // The total size is 8 bytes per slot, in groups of 16 slots with 16 bytes of
   // tags and 16 * 6 bytes of pointers and a padding of 16 bytes to round up the
   // cache line.
   const auto numPages =
@@ -1373,6 +1413,15 @@ void HashTable<ignoreNullKeys>::insertForJoin(
       arrayPushRow(groups[i], index);
     }
     return;
+  }
+  if (FLAGS_bloom_bits == 4) {
+    for (auto i = 0; i < numGroups; ++i) {
+      bloom4_.atomicInsert(hashes[i]);
+    }
+  } else if (FLAGS_bloom_bits == 8) {
+    for (auto i = 0; i < numGroups; ++i) {
+      bloom8_.atomicInsert(hashes[i]);
+    }
   }
   if (FLAGS_join_mode >= 2) {
     insertForJoinSingles(groups, hashes, numGroups, partitionInfo);

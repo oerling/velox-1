@@ -733,25 +733,12 @@ void HashTable<ignoreNullKeys>::probeBatchSinglesSimd(
   }
 }
 
-void ck(HashLookup& lookup, int32_t& hit) {
-  auto v1 = lookup.hashers[0]->decodedVector().base()->as<FlatVector<int64_t>>();
-  auto v2 = lookup.hashers[1]->decodedVector().base()->as<FlatVector<int64_t>>();
-  for (auto i = 0;  i < v1->size(); ++i) {
-    if (v1->valueAt(i) == 1493 &&
-	v2->valueAt(i) == 1494) {
-      hit = i;
-      std::cout << "bing " << i << std::endl;
-    }
-  }
-}
-
 template <bool ignoreNullKeys>
 void HashTable<ignoreNullKeys>::joinProbe2(HashLookup& lookup) {
   if (!lookup.makeDenseHits) {
     std::fill(lookup.hits.begin(), lookup.hits.end(), nullptr);
   }
   int32_t hit = -1;
-  ck(lookup, hit);
   int32_t batch = FLAGS_probe_batch;
   auto numProbe = lookup.rows.size();
   for (auto begin = 0; begin < numProbe; begin += batch) {
