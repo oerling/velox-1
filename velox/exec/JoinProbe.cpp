@@ -1,4 +1,3 @@
-
 constexpr int32_t kMaxProbeBatch = 2048;
 constexpr uint32_t kHitIdxMask = 0xe0000000U;
 constexpr uint32_t kRowNumberMask = ~kHitIdxMask;
@@ -8,6 +7,7 @@ constexpr uint8_t kNoMoreMatches = 255;
 
 struct ProbeBatchState {
   bool useRowMask{false};
+  bool isLastCompare{false};
   // Number of build side rows to look at.
   int32_t numToCompare;
 
@@ -65,11 +65,26 @@ FOLLY_ALWAYS_INLINE void recordSimdHits(
       return;
     }
     orgIndices.store_unaligned(&state.keyIdxToCompare[numPassed]);
-    numPassed += 8;
+    // Move the rows downward too for the next key. No need to do for the last key.
+    if (state.isLastCompare) {
+      auto rowPtr = reinterpret_cast<int64_t*>(&state.rowToCompare);
+      auto r1 = xsimd::batch<int64_t>::load_unaligned(rowPtr + i);
+      auto r2 = xsimd::batch<int64_t>::load_unaligned(rowPtr + i + 4);
+      r1.store_unaligned(rowPtr + numPassed);
+      r2.store_unaligned(rowPtr + numPassed + 4);
+    }
+      numPassed += 8;
     return;
   }
   simd::filter(orgIndices, hits)
       .store_unaligned(&state.keyIdxToCompare[numPassed]);
+  if (!state.isLastCompare) {
+    auto rowPtr = reinterpret_cast<int64_t*>(&state.rowToCompare);
+    auto r1 = xsimd::batch<int64_t>::load_unaligned(rowPtr + i);
+    auto r2 = xsimd::batch<int64_t>::load_unaligned(rowPtr + i + 4);
+    simd::filter(r1, hits & 0xf).store_unaligned(rowPtr + numPassed);
+    simd::filter(r2, hits >> 4).store_unaligned(rowPtr + numPassed + __builtin_popcount(hits & 0xf));
+  }
   numPassed += __builtin_popcount(hits);
   uint16_t misses = hits ^ 0xff;
   if (useRowMask) {
@@ -79,15 +94,15 @@ FOLLY_ALWAYS_INLINE void recordSimdHits(
   if (misses) {
     if (state.bits) {
       while (misses) {
-	auto nth = bits::getAndClearLastSetBit(misses);
-	if (state.bits[i + nth] != kNoMoreMatches) {
-	  state.keyIdxToAdvance[state.numToAdvance++] =
-	    state.keyIdxToCompare[i + nth];
-	}
+        auto nth = bits::getAndClearLastSetBit(misses);
+        if (state.bits[i + nth] != kNoMoreMatches) {
+          state.keyIdxToAdvance[state.numToAdvance++] =
+              state.keyIdxToCompare[i + nth];
+        }
       }
     } else {
       simd::filter(orgIndices, misses)
-	.store_unaligned(&state.keyIdxToAdvance[state.numToAdvance]);
+          .store_unaligned(&state.keyIdxToAdvance[state.numToAdvance]);
       state.numToAdvance += __builtin_popcount(misses);
     }
   }
@@ -114,12 +129,10 @@ int32_t compareKeysSimd32(
     }
     auto first4 = simd::getHalf<int64_t, false>(indices);
     auto probes1 = simd::gather<int64_t, int64_t, 4>(
-        reinterpret_cast<const int64_t*>(probeValues),
-        first4);
+        reinterpret_cast<const int64_t*>(probeValues), first4);
     auto second4 = simd::getHalf<int64_t, true>(indices);
     auto probes2 = simd::gather<int64_t, int64_t, 4>(
-        reinterpret_cast<const int64_t*>(probeValues),
-        second4);
+        reinterpret_cast<const int64_t*>(probeValues), second4);
     auto rows1 = simd::loadGatherIndices<int64_t, int64_t>(
         reinterpret_cast<int64_t*>(&state.rowToCompare[i]));
     auto rows2 = simd::loadGatherIndices<int64_t, int64_t>(
@@ -161,12 +174,10 @@ int32_t compareKeysSimd64(
     }
     auto first4 = simd::getHalf<int64_t, false>(indices);
     auto probes1 = simd::gather<int64_t, int64_t, 8>(
-        reinterpret_cast<const int64_t*>(probeValues),
-        first4);
+        reinterpret_cast<const int64_t*>(probeValues), first4);
     auto second4 = simd::getHalf<int64_t, true>(indices);
     auto probes2 = simd::gather<int64_t, int64_t, 8>(
-        reinterpret_cast<const int64_t*>(probeValues),
-        second4);
+        reinterpret_cast<const int64_t*>(probeValues), second4);
     auto rows1 = simd::loadGatherIndices<int64_t, int64_t>(
         reinterpret_cast<int64_t*>(&state.rowToCompare[i]));
     auto rows2 = simd::loadGatherIndices<int64_t, int64_t>(
@@ -314,7 +325,7 @@ void HashTable<ignoreNullKeys>::preprobeSingles(
   for (auto i = begin; i < end; ++i) {
     auto row = lookup.rows[i];
     auto hash = lookup.hashes[row];
-    __builtin_prefetch(&itemAt(hash &singleSizeMask_));
+    __builtin_prefetch(&itemAt(hash & singleSizeMask_));
   }
 }
 
@@ -340,6 +351,7 @@ void HashTable<ignoreNullKeys>::compareAllKeys(
     if (state.numToCompare == 0) {
       return;
     }
+    state.isLastCompare = i == lookup.hashers.size() - 1;
     auto& decoded = lookup.hashers[i]->decodedVector();
     const BaseVector* base = decoded.base();
     auto columnOffset = rows_->columnAt(i).offset();
@@ -471,7 +483,7 @@ void HashTable<ignoreNullKeys>::probeBatchSingles(
       auto hash = lookup.hashes[row];
       auto offset = hash & singleSizeMask_;
       for (;;) {
-      auto item = itemAt(offset);
+        auto item = itemAt(offset);
         if (!item) {
           break;
         }
@@ -482,10 +494,10 @@ void HashTable<ignoreNullKeys>::probeBatchSingles(
           if (prefetchRow) {
             __builtin_prefetch(state.rowToCompare[state.numToCompare]);
           }
-	  ++state.numToCompare;
-	  break;
+          ++state.numToCompare;
+          break;
         }
-	offset = incrementHashSingle(lookup.hashes[row]) & singleSizeMask_;
+        offset = incrementHashSingle(lookup.hashes[row]) & singleSizeMask_;
       }
     }
     compareAllKeys(lookup, state);
@@ -726,6 +738,7 @@ void HashTable<ignoreNullKeys>::joinProbe2(HashLookup& lookup) {
   if (!lookup.makeDenseHits) {
     std::fill(lookup.hits.begin(), lookup.hits.end(), nullptr);
   }
+  int32_t hit = -1;
   int32_t batch = FLAGS_probe_batch;
   auto numProbe = lookup.rows.size();
   for (auto begin = 0; begin < numProbe; begin += batch) {
@@ -744,6 +757,11 @@ void HashTable<ignoreNullKeys>::joinProbe2(HashLookup& lookup) {
         break;
       default:
         VELOX_UNREACHABLE();
+    }
+  }
+  if (hit != -1) {
+    if (!lookup.hits[hit]) {
+      std::cout << "<Missed hit at " << hit << std::endl;
     }
   }
 }

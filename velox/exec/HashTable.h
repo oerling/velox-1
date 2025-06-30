@@ -21,6 +21,7 @@
 #include "velox/exec/Operator.h"
 #include "velox/exec/RowContainer.h"
 #include "velox/exec/VectorHasher.h"
+#include "velox/common/base/BloomFilter.h"
 
 namespace facebook::velox::exec {
 
@@ -107,7 +108,7 @@ struct HashLookup {
   /// must be >= bits[i' to be looked at. 255 means we know there are
   /// no more possible tag matches.
   raw_vector<uint8_t> nthBit;
-  
+
   bool makeDenseHits{false};
 
   /// Probe vector row number for each hit if 'makeDenseHits' is true.
@@ -115,7 +116,7 @@ struct HashLookup {
 };
 
 struct ProbeBatchState;
-  
+
 struct HashTableStats {
   int64_t capacity{0};
   int64_t numRehashes{0};
@@ -152,7 +153,7 @@ class BaseHashTable {
 
   static constexpr uint8_t kPointerSignificantBits = 48;
   static constexpr uint64_t kPointerMask =
-    bits::lowMask(kPointerSignificantBits);
+      bits::lowMask(kPointerSignificantBits);
   static constexpr int32_t kPointerSize = kPointerSignificantBits / 8;
 
   /// The name of the runtime stats collected and reported by operators that use
@@ -866,11 +867,11 @@ class HashTable : public BaseHashTable {
       TableInsertPartitionInfo* partitionInfo);
 
   void insertForJoinSingles(
-    char** groups,
-    uint64_t* hashes,
-    int32_t numGroups,
-    TableInsertPartitionInfo* partitionInfo);
-  
+      char** groups,
+      uint64_t* hashes,
+      int32_t numGroups,
+      TableInsertPartitionInfo* partitionInfo);
+
   // Inserts 'numGroups' entries into 'this'. 'groups' point to
   // contents in a RowContainer owned by 'this'. 'hashes' are the hash
   // numbers or array indices (if kArray mode) for each
@@ -940,24 +941,22 @@ class HashTable : public BaseHashTable {
   // Shortcut for probe with normalized keys.
   void joinNormalizedKeyProbe(HashLookup& lookup);
 
+  void applyBloom(HashLookup& lookup);
+  
   void joinProbe2(HashLookup& lookup);
 
   void preprobeTags(HashLookup& lookup, int32_t begin, int32_t end);
-  
+
   void probeBatchTags(HashLookup& lookup, int32_t begin, int32_t end);
 
   void preprobeSingles(HashLookup& lookup, int32_t begin, int32_t end);
-  
+
   void probeBatchSingles(HashLookup& lookup, int32_t begin, int32_t end);
 
-    void probeBatchSinglesSimd(HashLookup& lookup, int32_t begin, int32_t end);
+  void probeBatchSinglesSimd(HashLookup& lookup, int32_t begin, int32_t end);
 
+  void compareAllKeys(HashLookup& lookup, ProbeBatchState& state);
 
-  
-  void compareAllKeys(
-    HashLookup& lookup,
-    ProbeBatchState& state);
-  
   // Returns the total size of the variable size 'columns' in 'row'.
   // NOTE: No checks are done in the method for performance considerations.
   // Caller needs to make sure only variable size columns are inside of
@@ -967,7 +966,7 @@ class HashTable : public BaseHashTable {
       const char* row) const;
   void incrementHashTags(uint64_t& h);
   uint64_t incrementHashSingle(uint64_t& h, int32_t n = 1);
-  
+
   // Adds a row to a hash join table in kArray hash mode. Returns true
   // if a new entry was made and false if the row was added to an
   // existing set of rows with the same key.
@@ -1064,8 +1063,9 @@ class HashTable : public BaseHashTable {
     }
   }
 
-  uint64_t&itemAt(uint64_t offset) {
-    return *reinterpret_cast<uint64_t*>(reinterpret_cast<char*>(table_) + offset);
+  uint64_t& itemAt(uint64_t offset) {
+    return *reinterpret_cast<uint64_t*>(
+        reinterpret_cast<char*>(table_) + offset);
   }
 
   // True if 16 high bits match.
@@ -1078,11 +1078,11 @@ class HashTable : public BaseHashTable {
     return (hash & ~kPointerMask) | reinterpret_cast<uint64_t>(ptr);
   }
 
-  template<typename T>
+  template <typename T>
   T itemAs(uint64_t item) {
     return reinterpret_cast<T>(item & kPointerMask);
   }
-  
+
   // We don't want any overlap in the bit ranges used by bucket index and those
   // used by spill partitioning; otherwise because we receive data from only one
   // partition, the overlapped bits would be the same and only a fraction of the
@@ -1164,11 +1164,18 @@ class HashTable : public BaseHashTable {
   bool disableRangeArrayHash_{false};
 
   // Size mask when treating the table as an array of 64 bit entries.
-  uint64_t singleSizeMask_{0}; 
+  uint64_t singleSizeMask_{0};
 
-  // Size mask when treating the table as a set of simd vectors of 4 64 bit entries.
+  // Size mask when treating the table as a set of simd vectors of 4 64 bit
+  // entries.
   uint64_t single4SizeMask_{0};
-    
+
+  char bloomBits_{0};
+  
+  BloomFilter<std::allocator<uint64_t>, 4> bloom4_;
+  
+  BloomFilter<std::allocator<uint64_t>, 8> bloom8_;
+  
   friend class ProbeState;
   friend test::HashTableTestHelper<ignoreNullKeys>;
 };

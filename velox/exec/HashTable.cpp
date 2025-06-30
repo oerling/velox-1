@@ -27,17 +27,28 @@
 
 #include <iostream>
 
-DEFINE_int32(hash_load_pct, 87, "Max load factor of join or aggregation hash table");
+DEFINE_int32(
+    hash_load_pct,
+    87,
+    "Max load factor of join or aggregation hash table");
 
-DEFINE_int32(join_mode, 0, "Select alternate join mode: 0 tags 1 batch tags, 2 singles, 3 singles simd");
+DEFINE_int32(
+    join_mode,
+    0,
+    "Select alternate join mode: 0 tags 1 batch tags, 2 singles, 3 singles simd");
 
 DEFINE_bool(simd_compare, false, "Use simd in key comparison");
 
-	    DEFINE_int32(probe_batch, 256, "Number of probes expected to fit in cache");
+DEFINE_int32(probe_batch, 256, "Number of probes expected to fit in cache");
 
 DEFINE_int32(hash_prefetch_mode, 0, "Prefetch in join_mode > 0");
 
-DEFINE_int32(array_hash_max_size, facebook::velox::exec::BaseHashTable::kArrayHashMaxSize, "Max bytes in an array mode hash table");
+DEFINE_int32(
+    array_hash_max_size,
+    facebook::velox::exec::BaseHashTable::kArrayHashMaxSize,
+    "Max bytes in an array mode hash table");
+
+DEFINE_int32(bloom_bits, 0, "Bloom filter for hash join: 0, 4 or 8 bits per entry");
 
 using facebook::velox::common::testutil::TestValue;
 
@@ -95,9 +106,9 @@ HashTable<ignoreNullKeys>::HashTable(
 
 template <bool ignoreNullKeys>
 HashTable<ignoreNullKeys>::~HashTable() {
-  //std::cout << toString();
+  // std::cout << toString();
 }
-  
+
 class ProbeState {
  public:
   enum class Operation { kProbe, kInsert, kErase };
@@ -445,9 +456,9 @@ constexpr int32_t kPrefetchSize = 64;
 inline uint64_t mixNormalizedKey(uint64_t k, uint8_t bits) {
   uint64_t h = simd::crc32U64(19, k);
   return (h | static_cast<uint64_t>(simd::crc32U64(h, k >> 32)) << 32);
-  //auto h = bits::hashMix(19, k);
-  //return h ^ (h >> 21);
-  //return folly::hasher<uint64_t>()(k);
+  // auto h = bits::hashMix(19, k);
+  // return h ^ (h >> 21);
+  // return folly::hasher<uint64_t>()(k);
 }
 
 void populateNormalizedKeys(HashLookup& lookup, int8_t sizeBits) {
@@ -621,14 +632,17 @@ void HashTable<ignoreNullKeys>::joinProbe(HashLookup& lookup) {
     return;
   }
   if (FLAGS_join_mode) {
+    applyBloom(lookup);
     joinProbe2(lookup);
     return;
   }
   if (hashMode_ == HashMode::kNormalizedKey) {
     populateNormalizedKeys(lookup, sizeBits_);
+    applyBloom(lookup);
     joinNormalizedKeyProbe(lookup);
     return;
   }
+  applyBloom(lookup);
   int32_t probeIndex = 0;
   int32_t numProbes = lookup.rows.size();
   const vector_size_t* rows = lookup.rows.data();
@@ -662,6 +676,33 @@ void HashTable<ignoreNullKeys>::joinProbe(HashLookup& lookup) {
   }
 }
 
+  template <bool ignoreNullKeys>
+  void HashTable<ignoreNullKeys>::applyBloom(HashLookup& lookup) {
+    int32_t numPassed = 0;
+    if (bloomBits_ == 0) {
+      return;
+    }
+    int32_t numProbe = lookup.rows.size();
+    auto* rowData = lookup.rows.data();
+    if (bloomBits_ == 4) {
+      for (auto i = 0; i < numProbe; ++i) {
+	auto r = rowData[i];
+	if (bloom4_.mayContain(lookup.hashes[r])) {
+	  rowData[numPassed++] = r;
+	}
+      }
+    }
+        if (bloomBits_ == 8) {
+      for (auto i = 0; i < numProbe; ++i) {
+	auto r = rowData[i];
+	if (bloom8_.mayContain(lookup.hashes[r])) {
+	  rowData[numPassed++] = r;
+	}
+      }
+    }
+    lookup.rows.resize(numPassed);
+  }
+  
 template <bool ignoreNullKeys>
 void HashTable<ignoreNullKeys>::arrayJoinProbe(HashLookup& lookup) {
   // Rows are nearly always consecutive.
@@ -750,7 +791,17 @@ void HashTable<ignoreNullKeys>::allocateTables(
   sizeBits_ = __builtin_popcountll(sizeMask_);
   checkHashBitsOverlap(spillInputStartPartitionBit);
   bucketOffsetMask_ = sizeMask_ & ~(kBucketSize - 1);
-  // The total size is 8 bytes per slot, in groups of 16 slots with 16 bytes of
+  if (ignoreNullKeys) {
+    if (FLAGS_bloom_bits == 4) {
+      bloomBits_ = 4;
+      bloom4_.reset(sizeMask_ >> 3);
+    } else if (FLAGS_bloom_bits == 8) {
+      bloomBits_ = 8;
+      bloom8_.reset(sizeMask_ >> 3);
+    }
+  }
+
+    // The total size is 8 bytes per slot, in groups of 16 slots with 16 bytes of
   // tags and 16 * 6 bytes of pointers and a padding of 16 bytes to round up the
   // cache line.
   const auto numPages =
@@ -784,7 +835,6 @@ uint64_t HashTable<ignoreNullKeys>::rehashSize(int64_t size) {
   return size - (size / 100) * (100 - FLAGS_hash_load_pct);
 }
 
- 
 template <bool ignoreNullKeys>
 void HashTable<ignoreNullKeys>::checkSize(
     int32_t numNew,
@@ -1293,9 +1343,8 @@ FOLLY_ALWAYS_INLINE void HashTable<ignoreNullKeys>::insertForJoinWithPrefetch(
   }
 }
 
-
 template <bool ignoreNullKeys>
-  void HashTable<ignoreNullKeys>::insertForJoinSingles(
+void HashTable<ignoreNullKeys>::insertForJoinSingles(
     char** groups,
     uint64_t* hashes,
     int32_t numGroups,
@@ -1305,41 +1354,50 @@ template <bool ignoreNullKeys>
   singleSizeMask_ = bucketOffsetMask_ | 0xf8;
   // Rounds to multiple of 32.
   single4SizeMask_ = singleSizeMask_ & ~31UL;
-  for (auto i = 0; i < numGroups; ++i) {
-    auto hash = hashes[i];
-    auto offset = hash & singleSizeMask_;
-    bool groupsOf4 = useGroupsOf4;
-    for (;;) {
-      auto item = itemAt(offset);
-      if (!item) {
-	itemAt(offset) = pointerAndTag(hash, groups[i]);
-	break;
-      } else if (tagMatch(item, hash)) {
-	  char* existing = itemAs<char*>(item);
-	  if (compareKeys(groups[i], existing)) {
-	    pushNext(existing, groups[i]);
-	    break;
-	  }
-      }
-      if (groupsOf4) {
-	auto bucketStart = hash & single4SizeMask_;
-	if (offset == bucketStart) {
-	  offset += 8;
-	} else {
-	  offset = bucketStart;
-	}
-	groupsOf4 = false;
-      } else {
-	offset = (offset + sizeof(uint64_t)) & singleSizeMask_;
-	if (partitionInfo != nullptr && !partitionInfo->inRange(offset / 128)) {
-	  partitionInfo->addOverflow(groups[i]);
-	  break;
-	}
+  for (auto start = 0; start < numGroups; start += FLAGS_probe_batch) {
+    auto end = std::min<int32_t>(start + FLAGS_probe_batch, numGroups);
+    for (auto i = start; i < end; ++i) {
+      auto hash = hashes[i];
+      auto offset = hash & singleSizeMask_;
+      __builtin_prefetch(&itemAt(offset));
+    }
+    for (auto i = start; i < end; ++i) {
+      auto hash = hashes[i];
+      auto offset = hash & singleSizeMask_;
+      bool groupsOf4 = useGroupsOf4;
+      for (;;) {
+        auto item = itemAt(offset);
+        if (!item) {
+          itemAt(offset) = pointerAndTag(hash, groups[i]);
+          break;
+        } else if (tagMatch(item, hash)) {
+          char* existing = itemAs<char*>(item);
+          if (compareKeys(groups[i], existing)) {
+            pushNext(existing, groups[i]);
+            break;
+          }
+        }
+        if (groupsOf4) {
+          auto bucketStart = hash & single4SizeMask_;
+          if (offset == bucketStart) {
+            offset += 8;
+          } else {
+            offset = bucketStart;
+          }
+          groupsOf4 = false;
+        } else {
+          offset = (offset + sizeof(uint64_t)) & singleSizeMask_;
+          if (partitionInfo != nullptr &&
+              !partitionInfo->inRange(offset)) {
+            partitionInfo->addOverflow(groups[i]);
+            break;
+          }
+        }
       }
     }
   }
 }
-	
+  
 template <bool ignoreNullKeys>
 void HashTable<ignoreNullKeys>::insertForJoin(
     char** groups,
@@ -1355,6 +1413,15 @@ void HashTable<ignoreNullKeys>::insertForJoin(
       arrayPushRow(groups[i], index);
     }
     return;
+  }
+  if (FLAGS_bloom_bits == 4) {
+    for (auto i = 0; i < numGroups; ++i) {
+      bloom4_.atomicInsert(hashes[i]);
+    }
+  } else if (FLAGS_bloom_bits == 8) {
+    for (auto i = 0; i < numGroups; ++i) {
+      bloom8_.atomicInsert(hashes[i]);
+    }
   }
   if (FLAGS_join_mode >= 2) {
     insertForJoinSingles(groups, hashes, numGroups, partitionInfo);
@@ -1593,7 +1660,10 @@ void HashTable<ignoreNullKeys>::decideHashMode(
     }
   }
 
-  if (rangesWithReserve < (FLAGS_array_hash_max_size ? FLAGS_array_hash_max_size : FLAGS_array_hash_max_size) && !disableRangeArrayHash_) {
+  if (rangesWithReserve < (FLAGS_array_hash_max_size
+                               ? FLAGS_array_hash_max_size
+                               : FLAGS_array_hash_max_size) &&
+      !disableRangeArrayHash_) {
     std::fill(useRange.begin(), useRange.end(), true);
     capacity_ = setHasherMode(hashers_, useRange, rangeSizes, distinctSizes);
     setHashMode(HashMode::kArray, numNew, spillInputStartPartitionBit);
@@ -1664,9 +1734,11 @@ template <bool ignoreNullKeys>
 std::string HashTable<ignoreNullKeys>::toString() {
   std::stringstream out;
   out << "[HashTable keys: " << hashers_.size()
-      << " hash mode: " << modeString(hashMode_) << (singleSizeMask_ ? " Singles " : "") << " capacity: " << capacity_
+      << " hash mode: " << modeString(hashMode_)
+      << (singleSizeMask_ ? " Singles " : "") << " capacity: " << capacity_
       << " distinct count: " << numDistinct_
-      << " tombstones count: " << numTombstones_ << "]" << (hasDuplicates_ ? " has duplicates" : " no duplicates");
+      << " tombstones count: " << numTombstones_ << "]"
+      << (hasDuplicates_ ? " has duplicates" : " no duplicates");
   if (table_ == nullptr) {
     out << " (no table)";
   }
@@ -1706,13 +1778,13 @@ std::string HashTable<ignoreNullKeys>::toString() {
     int64_t numBuckets[sizeof(TagVector) + 1] = {};
     if (table_) {
       for (int64_t bucketOffset = 0; bucketOffset < sizeMask_;
-	   bucketOffset += kBucketSize) {
-	auto tags = loadTags(bucketOffset);
-	auto filled = simd::toBitMask(tags != TagVector::broadcast(0));
-	auto numOccupied = __builtin_popcount(filled);
-	
-	++numBuckets[numOccupied];
-	occupied += numOccupied;
+           bucketOffset += kBucketSize) {
+        auto tags = loadTags(bucketOffset);
+        auto filled = simd::toBitMask(tags != TagVector::broadcast(0));
+        auto numOccupied = __builtin_popcount(filled);
+
+        ++numBuckets[numOccupied];
+        occupied += numOccupied;
       }
     }
     out << "Total buckets: " << (sizeMask_ / kBucketSize + 1) << std::endl;
@@ -2198,7 +2270,7 @@ void HashTable<ignoreNullKeys>::checkConsistency() const {
 }
 
 #include "velox/exec/JoinProbe.cpp"
-  
+
 template class HashTable<true>;
 template class HashTable<false>;
 

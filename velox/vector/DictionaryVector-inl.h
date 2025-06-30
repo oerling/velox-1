@@ -73,7 +73,7 @@ DictionaryVector<T>::DictionaryVector(
     std::optional<bool> isSorted,
     std::optional<ByteCount> representedBytes,
     std::optional<ByteCount> storageByteCount,
-				      bool ascendingUnique)
+    bool ascendingUnique)
     : SimpleVector<T>(
           pool,
           dictionaryValues->type(),
