@@ -30,7 +30,7 @@ namespace facebook::velox {
 // expected entry, we get ~2% false positives. 'hashInput' determines
 // if the value added or checked needs to be hashed. If this is false,
 // we assume that the input is already a 64 bit hash number.
-template <typename Allocator = std::allocator<uint64_t>>
+template <typename Allocator = std::allocator<uint64_t>, int8_t kBits = 4>
 class BloomFilter {
  public:
   explicit BloomFilter() : bits_{Allocator()} {}
@@ -40,8 +40,8 @@ class BloomFilter {
   // entries. Drops any prior content.
   void reset(int32_t capacity) {
     bits_.clear();
-    // 2 bytes per value.
-    bits_.resize(std::max<int32_t>(4, bits::nextPowerOfTwo(capacity) / 4));
+    bits_.resize(std::max<int32_t>(
+        4, bits::nextPowerOfTwo(capacity) / (kBits == 8 ? 8 : 16)));
   }
 
   bool isSet() const {
@@ -53,6 +53,14 @@ class BloomFilter {
   // folly::hasher<InputType>()(value).
   void insert(uint64_t value) {
     set(bits_.data(), bits_.size(), value);
+  }
+
+  void atomicInsert(uint64_t value) {
+    atomicSet(bits_.data(), bits_.size(), value);
+  }
+
+  std::vector<uint64_t, Allocator>& bits() {
+    return bits_;
   }
 
   // Input is hashed uint64_t value, optional hash function is
@@ -103,6 +111,9 @@ class BloomFilter {
   // 64-bit number. We combine these to get a 64-bit number with up to 4 bits
   // set.
   inline static uint64_t bloomMask(uint64_t hashCode) {
+    if (kBits == 4) {
+      return (1L << (hashCode & 63)) | (1L << ((hashCode >> 6) & 63));
+    }
     return (1L << (hashCode & 63)) | (1L << ((hashCode >> 6) & 63)) |
         (1L << ((hashCode >> 12) & 63)) | (1L << ((hashCode >> 18) & 63));
   }
@@ -118,6 +129,13 @@ class BloomFilter {
     auto mask = bloomMask(hashCode);
     auto index = bloomIndex(bloomSize, hashCode);
     bloom[index] |= mask;
+  }
+
+  inline static void
+  atomicSet(uint64_t* bloom, int32_t bloomSize, uint64_t hashCode) {
+    auto mask = bloomMask(hashCode);
+    auto index = bloomIndex(bloomSize, hashCode);
+    reinterpret_cast<std::atomic<uint64_t>*>(bloom)[index] |= mask;
   }
 
   inline static bool

@@ -695,4 +695,41 @@ TEST_F(SimdUtilTest, randomStringStrStr) {
   }
 }
 
+  namespace {
+    bool isGteScalar(const int64_t* data, int32_t n) {
+      for (auto i = 0; i < n - 1; ++i) {
+	if (data[i] > data[i + 1]) {
+	  return false;
+	}
+      }
+      return true;
+    }
+
+    bool isGte(const int64_t* data, int32_t n) {
+      // 5 elements is the minimum for SIMD check.
+      int32_t endGroups = ((n - 1) / 4) * 4;
+      for (auto i = 0; i < endGroups; i += 4) {
+	auto left = xsimd::batch<int64_t>::load_unaligned(data + i);
+	auto right = xsimd::batch<int64_t>::load_unaligned(data + i + 1);
+	if (simd::toBitMask(right < left)) {
+	  return false;
+	}
+      }
+      return isGteScalar(data + endGroups, n - endGroups);
+    }
+  }
+
+  TEST(Gte, isGte) {
+    int64_t data[] = {1, 2, 4, 4, 7, 9, 10, 11, 18, 20, 22, 22, 33};
+    EXPECT_TRUE(isGte(data, sizeof(data) / sizeof(data[0])));
+    std::swap(data[4], data[5]);
+    EXPECT_FALSE(isGte(data, sizeof(data) / sizeof(data[0])));
+    
+  }
+
+  
+  
 } // namespace
+
+
+

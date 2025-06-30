@@ -15,15 +15,108 @@
  */
 
 #include "velox/common/base/BloomFilter.h"
+#include "velox/common/base/AsyncSource.h"
+#include "velox/common/base/SimdUtil.h"
+#include "velox/common/time/Timer.h"
 
 #include <folly/Hash.h>
 #include <folly/Random.h>
+
+#include <folly/executors/CPUThreadPoolExecutor.h>
 #include <gtest/gtest.h>
 #include <unordered_set>
+#include "fmt/format.h"
 
 using namespace facebook::velox;
 
-class BloomFilterTest : public ::testing::Test {};
+class BloomFilterTest : public ::testing::Test {
+ protected:
+  void SetUp() override {
+    for (auto i = 0; i < 64; ++i) {
+      masks[i] = 1UL << i;
+    }
+  }
+  template <typename T>
+  int8_t low(T& p, int32_t i) {
+    return reinterpret_cast<char*>(&p)[i * 8];
+  }
+
+  template <int8_t bits>
+  void meter(int32_t numEntries, int32_t threads = 1) {
+    // Insert even values, test all values. Measure false positives.
+    if (!executor_) {
+      executor_ = std::make_unique<folly::CPUThreadPoolExecutor>(64);
+    }
+    auto bloomSize = bits::nextPowerOfTwo(numEntries);
+    std::vector<int64_t> toInsert(numEntries);
+    std::vector<int64_t> toProbe(numEntries * 2);
+    for (auto i = 0; i < numEntries; ++i) {
+      toInsert[i] = i * 2;
+      toProbe[i * 2] = i * 2;
+      toProbe[i * 2 + 1] = i * 2 + 1;
+    }
+    BloomFilter<std::allocator<uint64_t>, bits> bloom;
+    bloom.reset(bloomSize);
+    uint64_t serialBuild = 0;
+    uint64_t parallelBuild = 0;
+    uint64_t serialProbe = 0;
+    {
+      ClockTimer t(serialBuild);
+      for (auto i = 0; i < numEntries; ++i) {
+        bloom.insert(simd::crcHash64(toInsert[i]));
+      }
+    }
+    bloom.reset(bloomSize);
+    uint64_t sizeMask = bloom.bits().size() - 1;
+    {
+      ClockTimer t(parallelBuild);
+      std::vector<std::shared_ptr<AsyncSource<bool>>> workItems;
+      for (auto start = 0; start < numEntries; start += numEntries / 32) {
+        auto end = start + numEntries / 32;
+        auto item = std::make_shared<AsyncSource<bool>>([start, end, sizeMask, &toInsert, &bloom]() {
+          for (auto i = start; i < end; ++i) {
+            auto h = simd::crcHash64(toInsert[i]);
+	    bloom.atomicInsert(h);
+          }
+          return std::make_unique<bool>(true);
+        });
+        workItems.push_back(item);
+      }
+      for (auto& item : workItems) {
+	executor_->add([it = item]() { it->prepare(); });
+		
+      }
+      for (auto& item : workItems) {
+        item->move();
+      }
+    }
+    std::vector<int32_t> hits(numEntries * 2);
+    int32_t numHits = 0;
+    {
+      ClockTimer t(serialProbe);
+      for (auto i = 0; i < toProbe.size(); ++i) {
+        if (bloom.mayContain(simd::crcHash64(toProbe[i]))) {
+          hits[numHits++] = i;
+        } else {
+	  if ((i & 1) == 0) {
+	    FAIL() << "Every even entry must be a hit";
+	  }
+	}
+      }
+    }
+    std::cout << fmt::format(
+        "{} entries/{} bits: false%={} serial insert={} parallel insert={} serial probe={}\n",
+        numEntries,
+        bits,
+        100.0 * (numHits - numEntries) / numEntries,
+        serialBuild / numEntries,
+        parallelBuild / numEntries,
+        serialProbe / (numEntries * 2));
+  }
+
+  int64_t masks[64];
+  std::unique_ptr<folly::CPUThreadPoolExecutor> executor_;
+};
 
 TEST_F(BloomFilterTest, basic) {
   constexpr int32_t kSize = 1024;
@@ -89,4 +182,11 @@ TEST_F(BloomFilterTest, merge) {
   EXPECT_FALSE(bloom.mayContain(folly::hasher<int32_t>()(kSize + 123451)));
 
   EXPECT_EQ(bloom.serializedSize(), merge.serializedSize());
+}
+
+TEST_F(BloomFilterTest, precision) {
+  for (auto power = 0; power < 13; ++power) {
+    meter<4>(16000 << power);
+    meter<8>(16000 << power);
+  }
 }
