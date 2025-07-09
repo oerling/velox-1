@@ -15,6 +15,7 @@
  */
 
 #include "velox/dwio/text/reader/TextReader.h"
+#include "velox/common/encode/Base64.h"
 #include "velox/dwio/common/exception/Exceptions.h"
 #include "velox/type/fbhive/HiveTypeParser.h"
 
@@ -29,12 +30,6 @@ const std::string TEXTFILE_COMPRESSION_EXTENSION = ".gz";
 const std::string TEXTFILE_COMPRESSION_EXTENSION_RAW = ".deflate";
 
 namespace {
-
-void unsupportedBatchType(BaseVector* FOLLY_NULLABLE data) {
-  logic_error(
-      "unsupported vector type: %s",
-      (data == nullptr) ? "null" : typeid(*data).name());
-}
 
 void resizeVector(
     BaseVector* FOLLY_NULLABLE data,
@@ -118,9 +113,13 @@ TextRowReader::TextRowReader(
       atEOF_{false},
       atSOL_{false},
       depth_{0},
+      unreadData_{""},
+      unreadIdx_{0},
       limit_{opts.limit()},
       fileLength_{getStreamLength()},
-      stringViewBuffer_{StringViewBufferHolder(&contents_->pool)} {
+      ownedString_{""},
+      stringViewBuffer_{StringViewBufferHolder(&contents_->pool)},
+      varBinBuf_{std::make_shared<DataBuffer<char>>(contents_->pool)} {
   // Seek to first line at or after the specified region.
   if (contents_->compression == CompressionKind::CompressionKind_NONE) {
     /**
@@ -235,8 +234,8 @@ uint64_t TextRowReader::next(
     ++rowsRead;
 
     if (pos_ >= getLength()) {
+      // disable further chunk reads but parse the remainder of the line
       atEOF_ = true;
-      rowVecPtr->resize(rowsRead);
     }
 
     // handle empty file
@@ -244,7 +243,12 @@ uint64_t TextRowReader::next(
       currentRow_ = 0;
     }
   }
+
+  // Resize the row vector to the actual number of rows read.
+  // Handled here for both cases: pos_ > fileLength_ and pos_ > limit_
+  rowVecPtr->resize(rowsRead);
   result = projectColumns(rowVecPtr, *scanSpec_, mutation);
+
   return rowsRead;
 }
 
@@ -327,8 +331,10 @@ void TextRowReader::setEOF() {
   atEOL_ = true;
 }
 
+/// TODO: Update maximum depth after fixing issue with deeply nested complex
+/// types
 void TextRowReader::incrementDepth() {
-  if (depth_ >= 6) {
+  if (depth_ > 4) {
     parse_error("Schema nesting too deep");
   }
   depth_++;
@@ -509,6 +515,7 @@ DelimType TextRowReader::getDelimType(uint8_t v) {
     /// TODO: Logically should be >=, kept as it is to align with presto reader.
     if (pos_ > limit_) {
       atEOF_ = true;
+      delim = DelimTypeEOR;
     }
   } else if (v == contents_->serDeOptions.separators.at(depth_)) {
     setEOE(delim);
@@ -563,7 +570,7 @@ char TextRowReader::getByteUnchecked(DelimType& delim) {
   }
   if (!skipLF) {
     setEOF();
-    delim = 1;
+    delim = DelimTypeEOR;
   }
   return '\n';
 }
@@ -579,10 +586,15 @@ char TextRowReader::getByteUncheckedOptimized(DelimType& delim) {
 
   try {
     char v;
-    if (unreadData_.empty()) {
+    if (unreadData_.empty() || unreadIdx_ >= unreadData_.size()) {
       int length;
       const void* buffer;
-      contents_->inputStream->Next(&buffer, &length);
+      if (!contents_->inputStream->Next(&buffer, &length)) {
+        setEOF();
+        delim = DelimTypeEOR;
+        return '\0';
+      }
+
       unreadData_ = std::string(reinterpret_cast<const char*>(buffer), length);
       unreadIdx_ = 0;
     }
@@ -608,7 +620,7 @@ char TextRowReader::getByteUncheckedOptimized(DelimType& delim) {
   }
   if (!skipLF) {
     setEOF();
-    delim = 1;
+    delim = DelimTypeEOR;
   }
   return '\n';
 }
@@ -673,7 +685,8 @@ bool TextRowReader::skipLine() {
   }
   /// TODO: Logically should be >=, kept as it is to align with presto reader
   if (pos_ > limit_) {
-    atEOF_ = true;
+    setEOF();
+    delim = DelimTypeEOR;
   }
   return atEOF_;
 }
@@ -918,7 +931,10 @@ void TextRowReader::readElement(
               getInteger<int32_t>, data, insertionRow, delim);
           break;
         default:
-          unsupportedBatchType(data);
+          VELOX_FAIL(
+              "Requested type {} is not supported to be read as type {}",
+              reqT->toString(),
+              t->toString());
           break;
       }
       break;
@@ -943,12 +959,70 @@ void TextRowReader::readElement(
               getInteger<int16_t>, data, insertionRow, delim);
           break;
         default:
-          unsupportedBatchType(data);
+          VELOX_FAIL(
+              "Requested type {} is not supported to be read as type {}",
+              reqT->toString(),
+              t->toString());
           break;
       }
       break;
 
-    case TypeKind::VARBINARY:
+    case TypeKind::VARBINARY: {
+      const auto& strView = getStringView(*this, isNull, delim);
+      const auto& flatVector =
+          data ? data->asChecked<FlatVector<StringView>>() : nullptr;
+      if (!flatVector) {
+        VELOX_FAIL(
+            "Vector for column type does not match: expected FlatVector<StringView>, got {}",
+            data ? data->type()->toString() : "null");
+        return;
+      }
+
+      if ((atEOF_ && atSOL_) || (flatVector == nullptr)) {
+        break;
+      }
+
+      // Allocate a blob buffer
+      size_t len = strView.size();
+      const auto blen =
+          encoding::Base64::calculateDecodedSize(strView.data(), len);
+      varBinBuf_->resize(blen.value_or(0));
+
+      // decode from base64 to the blob buffer.
+      Status status = encoding::Base64::decode(
+          strView.data(), strView.size(), varBinBuf_->data(), blen.value_or(0));
+
+      if (status.code() == StatusCode::kOK) {
+        flatVector->set(
+            insertionRow, StringView(varBinBuf_->data(), blen.value()));
+      } else {
+        // Not valid base64:  just copy as-is for compatibility.
+        //
+        // Note that some warehouse file have simply binary data
+        // in what should be a base64-encoded field, and which
+        // may result in extra rows.  Other readers behave as
+        // below, so this provides compatibility, even if  all
+        // readers should really reject these files.
+        varBinBuf_->resize(strView.size());
+
+        VELOX_CHECK_NOT_NULL(strView.data());
+
+        len = strView.size();
+        memcpy(varBinBuf_->data(), strView.data(), strView.size());
+
+        // Use StringView, set(vector_size_t idx, T value) fails because
+        // strlen(varBinBuf_->data()) is undefined due to lack of null
+        // terminator
+        flatVector->set(
+            insertionRow, StringView(varBinBuf_->data(), strView.size()));
+      }
+
+      if (isNull) {
+        flatVector->setNull(insertionRow, true);
+      }
+
+      break;
+    }
     case TypeKind::VARCHAR: {
       const auto& strView = getStringView(*this, isNull, delim);
       const auto& flatVector =
@@ -991,7 +1065,10 @@ void TextRowReader::readElement(
           putValue<bool, bool>(getBoolean, data, insertionRow, delim);
           break;
         default:
-          unsupportedBatchType(data);
+          VELOX_FAIL(
+              "Requested type {} is not supported to be read as type {}",
+              reqT->toString(),
+              t->toString());
           break;
       }
       break;
@@ -1015,7 +1092,10 @@ void TextRowReader::readElement(
               getInteger<int8_t>, data, insertionRow, delim);
           break;
         default:
-          unsupportedBatchType(data);
+          VELOX_FAIL(
+              "Requested type {} is not supported to be read as type {}",
+              reqT->toString(),
+              t->toString());
           break;
       }
       break;
@@ -1210,10 +1290,13 @@ void TextRowReader::readElement(
           putValue<float, float>(getFloat, data, insertionRow, delim);
           break;
         case TypeKind::DOUBLE:
-          putValue<float, double>(getFloat, data, insertionRow, delim);
+          putValue<float, double>(getDouble, data, insertionRow, delim);
           break;
         default:
-          unsupportedBatchType(data);
+          VELOX_FAIL(
+              "Requested type {} is not supported to be read as type {}",
+              reqT->toString(),
+              t->toString());
           break;
       }
       break;

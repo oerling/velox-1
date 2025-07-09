@@ -564,7 +564,7 @@ std::string BaseVector::toString(vector_size_t index) const {
   if (!nulls_) {
     out << "no nulls";
   } else if (isNullAt(index)) {
-    out << "null";
+    out << kNullValueString;
   } else {
     out << "not null";
   }
@@ -663,7 +663,7 @@ void BaseVector::ensureWritable(
 template <TypeKind kind>
 VectorPtr newConstant(
     const TypePtr& type,
-    variant& value,
+    const Variant& value,
     vector_size_t size,
     velox::memory::MemoryPool* pool) {
   using T = typename KindToFlatVector<kind>::WrapperType;
@@ -686,7 +686,7 @@ VectorPtr newConstant(
 template <>
 VectorPtr newConstant<TypeKind::OPAQUE>(
     const TypePtr& type,
-    variant& value,
+    const Variant& value,
     vector_size_t size,
     velox::memory::MemoryPool* pool) {
   const auto& capsule = value.value<TypeKind::OPAQUE>();
@@ -698,7 +698,7 @@ VectorPtr newConstant<TypeKind::OPAQUE>(
 // static
 VectorPtr BaseVector::createConstant(
     const TypePtr& type,
-    variant value,
+    const Variant value,
     vector_size_t size,
     velox::memory::MemoryPool* pool) {
   VELOX_CHECK_EQ(type->kind(), value.kind());
