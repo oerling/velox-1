@@ -77,7 +77,10 @@ TextWriter::TextWriter(
               options->memoryPool->name(),
               folly::to<std::string>(folly::Random::rand64()))),
           options->defaultFlushCount)),
-      serDeOptions_(serDeOptions) {}
+      headerLineCount_(options->headerLineCount),
+      serDeOptions_(serDeOptions) {
+  VELOX_CHECK_LE(headerLineCount_, 1, "Header line count must be <= 1");
+}
 
 uint8_t TextWriter::getDelimiterForDepth(uint8_t depth) const {
   VELOX_CHECK_LT(
@@ -97,6 +100,21 @@ void TextWriter::write(const VectorPtr& data) {
   VELOX_CHECK(
       data->type()->equivalent(*schema_),
       "The file schema type should be equal with the input row vector type.");
+
+  // write 1 row of header
+  if (headerLineCount_ == 1) {
+    const auto numCols = schema_->size();
+    for (column_index_t col = 0; col < numCols; ++col) {
+      if (col != 0) {
+        bufferedWriterSink_->write((char)serDeOptions_.separators[0]);
+      }
+
+      bufferedWriterSink_->write(
+          schema_->nameOf(col).data(), schema_->nameOf(col).length());
+    }
+
+    bufferedWriterSink_->write((char)serDeOptions_.newLine);
+  }
 
   const RowVector* dataRowVector = data->as<RowVector>();
 
@@ -154,6 +172,10 @@ void TextWriter::writeCellValue(
   }
 
   ++depth;
+
+  /// TODO: Increase supported depth in future
+  VELOX_CHECK_LE(depth, 4, "Depth {} exceeds maximum supported depth", 4);
+
   switch (type) {
     case TypeKind::BOOLEAN: {
       auto dataStr =
@@ -276,10 +298,46 @@ void TextWriter::writeCellValue(
 
       return;
     }
-    case TypeKind::ROW:
+    case TypeKind::ROW: {
+      const RowVector* rowVecPtr = decodedColumnVector->base()->as<RowVector>();
+      const auto& indices = decodedColumnVector->indices();
+      const auto actualRowIndex = indices[row];
+
+      std::vector<std::shared_ptr<DecodedVector>> decodedColumnVectors;
+      const auto numColumns = rowVecPtr->childrenSize();
+      for (size_t column = 0; column < numColumns; ++column) {
+        auto decodedColumnVector =
+            std::make_shared<DecodedVector>(DecodedVector(
+                *rowVecPtr->childAt(column),
+                SelectivityVector(rowVecPtr->size())));
+        decodedColumnVectors.push_back(std::move(decodedColumnVector));
+      }
+
+      std::optional<char> nestedRowDelimiter;
+      for (size_t column = 0; column < numColumns; ++column) {
+        nestedRowDelimiter = (column == 0)
+            ? std::nullopt
+            : std::optional(getDelimiterForDepth(depth));
+        writeCellValue(
+            decodedColumnVectors.at(column),
+            rowVecPtr->childAt(column)->typeKind(),
+            actualRowIndex,
+            depth,
+            nestedRowDelimiter);
+      }
+      return;
+    }
+    case TypeKind::UNKNOWN:
+      [[fallthrough]];
+    case TypeKind::FUNCTION:
+      [[fallthrough]];
+    case TypeKind::OPAQUE:
+      [[fallthrough]];
+    case TypeKind::INVALID:
       [[fallthrough]];
     default:
-      VELOX_NYI("{} is not supported yet in TextWriter", type);
+      VELOX_NYI(
+          "Text writer does not support type {}", mapTypeKindToName(type));
   }
 }
 
