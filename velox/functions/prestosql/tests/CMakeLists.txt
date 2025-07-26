@@ -64,7 +64,6 @@ add_executable(
   FindFirstTest.cpp
   FloatingPointFunctionsTest.cpp
   FromUtf8Test.cpp
-  GeometryFunctionsTest.cpp
   GreatestLeastTest.cpp
   HyperLogLogCastTest.cpp
   HyperLogLogFunctionsTest.cpp
@@ -98,6 +97,7 @@ add_executable(
   RoundTest.cpp
   ScalarFunctionRegTest.cpp
   SequenceTest.cpp
+  SfmSketchFunctionsTest.cpp
   SimpleComparisonMatcherTest.cpp
   SliceTest.cpp
   SplitTest.cpp
@@ -119,6 +119,10 @@ add_executable(
   WordStemTest.cpp
   ZipTest.cpp
   ZipWithTest.cpp)
+
+if(VELOX_ENABLE_GEO)
+  target_sources(velox_functions_test PRIVATE GeometryFunctionsTest.cpp)
+endif()
 
 if(VELOX_ENABLE_FAISS)
   set_source_files_properties(DistanceFunctionsTest.cpp
