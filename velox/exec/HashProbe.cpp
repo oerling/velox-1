@@ -2072,7 +2072,7 @@ void HashProbe::close() {
   spillOutputReader_.reset();
   clearBuffers();
 
-  // Fullfill any pending promises
+  // Fulfill any pending promises
   if (lastProber_) {
     wakeupPeerOperators();
   }
