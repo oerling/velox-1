@@ -249,6 +249,7 @@ void PeriodicStatsReporter::reportCacheStats() {
 }
 
 void PeriodicStatsReporter::reportSpillStats() {
+  return;
   if (spillMemoryPool_ == nullptr) {
     return;
   }
