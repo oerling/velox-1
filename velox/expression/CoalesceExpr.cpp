@@ -66,6 +66,9 @@ void CoalesceExpr::evalSpecialForm(
 
     if (!result->mayHaveNulls()) {
       // No nulls left.
+      if (result->rawNulls()) {
+        result->reuseNulls();
+      }
       return;
     }
 
@@ -77,12 +80,18 @@ void CoalesceExpr::evalSpecialForm(
     const uint64_t* rawNulls = decodedVector->nulls(activeRows);
     if (!rawNulls) {
       // No nulls left.
+      if (result->rawNulls()) {
+        result->reuseNulls();
+      }
       return;
     }
 
     activeRows->deselectNonNulls(rawNulls, 0, activeRows->end());
     if (!activeRows->hasSelections()) {
       // No nulls left.
+      if (result->rawNulls()) {
+        result->reuseNulls();
+      }
       return;
     }
   }

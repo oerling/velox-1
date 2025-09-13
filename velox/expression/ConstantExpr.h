@@ -18,6 +18,7 @@
 #include "velox/expression/SpecialForm.h"
 
 namespace facebook::velox::exec {
+
 class ConstantExpr : public SpecialForm {
  public:
   explicit ConstantExpr(VectorPtr value)
@@ -28,7 +29,8 @@ class ConstantExpr : public SpecialForm {
             "literal",
             !value->isNullAt(0) /* supportsFlatNoNullsFastPath */,
             false /* trackCpuUsage */),
-        needToSetIsAscii_{value->type()->isVarchar()} {
+        needToSetIsAscii_{value->type()->isVarchar()},
+        isEmptyArrayOrMap_{isEmptyArrayOrMap(value)} {
     VELOX_CHECK_EQ(value->encoding(), VectorEncoding::Simple::CONSTANT);
     sharedConstantValue_ = std::move(value);
   }
@@ -61,7 +63,16 @@ class ConstantExpr : public SpecialForm {
       std::vector<VectorPtr>* complexConstants = nullptr) const override;
 
  private:
+  static bool isEmptyArrayOrMap(const VectorPtr& value);
+
+
+  void handleEmptyArrayOrMap(
+      const SelectivityVector& rows,
+      EvalCtx& context,
+      VectorPtr& result);
+
   VectorPtr sharedConstantValue_;
   bool needToSetIsAscii_;
+  const bool isEmptyArrayOrMap_;
 };
 } // namespace facebook::velox::exec

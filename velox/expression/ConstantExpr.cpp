@@ -17,10 +17,25 @@
 
 namespace facebook::velox::exec {
 
+bool ConstantExpr::isEmptyArrayOrMap(const VectorPtr& value) {
+  if ((value->type()->kind() == TypeKind::ARRAY ||
+       value->type()->kind() == TypeKind::MAP)) {
+    auto* valueVector = value->wrappedVector();
+    VELOX_CHECK_GE(valueVector->size(), 1);
+    return valueVector->as<ArrayVectorBase>()->sizeAt(0) == 0;
+  }
+  return false;
+}
+
 void ConstantExpr::evalSpecialForm(
     const SelectivityVector& rows,
     EvalCtx& context,
     VectorPtr& result) {
+  if (isEmptyArrayOrMap_ && result && (result->encoding() == VectorEncoding::Simple::ARRAY || result->encoding() == VectorEncoding::Simple::MAP)) {
+    handleEmptyArrayOrMap(rows, context, result);
+    return;
+  }
+
   if (needToSetIsAscii_) {
     auto* vector =
         sharedConstantValue_->asUnchecked<SimpleVector<StringView>>();
@@ -40,6 +55,65 @@ void ConstantExpr::evalSpecialForm(
   }
 
   context.moveOrCopyResult(sharedConstantValue_, rows, result);
+}
+
+void ConstantExpr::handleEmptyArrayOrMap(
+    const SelectivityVector& rows,
+    EvalCtx& context,
+    VectorPtr& result) {
+  // Check if result is singly referenced and if sizes and offsets buffers
+  // are singly referenced
+  bool needCopy = result.use_count() > 1;
+
+  if (!needCopy) {
+    auto* arrayBase = result->asUnchecked<ArrayVectorBase>();
+    const BufferPtr& offsetsBuffer = arrayBase->offsets();
+    const BufferPtr& sizesBuffer = arrayBase->sizes();
+    needCopy = offsetsBuffer->refCount() > 1 || sizesBuffer->refCount() > 1;
+  }
+
+  if (needCopy) {
+    // Make a new vector with copied offsets and sizes
+    if (result->type()->kind() == TypeKind::ARRAY) {
+      auto* arrayVector = result->asUnchecked<ArrayVector>();
+
+      result = std::make_shared<ArrayVector>(
+          context.pool(),
+          result->type(),
+          AlignedBuffer::copy(context.pool(), result->nulls()),
+          result->size(),
+          AlignedBuffer::copy(context.pool(), arrayVector->offsets()),
+          AlignedBuffer::copy(context.pool(), arrayVector->sizes()),
+          arrayVector->elements());
+    } else if (result->type()->kind() == TypeKind::MAP) {
+      auto* mapVector = result->asUnchecked<MapVector>();
+
+      result = std::make_shared<MapVector>(
+          context.pool(),
+          result->type(),
+                    AlignedBuffer::copy(context.pool(), result->nulls()),
+	  
+          result->size(),
+	  AlignedBuffer::copy(context.pool(), mapVector->offsets()),
+	  AlignedBuffer::copy(context.pool(), mapVector->sizes()),
+          mapVector->mapKeys(),
+          mapVector->mapValues());
+    }
+  }
+
+  // Set size and offset to 0 for each selected row
+  auto* arrayBase = result->asUnchecked<ArrayVectorBase>();
+  auto* rawSizes =
+      arrayBase->mutableSizes(rows.end())->asMutable<vector_size_t>();
+  auto* rawOffsets =
+      arrayBase->mutableOffsets(rows.end())->asMutable<vector_size_t>();
+
+  rows.applyToSelected([&](vector_size_t row) {
+    arrayBase->setNull(row, false);
+    rawSizes[row] = 0;
+    rawOffsets[row] = 0;
+  });
+  result->reuseNulls();
 }
 
 void ConstantExpr::evalSpecialFormSimplified(

@@ -5248,5 +5248,131 @@ TEST_F(ExprTest, simpleExpressionEvaluator) {
        expectedScalarExprResult,
        expectedArrayExprResult});
 }
+
+TEST_F(ExprTest, coalesceArrayWithEmptyConstant) {
+  // Create an ArrayVector of type ARRAY(BIGINT()) with 100 elements, 10 null
+  std::vector<std::vector<int64_t>> arrayData;
+  std::vector<bool> nulls;
+  
+  for (int i = 0; i < 100; ++i) {
+    if (i % 10 == 0) {
+      // Every 10th element is null
+      arrayData.push_back({});
+      nulls.push_back(true);
+    } else {
+      // Non-null elements contain some values
+      arrayData.push_back({i, i + 1, i + 2});
+      nulls.push_back(false);
+    }
+  }
+  
+  auto arrayVector = makeArrayVector<int64_t>(arrayData);
+  
+  // Set nulls manually
+  for (int i = 0; i < 100; ++i) {
+    if (nulls[i]) {
+      arrayVector->setNull(i, true);
+    }
+  }
+  
+  // Create empty constant vector of ARRAY(BIGINT())
+  auto emptyArray = std::make_shared<ArrayVector>(
+      execCtx_->pool(),
+      ARRAY(BIGINT()),
+      nullptr, // no nulls
+      1, // size
+      makeIndicesInReverse(1), // offsets: [0]
+      makeIndicesInReverse(1), // sizes: [0]
+      makeFlatVector<int64_t>({})); // empty elements
+  
+  // Create input row vector
+  auto input = makeRowVector({"the_array_vector"}, {arrayVector});
+
+  // 
+  // Evaluate coalesce expression using ITypedExpr constructors
+  auto fieldExpr = std::make_shared<const core::FieldAccessTypedExpr>(
+      ARRAY(BIGINT()), "the_array_vector");
+  auto constantExpr = std::make_shared<core::ConstantTypedExpr>(
+      BaseVector::wrapInConstant(1, 0, emptyArray));
+  auto coalesceExpr = std::make_shared<const core::CallTypedExpr>(
+      ARRAY(BIGINT()), "coalesce", std::vector<core::TypedExprPtr>{fieldExpr, constantExpr});
+  auto exprSet = compileExpression(coalesceExpr);
+  auto result = evaluate(exprSet.get(), input);
+  
+  // Check that result has no nulls
+  for (int i = 0; i < 100; ++i) {
+    EXPECT_FALSE(result->isNullAt(i)) << "Result should not be null at index " << i;
+    
+    if (nulls[i]) {
+      // Originally null elements should now contain empty arrays
+      auto arrayResult = result->as<ArrayVector>();
+      EXPECT_EQ(arrayResult->sizeAt(i), 0) << "Null elements should be replaced with empty arrays";
+    }
+  }
+}
+
+TEST_F(ExprTest, coalesceMapWithEmptyConstant) {
+  // Create a MapVector of type MAP(BIGINT(), BIGINT()) with 100 elements, 10 null
+  std::vector<std::vector<std::pair<int64_t, std::optional<int64_t>>>> mapData;
+  std::vector<bool> nulls;
+  
+  for (int i = 0; i < 100; ++i) {
+    if (i % 10 == 0) {
+      // Every 10th element is null
+      mapData.push_back({});
+      nulls.push_back(true);
+    } else {
+      // Non-null elements contain some key-value pairs
+      mapData.push_back({{i, i * 10}, {i + 1, (i + 1) * 10}, {i + 2, (i + 2) * 10}});
+      nulls.push_back(false);
+    }
+  }
+  
+  auto mapVector = makeMapVector<int64_t, int64_t>(mapData);
+  
+  // Set nulls manually
+  for (int i = 0; i < 100; ++i) {
+    if (nulls[i]) {
+      mapVector->setNull(i, true);
+    }
+  }
+  
+  // Create empty constant vector of MAP(BIGINT(), BIGINT())
+  auto emptyMap = std::make_shared<MapVector>(
+      execCtx_->pool(),
+      MAP(BIGINT(), BIGINT()),
+      nullptr, // no nulls
+      1, // size
+      makeIndicesInReverse(1), // offsets: [0]
+      makeIndicesInReverse(1), // sizes: [0]
+      makeFlatVector<int64_t>({}), // empty keys
+      makeFlatVector<int64_t>({})); // empty values
+  
+  // Create input row vector
+  auto input = makeRowVector({"the_map_vector"}, {mapVector});
+
+  // 
+  // Evaluate coalesce expression using ITypedExpr constructors
+  auto fieldExpr = std::make_shared<const core::FieldAccessTypedExpr>(
+      MAP(BIGINT(), BIGINT()), "the_map_vector");
+  auto constantExpr = std::make_shared<core::ConstantTypedExpr>(
+      BaseVector::wrapInConstant(1, 0, emptyMap));
+  auto coalesceExpr = std::make_shared<const core::CallTypedExpr>(
+      MAP(BIGINT(), BIGINT()), "coalesce", std::vector<core::TypedExprPtr>{fieldExpr, constantExpr});
+  auto exprSet = compileExpression(coalesceExpr);
+  auto result = evaluate(exprSet.get(), input);
+  
+  // Check that result has no nulls
+  for (int i = 0; i < 100; ++i) {
+    EXPECT_FALSE(result->isNullAt(i)) << "Result should not be null at index " << i;
+    
+    if (nulls[i]) {
+      // Originally null elements should now contain empty maps
+      auto mapResult = result->as<MapVector>();
+      EXPECT_EQ(mapResult->sizeAt(i), 0) << "Null elements should be replaced with empty maps";
+    }
+  }
+}
+
 } // namespace
 } // namespace facebook::velox::test
