@@ -48,7 +48,6 @@ velox_add_library(
   FunctionCallToSpecialForm.cpp
   GenericWriter.cpp
   LambdaExpr.cpp
-  Linear.cpp
   PeeledEncoding.cpp
   PrestoCastHooks.cpp
   RegisterSpecialForm.cpp
