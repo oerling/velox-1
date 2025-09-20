@@ -86,25 +86,21 @@ class Call : public Instruction {
    OperandIdx operand;
  };
  
-class LinearExprSet {
+  /// Represents a sequential set of instructions for computing
+  /// mulytiple projections base on data in a state. The result is
+  /// deposited into the state. The program is single threaded but
+  /// multiple programs can run in parallel on the same state as long
+  /// as their outputs do not overlap.
+  class ExprProgram {
  public:
-  LinearExprSet(ExprSet& exprSet);
+    ExprProgram(std::vector<std::unique_ptr<Instruction>>& instructions  );
 
-  eval(RowVectorPtr& input, RowVectorPtr& output, EvalCtx& ctx);
+    eval(EvalCtx* ctx, int32_t begin, int32_t end, VectorPtr* state);
+
   
-  
-
-  std::vector<Assignment> inputOperands_;
-  std::vector<Assignment> outputOperands_;
-
-  // Indices into 'outputOperands_' for case where the vectors are not pre-existent in the output.
-  std::vector<int32_t> outputAssignments_;
 
   std::vector<std::unique_ptr<Instruction>> instructions_;
 
-
-  // vectors. OperandIdx is an index into this. 
-  std::vector<VectorPtr> operands_;
 
   RowVectorPtr result_;
   RowVectorPtr input_;
