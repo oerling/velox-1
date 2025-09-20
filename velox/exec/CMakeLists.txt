@@ -36,6 +36,8 @@ velox_add_library(
   ExchangeSource.cpp
   Expand.cpp
   FilterProject.cpp
+  ProjectSequence.cpp
+  Linear.cpp
   GroupId.cpp
   GroupingSet.cpp
   HashAggregation.cpp

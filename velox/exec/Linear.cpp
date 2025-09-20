@@ -14,25 +14,18 @@
  * limitations under the License.
  */
 
-#include "velox/expression/Linear.h"
+#include "velox/exec/Linear.h"
 
 namespace facebook::velox::exec {
 
-/// Struct with state during conversion from ExprSet too LinearExprSet,
-struct TranslateCtx {
-  // Operands are checked non-nul for active rows.
-  bool inNullPropagating{false};
 
-  /// Map from type to operand index for temporary variables.
-  std::unordered_map<TypePtr, std::vector<OperandIdx>> tenporary;
-};
 
-LinearExprSet::LinearExprSet(ExprSet& exprSet) {}
-
-void LinearExprSet::eval(
-    const SelectivityVector& rows,
-    RowVectorPtr& input,
-    RowVectorPtr& output,
-    EvalCtx& ctx) {}
-
+  void TranslateCtx::makeAssignments(const std::vector<AbstractProjectNode*> projects) {
+    
+  }
+  
+void TranslateCtx::  translateExpr(const core::TypedExprPtr& expr, ExprProgram& program) {
+  
+  }
+  
 } // namespace facebook::velox::exec
