@@ -14,10 +14,10 @@
  * limitations under the License.
  */
 
-#include "axiom/optimizer/tests/FeatureGen.h"
+#include "velox/exec/tests/utils/FeatureGen.h"
 #include "velox/vector/tests/utils/VectorMaker.h"
 
-namespace facebook::axiom::optimizer::test {
+namespace facebook::velox::exec::test {
 
 using namespace facebook::velox;
 

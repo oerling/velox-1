@@ -21,7 +21,7 @@
 
 #pragma once
 
-namespace facebook::axiom::optimizer::test {
+namespace facebook::velox::exec::test {
 
 struct FeatureOptions {
   int32_t numFloat{10};
