@@ -17,6 +17,7 @@
 #pragma once
 
 #include "velox/expression/Expr.h"
+#include "velox/core/ITypedExpr.h"
 
 namespace facebook::velox::exec {
 
@@ -57,6 +58,7 @@ constexpr OperandIdx kNoOperand = ~0;
  protected:
   OpCode opCode_;
   OperandIdx result_;
+    OperandIdx standbyResult{kNoOperand};
 };
 
 class Field : public Instruction {
@@ -87,9 +89,9 @@ class Coalesce : public Instruction {
 
 class Call : public Instruction {
  public:
-  int32_t result_;
-  std::vector<int32_t> args_;
+  std::vector<OperandIdx> args_;
   TypePtr type_;
+  
   bool mayReturnInput_;
 };
 
@@ -98,17 +100,20 @@ class Call : public Instruction {
 /// index of 'features' and then 'the_feature'. Applies to both input and output
 /// of a LinearExprSet.
 struct Assignment {
-  Assignment(std::vector<int32_t> path, int32_t operand, int32_t sourceRow)
+  Assignment(std::vector<int32_t> path, OperandIdx operand, int32_t sourceRow)
     : path{path}, operand{operand}, sourceRow{sourceRow} {}
 
   /// The index in the outer row, next inner etc.
-  std::vector<column_index_t> path;
+  std::vector<int32_t> path;
 
   // The position in state.
   OperandIdx operand;
 
-  /// Designates the RowVector 'pth' starts from. 0 is input, then consecutive outputs, then temporary
+/// Designates the RowVector 'pth' starts from. 0 is input, then consecutive outputs, then temporary
   int32_t sourceRow;
+
+  /// Designates the leaf row into which path.back() is an index.
+  int32_t leafRow{-1};
 };
 
 /// Represents a sequential set of instructions for computing
@@ -118,10 +123,14 @@ struct Assignment {
 /// as their leaf inputs and outputs do not overlap.
 class ExprProgram {
  public:
-  ExprProgram(std::vector<std::unique_ptr<Instruction>>& instructions);
+  ExprProgram() {}
 
   void eval(EvalCtx* ctx, int32_t begin, int32_t end, VectorPtr* state);
 
+  std::vector<std::unique_ptr<Instruction>>& instructions() {
+    return instructions_;
+  }
+  
   std::vector<std::unique_ptr<Instruction>> instructions_;
 
   // A tenporary vector for use as arguments to a Velox function.
@@ -129,68 +138,6 @@ class ExprProgram {
   std::vector<SelectivityVector> rowsStack_;
 };
 
-struct TypeHasher {
-  size_t operator()(const velox::TypePtr& type) const {
-    // hash on recursive TypeKind. Structs that differ in field names
-    // only or decimals with different precisions will collide, no
-    // other collisions expected.
-    return type->hashKind();
-  }
-};
-
-struct TypeComparer {
-  bool operator()(const velox::TypePtr& lhs, const velox::TypePtr& rhs) const {
-    return *lhs == *rhs;
-  }
-};
-
-struct ITypedExprHasher {
-  size_t operator()(const velox::core::ITypedExpr* expr) const {
-    return expr->hash();
-  }
-};
-
-struct ITypedExprComparer {
-  bool operator()(
-      const velox::core::ITypedExpr* lhs,
-      const velox::core::ITypedExpr* rhs) const {
-    return *lhs == *rhs;
-  }
-};
-
-/// Map from leaf expr to OperandIdx. The leaf expr can be a input field
-/// reference or stack of struct field getters, an named intermediate or
-/// subfield thereof.
-using ExprOperandMap = folly::F14FastMap<
-    const velox::core::ITypedExpr*,
-    OperandIdx,
-    ITypedExprHasher,
-    ITypedExprComparer>;
-
-/// State during conversion from TypedExpr to ExprProgram
-class TranslateCtx {
- public:
-  void translateExpr(const core::TypedExprPtr&, ExprProgram& program);
-
-  RowTypePtr inputType_;
-  RowTypePtr outputType_;
-  // Operands are checked non-nul for active rows.
-  bool inNullPropagating_{false};
-
-  // Maps from any accessed field or subfield of input to OperandIdx.
-  std::vector<Assignment> inputAssignments_;
-
-  // Maps from any field or struct subfield  of the final result to OperandIdx.
-  std::vector<Assignment> outputAssignments_;
-
-  ExprOperandMap fieldToOperand_;
-
-  /// Map from type to operand index for temporary variables. A temp is a vector
-  /// that is in none of   input, named intermediate  or final output.
-  std::unordered_map<TypePtr, std::vector<OperandIdx>, TypeHasher, TypeComparer>
-      tempVectors_;
-};
-
-  bool isField(const TypedExprPtr& expr, std::vector<int32_t>& path);
+  bool isField(const core::TypedExprPtr& expr, std::vector<int32_t>& path);
 
       } // namespace facebook::velox::exec

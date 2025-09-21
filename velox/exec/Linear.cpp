@@ -15,6 +15,8 @@
  */
 
 #include "velox/exec/Linear.h"
+#include "velox/exec/ProjectSequence.h"
+#include "velox/core/Expressions.h"
 
 namespace facebook::velox::exec {
 
@@ -25,13 +27,13 @@ void TranslateCtx::  translateExpr(const core::TypedExprPtr& expr, ExprProgram& 
   
   }
 
-  bool isField(const TypedExprPtr& expr, std::vector<int32_t>& path) {
+  bool isField(const core::TypedExprPtr& expr, std::vector<int32_t>& path) {
   path.clear();
 
   auto current = expr;
 
   while (current) {
-    if (auto fieldAccess = std::dynamic_pointer_cast<const core::FieldAccessTypedExpr>(current)) {
+    if (auto fieldAccess = std::dynamic_pointer_cast<const facebook::velox::core::FieldAccessTypedExpr>(current)) {
       if (fieldAccess->inputs().empty()) {
         return fieldAccess->isInputColumn();
       }
@@ -44,7 +46,7 @@ void TranslateCtx::  translateExpr(const core::TypedExprPtr& expr, ExprProgram& 
       } else {
         return false;
       }
-    } else if (auto deref = std::dynamic_pointer_cast<const core::DereferenceTypedExpr>(current)) {
+    } else if (auto deref = std::dynamic_pointer_cast<const facebook::velox::core::DereferenceTypedExpr>(current)) {
       path.insert(path.begin(), deref->index());
       current = deref->inputs()[0];
     } else {
