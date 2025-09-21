@@ -32,16 +32,26 @@ struct FunctionLinearMetadata {
 
 FunctionLinearMetadata linearMetadata(const std::string& name);
 
-using OperandIdx = int32_t;
-constexpr OperandIdx kNoOperand = -1;
+using OperandIdx = uint32_t;
+constexpr OperandIdx kNoOperand = ~0;
+  constexpr OperandIdx kMultiple = 0x80000000;
 
-class Instruction {
+  inline   uint32_t operandIdx(OperandIdx idx) {
+    return idx & ~kMultiple;
+  }
+
+  class Instruction {
  public:
   enum class OpCode : uint8_t { kNulls, kIf, kCall };
 
   template <typename T>
-  as() const {
+  const T* as() const {
     return reinterpret_cast<const T*>(this);
+  }
+
+  template <typename T>
+  T* as() {
+    return reinterpret_cast<T*>(this);
   }
 
  protected:
@@ -58,9 +68,9 @@ class Field : public Instruction {
 class If : public Instruction {
  public:
   OperandIdx condition;
-  int32_t else;
-  int32_t end;
-} if;
+  int32_t elseIdx;
+  int32_t endIdx;
+};
 
 class Nulls : public Instruction {
  public:
@@ -88,8 +98,17 @@ class Call : public Instruction {
 /// index of 'features' and then 'the_feature'. Applies to both input and output
 /// of a LinearExprSet.
 struct Assignment {
+  Assignment(std::vector<int32_t> path, int32_t operand, int32_t sourceRow)
+    : path{path}, operand{operand}, sourceRow{sourceRow} {}
+
+  /// The index in the outer row, next inner etc.
   std::vector<column_index_t> path;
+
+  // The position in state.
   OperandIdx operand;
+
+  /// Designates the RowVector 'pth' starts from. 0 is input, then consecutive outputs, then temporary
+  int32_t sourceRow;
 };
 
 /// Represents a sequential set of instructions for computing
@@ -101,15 +120,10 @@ class ExprProgram {
  public:
   ExprProgram(std::vector<std::unique_ptr<Instruction>>& instructions);
 
-  eval(EvalCtx* ctx, int32_t begin, int32_t end, VectorPtr* state);
+  void eval(EvalCtx* ctx, int32_t begin, int32_t end, VectorPtr* state);
 
   std::vector<std::unique_ptr<Instruction>> instructions_;
 
-  RowVectorPtr result_;
-  RowVectorPtr input_;
-
-  /// Children of context RowVector.
-  std::vector<VectorPtr> input_;
   // A tenporary vector for use as arguments to a Velox function.
   std::vector<std::vector<VectorPtr>> argTemp_;
   std::vector<SelectivityVector> rowsStack_;
@@ -177,4 +191,6 @@ class TranslateCtx {
       tempVectors_;
 };
 
-} // namespace facebook::velox::exec
+  bool isField(const TypedExprPtr& expr, std::vector<int32_t>& path);
+
+      } // namespace facebook::velox::exec

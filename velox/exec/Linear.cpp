@@ -20,12 +20,39 @@ namespace facebook::velox::exec {
 
 
 
-  void TranslateCtx::makeAssignments(const std::vector<AbstractProjectNode*> projects) {
-    
-  }
   
 void TranslateCtx::  translateExpr(const core::TypedExprPtr& expr, ExprProgram& program) {
   
   }
-  
+
+  bool isField(const TypedExprPtr& expr, std::vector<int32_t>& path) {
+  path.clear();
+
+  auto current = expr;
+
+  while (current) {
+    if (auto fieldAccess = std::dynamic_pointer_cast<const core::FieldAccessTypedExpr>(current)) {
+      if (fieldAccess->inputs().empty()) {
+        return fieldAccess->isInputColumn();
+      }
+
+      auto parent = fieldAccess->inputs()[0];
+      if (parent->type()->isRow()) {
+        auto fieldIndex = parent->type()->asRow().getChildIdx(fieldAccess->name());
+        path.insert(path.begin(), fieldIndex);
+        current = parent;
+      } else {
+        return false;
+      }
+    } else if (auto deref = std::dynamic_pointer_cast<const core::DereferenceTypedExpr>(current)) {
+      path.insert(path.begin(), deref->index());
+      current = deref->inputs()[0];
+    } else {
+      return false;
+    }
+  }
+
+  return false;
+}
+
 } // namespace facebook::velox::exec
