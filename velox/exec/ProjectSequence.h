@@ -1,0 +1,224 @@
+/*
+ * Copyright (c) Facebook, Inc. and its affiliates.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+#pragma once
+
+#include "velox/core/PlanNode.h"
+#include "velox/exec/Linear.h"
+#include "velox/exec/Operator.h"
+#include "velox/exec/OperatorUtils.h"
+
+namespace facebook::velox::exec {
+
+using ProjectVector =
+    std::vector<std::shared_ptr<const core::AbstractProjectNode>>;
+
+struct ITypedExprHasher {
+  size_t operator()(const velox::core::ITypedExpr* expr) const {
+    return expr->hash();
+  }
+};
+
+struct ITypedExprComparer {
+  bool operator()(
+      const velox::core::ITypedExpr* lhs,
+      const velox::core::ITypedExpr* rhs) const {
+    return *lhs == *rhs;
+  }
+};
+
+/// Map from leaf expr to OperandIdx. The leaf expr can be a input field
+/// reference or stack of struct field getters, an named intermediate or
+/// subfield thereof.
+using ExprOperandMap = folly::F14FastMap<
+    const velox::core::ITypedExpr*,
+    OperandIdx,
+    ITypedExprHasher,
+    ITypedExprComparer>;
+
+/// Describes an identity projections, i.e. a result path of one stage is
+/// directly set from a path of input.
+struct IdentityPath {
+  /// The path in input which directly sets 'operand'.
+  std::vector<int32_t> inputPath;
+  OperandIdx operand;
+};
+
+/// Describes the input and output of a stage in ProjectSequence.
+struct StageData {
+  /// Operand idx for each set path in the output of this stage.
+  std::vector<Assignment> output;
+
+  /// Expression, 1:1 to 'output'. nullptr if the output is an identity.
+  std::vector<core::TypedExprPtr> exprForPath;
+
+  /// OperandIdx for each referenced path in the input of this stage.
+  std::vector<Assignment> input;
+  int32_t inputSourceIdx;
+  int32_t outputSourceIdx;
+
+  /// Map from getters to
+  /// OperandIdx for each distinct path of field getters in an expr of this
+  /// stage.
+  ExprOperandMap fieldToOperand;
+
+  std::vector<IdentityPath> identityPaths;
+
+  StageData* next{nullptr};
+};
+
+class ProjectSequence : public Operator {
+ public:
+  ProjectSequence(
+      int32_t operatorId,
+      DriverCtx* driverCtx,
+      const ProjectVector& projects);
+
+  bool preservesOrder() const override {
+    return true;
+  }
+
+  bool needsInput() const override {
+    return !input_;
+  }
+
+  void addInput(RowVectorPtr input) override;
+
+  RowVectorPtr getOutput() override;
+
+  BlockingReason isBlocked(ContinueFuture* /* unused */) override {
+    return BlockingReason::kNotBlocked;
+  }
+
+  bool startDrain() override {
+    // No need to drain for project/filter operator.
+    return false;
+  }
+
+  bool isFinished() override;
+
+  void close() override {
+    Operator::close();
+    work_.clear();
+    state_.clear();
+    input_.reset();
+    results_.clear();
+    tempVectors_.clear();
+  }
+
+  void initialize() override;
+
+ private:
+  // A unit of potentially parallel work. If the same stage has multiple units,
+  // the inputs, temporary results and results of these units must be
+  // non-overlapping.
+  struct WorkUnit {
+    // Positions of potential lazies in 'state_' which are to be loaded by this
+    // group.
+    std::vector<OperandIdx> loadOnly;
+    std::unique_ptr<core::ExecCtx> execCtx;
+    std::unique_ptr<ExprProgram> program;
+  };
+
+  struct WorkResult {
+    WorkResult(std::exception_ptr e) : error(std::move(e)) {}
+    std::exception_ptr error;
+  };
+
+  void runStage(int32_t idx);
+
+  // Set of consecutive projections.
+  ProjectVector projects_;
+  bool initialized_{false};
+
+  std::vector<StageData> stages_;
+
+  // Expressions to evaluate. All the WorkUnits in the first inner vector are
+  // done, then all in the next one. Elements in an inner vector can be
+  // parallel. {{a, b}{c, d}} will run a and b possibly in paralel, then after
+  // both are done will run c and d, possibly in parallel and then producproduce
+  // a result.
+  std::vector<std::vector<WorkUnit>> work_;
+
+  // State for all projections. Instructions reference
+  // inputs/temporaries/outputs via an index into this.
+  std::vector<VectorPtr*> state_;
+
+  std::vector<std::vector<std::vector<int32_t>>> allPaths_;
+
+  std::vector<int32_t> pathGroupStart_;
+  // Index of the row with temp vectors  in 'resultRows_'
+  int32_t tempRowIdx_{0};
+  // Result vector for each stage.
+  std::vector<RowVectorPtr> results_;
+  std::vector<std::vector<VectorPtr>*> resultRows_;
+
+  OperandIdx firstTempIdx_{0};
+  std::vector<Assignment> temp_;
+  std::vector<TypePtr> tempTypes_;
+  std::vector<VectorPtr> tempVectors_;
+  int32_t stateCounter_{0};
+};
+
+struct TypeHasher {
+  size_t operator()(const velox::TypePtr& type) const {
+    // hash on recursive TypeKind. Structs that differ in field names
+    // only or decimals with different precisions will collide, no
+    // other collisions expected.
+    return type->hashKind();
+  }
+};
+
+struct TypeComparer {
+  bool operator()(const velox::TypePtr& lhs, const velox::TypePtr& rhs) const {
+    return *lhs == *rhs;
+  }
+};
+
+/// State during conversion from TypedExpr to ExprProgram
+class TranslateCtx {
+ public:
+  TranslateCtx(
+      StageData& stage,
+      OperandIdx firstTempIdx,
+      std::vector<TypePtr>& temps)
+      : stage_(stage), firstTempIdx_(firstTempIdx), temps_(temps) {}
+
+  void translateExpr(const core::TypedExprPtr&, ExprProgram& program);
+
+  RowTypePtr inputType_;
+
+  // Operands are checked non-nul for active rows.
+  bool inNullPropagating_{false};
+
+  StageData& stage_;
+  OperandIdx firstTempIdx_{kNoOperand};
+
+  // Types for each temp. The type at i corresponds to the state at firstTempIdx_ + i.
+  std::vector<TypePtr>& temps_;
+
+  /// Map from type to operand index for temporary variables. A temp is a vector
+  /// that is in none of   input, named intermediate  or final output.
+  std::unordered_map<TypePtr, std::vector<OperandIdx>, TypeHasher, TypeComparer>
+      tempVectors_;
+
+  std::unordered_set<OperandIdx> distinctTemps_;
+
+  // Set of possibly fre temps that are used in some parallel activity. parallel
+  // work units must have separate temps.
+  std::unordered_set<OperandIdx> usedTemps_;
+};
+
+} // namespace facebook::velox::exec
