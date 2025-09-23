@@ -20,8 +20,19 @@
 
 namespace facebook::velox::exec {
 
-  OperandIdx TranslateCtx::makeCall(std::string& name, TypePtr type, std::vector<core::TypedExprPtr>& inputs) {
+
+  
+  OperandIdx TranslateCtx::makeCall(std::string& name, const TypePtr& type, std::vector<core::TypedExprPtr>& inputs, OperandIdx result, bool fixedResult) {
+    auto metadata = linearMetadata(name);
     
+  }
+
+  void  TranslateCtx::makeSwitch(const TypePtr& type, std::vector<core::TypedExprPtr>& inputs) {
+    for (auto i = 0; i < inputs.size(); i += 2) {
+      OperandIdx cond = getTemp(BOOLEAN());
+      translateExpr(inputs[i], cond, true);
+      program.add
+    }
   }
   
 OperandIdx TranslateCtx::translateExpr(
@@ -40,10 +51,23 @@ OperandIdx TranslateCtx::translateExpr(
     }
 
     case core::ExprKind::kConstant: {
-      auto it = constants_.find(expr);
-      if (it == constants_.end()) {
-        auto idx = stateCounter_++;
-        constants_[expr.get()] = idx;
+      auto& constants = projectSequence_->constants();
+      auto it = constants.find(expr);
+      if (it == constants.end()) {
+        auto idx = projectSequence_->stateCounter()++;
+	auto& temps = projectSequence_->tempTypes();
+	if (temps.size() <= idx) {
+	  temps.resize(idx + 1);
+	}
+	VectorPtr vector;
+	auto constantExpr = expr->asUnchecked<core::ConstantTypedExpr>();
+	if (constantExpr->hasValueVector()) {
+	  vector = constantExpr->valueVector();
+	} else {
+	  vector = BaseVector::createConstant(constantExpr->type(), constantExpr->value(), 1, projectSequence_->operatorCtx_->pool());
+	}
+	  temps[idx] = vector;
+        constants[expr.get()] = idx;
         return idx;
       }
       return it->second;
@@ -54,7 +78,7 @@ OperandIdx TranslateCtx::translateExpr(
       return makeCall(call->name(), expr->type(), call->inputs());
   }
   case core::ExprKind::kCast:
-    return makeCall("cast", expr->type(), call->inputs());
+    return makeCall("cast", expr->type(), expr->inputs());
 }
 }
 

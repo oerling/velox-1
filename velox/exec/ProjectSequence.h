@@ -120,6 +120,13 @@ class ProjectSequence : public Operator {
 
   void initialize() override;
 
+  OperandIdx firstTempIdx() const { return firstTempIdx_; }
+  std::vector<TypePtr>& tempTypes() { return tempTypes_; }
+  const std::vector<TypePtr>& tempTypes() const { return tempTypes_; }
+  ExprOperandMap& constants() { return constants_; }
+  const ExprOperandMap& constants() const { return constants_; }
+  int32_t& stateCounter() { return stateCounter_; }
+
  private:
   // A unit of potentially parallel work. If the same stage has multiple units,
   // the inputs, temporary results and results of these units must be
@@ -218,12 +225,8 @@ class TranslateCtx {
  public:
   TranslateCtx(
       StageData& stage,
-      OperandIdx firstTempIdx,
-      std::vector<TypePtr>& temps,
-	       ExprOperandMap& constants,
-      int32_t& stateCounter,
       ProjectSequence* projectSequence)
-    : stage_(stage), firstTempIdx_(firstTempIdx), temps_(temps), constants_(constants), stateCounter_(stateCounter), projectSequence_(projectSequence) {}
+    : stage_(stage), projectSequence_(projectSequence) {}
 
   void translateExpr(const core::TypedExprPtr&, ExprProgram& program, OperandIdx result);
 
@@ -242,11 +245,6 @@ private:
   bool inNullPropagating_{false};
 
   StageData& stage_;
-  OperandIdx firstTempIdx_{kNoOperand};
-
-  // Types for each temp. The type at i corresponds to the state at
-  // firstTempIdx_ + i.
-  std::vector<TypePtr>& temps_;
 
   /// Map from type to operand index for temporary variables. A temp is a vector
   /// that is in none of   input, named intermediate  or final output.
@@ -258,8 +256,6 @@ private:
   // Set of possibly fre temps that are used in some parallel activity. parallel
   // work units must have separate temps.
   std::unordered_set<OperandIdx> usedTemps_;
-  ExprOperandMap& constants_;
-  int32_t& stateCounter_;
   ProjectSequence* projectSequence_;
 };
 
