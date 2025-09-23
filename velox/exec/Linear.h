@@ -33,6 +33,8 @@ struct FunctionLinearMetadata {
 
 FunctionLinearMetadata linearMetadata(const std::string& name);
 
+registerLienarMetadata(const std::string& name, LinearMetadata metadata);
+  
 using OperandIdx = uint32_t;
 constexpr OperandIdx kNoOperand = ~0;
   constexpr OperandIdx kMultiple = 0x80000000;

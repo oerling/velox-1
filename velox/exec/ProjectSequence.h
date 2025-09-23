@@ -139,8 +139,33 @@ class ProjectSequence : public Operator {
 
   void runStage(int32_t idx);
 
+  void markExprFields(
+      const core::TypedExprPtr& expr,
+      OperandIdx target,
+      StageData& state);
+
+  void makeExprStageData(
+      const core::TypedExprPtr& expr,
+      std::vector<int32_t>& path,
+      StageData& state);
+
+  void makeRowStageData(
+      const std::vector<core::TypedExprPtr>& exprs,
+      StageData& state);
+
+  void makeWorkUnits(int32_t stageIdx);
+
+  void setLeafRow(std::vector<Assignment>& assignments);
+
+  void allPaths();
+
+  void initState(const std::vector<Assignment>& assignments);
+
+  void setState();
+
   // Set of consecutive projections.
   ProjectVector projects_;
+  RowTypePtr inputType_;
   bool initialized_{false};
 
   std::vector<StageData> stages_;
@@ -170,6 +195,7 @@ class ProjectSequence : public Operator {
   std::vector<TypePtr> tempTypes_;
   std::vector<VectorPtr> tempVectors_;
   int32_t stateCounter_{0};
+  ExprOperandMap constants_;
 };
 
 struct TypeHasher {
@@ -193,11 +219,21 @@ class TranslateCtx {
   TranslateCtx(
       StageData& stage,
       OperandIdx firstTempIdx,
-      std::vector<TypePtr>& temps)
-      : stage_(stage), firstTempIdx_(firstTempIdx), temps_(temps) {}
+      std::vector<TypePtr>& temps,
+	       ExprOperandMap& constants)
+    : stage_(stage), firstTempIdx_(firstTempIdx), temps_(temps), constants_(constants) {}
 
-  void translateExpr(const core::TypedExprPtr&, ExprProgram& program);
+  void translateExpr(const core::TypedExprPtr&, ExprProgram& program, OperandIdx result);
 
+  void noReuseOfTemp() {
+    for (auto i : distinctTemps_) {
+      usedTemps_.insert(i);
+    }
+  }
+
+  OperandIdx getTemp(const TypePtr& type);
+
+private:
   RowTypePtr inputType_;
 
   // Operands are checked non-nul for active rows.
@@ -206,7 +242,8 @@ class TranslateCtx {
   StageData& stage_;
   OperandIdx firstTempIdx_{kNoOperand};
 
-  // Types for each temp. The type at i corresponds to the state at firstTempIdx_ + i.
+  // Types for each temp. The type at i corresponds to the state at
+  // firstTempIdx_ + i.
   std::vector<TypePtr>& temps_;
 
   /// Map from type to operand index for temporary variables. A temp is a vector
@@ -219,6 +256,7 @@ class TranslateCtx {
   // Set of possibly fre temps that are used in some parallel activity. parallel
   // work units must have separate temps.
   std::unordered_set<OperandIdx> usedTemps_;
+  ExprOperandMap& constants_;
 };
 
 } // namespace facebook::velox::exec

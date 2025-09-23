@@ -23,10 +23,37 @@ namespace facebook::velox::exec {
 
 
   
-void TranslateCtx::  translateExpr(const core::TypedExprPtr& expr, ExprProgram& program) {
-  
+  OperandIdx TranslateCtx::  translateExpr(const core::TypedExprPtr& expr, ExprProgram& program, OperandIdx result), bool needResult{
+    switch (expr->kind()) {
+    case core::ExprKind::kFieldAccess:
+    case core::ExprKind::kDereference: {
+      auto it = stage_.fieldToOperand.find(expr.get()); 
+      if (it != state_.fieldToOperand.end()) {
+	
+	return it->second;
+      }
+      VELOX_FAIL("Would expect to have getters defined for :" << expr->toString();
+    }
+      
+	case core::ExprKind::kConstant: {
+	auto it = constants_.find(expr);
+	if (it == constants_.end()) {
+	  auto idx = stateCounter_++;
+	  constants_[expr.get()] = idx;
+	  return idx;
+	}
+	return it->second;
+      }
+	
+	case core::ExprKind::kCall:
+    case  core::ExprKind::kCast:
+    }
+    }
   }
 
+
+  
+  
   bool isField(const core::TypedExprPtr& expr, std::vector<int32_t>& path) {
   path.clear();
 
