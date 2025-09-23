@@ -126,7 +126,7 @@ void ProjectSequence::makeWorkUnits(int stageIdx) {
     groups.push_back(project->projections());
   }
   auto& stage = stages_[stageIdx];
-  TranslateCtx ctx(stage, firstTempIdx_, tempTypes_, constants_, stateCounter_);
+  TranslateCtx ctx(stage, firstTempIdx_, tempTypes_, constants_, stateCounter_, this);
   int exprIdx = 0;
   for (auto& group : groups) {
     units.emplace_back();

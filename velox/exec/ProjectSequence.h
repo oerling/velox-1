@@ -221,8 +221,9 @@ class TranslateCtx {
       OperandIdx firstTempIdx,
       std::vector<TypePtr>& temps,
 	       ExprOperandMap& constants,
-      int32_t& stateCounter)
-    : stage_(stage), firstTempIdx_(firstTempIdx), temps_(temps), constants_(constants), stateCounter_(stateCounter) {}
+      int32_t& stateCounter,
+      ProjectSequence* projectSequence)
+    : stage_(stage), firstTempIdx_(firstTempIdx), temps_(temps), constants_(constants), stateCounter_(stateCounter), projectSequence_(projectSequence) {}
 
   void translateExpr(const core::TypedExprPtr&, ExprProgram& program, OperandIdx result);
 
@@ -259,6 +260,7 @@ private:
   std::unordered_set<OperandIdx> usedTemps_;
   ExprOperandMap& constants_;
   int32_t& stateCounter_;
+  ProjectSequence* projectSequence_;
 };
 
 } // namespace facebook::velox::exec
