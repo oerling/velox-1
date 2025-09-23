@@ -19,6 +19,7 @@
 #include "velox/exec/Linear.h"
 #include "velox/exec/Operator.h"
 #include "velox/exec/OperatorUtils.h"
+#include "velox/expression/Expr.h"
 
 namespace facebook::velox::exec {
 
@@ -127,6 +128,8 @@ class ProjectSequence : public Operator {
   const ExprOperandMap& constants() const { return constants_; }
   int32_t& stateCounter() { return stateCounter_; }
 
+  core::TypedExprPtr preprocess(const core::TypedExprPtr& tree);
+
  private:
   // A unit of potentially parallel work. If the same stage has multiple units,
   // the inputs, temporary results and results of these units must be
@@ -203,6 +206,7 @@ class ProjectSequence : public Operator {
   std::vector<VectorPtr> tempVectors_;
   int32_t stateCounter_{0};
   ExprOperandMap constants_;
+  std::unique_ptr<SimpleExpressionEvaluator> evaluator_;
 };
 
 struct TypeHasher {
@@ -239,6 +243,9 @@ class TranslateCtx {
   OperandIdx getTemp(const TypePtr& type);
 
 private:
+  OperandIdx makeCall(std::string& name, const TypePtr& type, std::vector<core::TypedExprPtr>& inputs, OperandIdx result, bool fixedResult);
+  void makeSwitch(const TypePtr& type, std::vector<core::TypedExprPtr>& inputs);
+  
   RowTypePtr inputType_;
 
   // Operands are checked non-nul for active rows.

@@ -31,9 +31,14 @@ struct FunctionLinearMetadata {
   bool resultMayContainArg{false};
 };
 
+  struct ValueInfo {
+    bool notNull{false};
+    std::vector<ValueInfo> children;
+  };
+  
 FunctionLinearMetadata linearMetadata(const std::string& name);
 
-registerLienarMetadata(const std::string& name, LinearMetadata metadata);
+void registerLinenarMetadata(const std::string& name, FunctionLinearMetadata metadata);
   
 using OperandIdx = uint32_t;
 constexpr OperandIdx kNoOperand = ~0;

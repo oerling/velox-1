@@ -17,14 +17,123 @@
 #include "velox/exec/Linear.h"
 #include "velox/core/Expressions.h"
 #include "velox/exec/ProjectSequence.h"
+#include "velox/expression/ConstantExpr.h"
+#include "velox/exec/Task.h"
 
 namespace facebook::velox::exec {
 
+core::TypedExprPtr copyWithChildren(
+    const core::TypedExprPtr& expr,
+    const std::vector<core::TypedExprPtr>& newChildren) {
+  switch (expr->kind()) {
+    case core::ExprKind::kCall: {
+      auto call = expr->asUnchecked<core::CallTypedExpr>();
+      return std::make_shared<core::CallTypedExpr>(
+          call->type(), newChildren, call->name());
+    }
+    case core::ExprKind::kCast: {
+      auto cast = expr->asUnchecked<core::CastTypedExpr>();
+      return std::make_shared<core::CastTypedExpr>(
+          cast->type(), newChildren, cast->isTryCast());
+    }
+    case core::ExprKind::kDereference: {
+      auto deref = expr->asUnchecked<core::DereferenceTypedExpr>();
+      VELOX_CHECK_EQ(newChildren.size(), 1, "DereferenceTypedExpr requires exactly one child");
+      return std::make_shared<core::DereferenceTypedExpr>(
+          deref->type(), newChildren[0], deref->index());
+    }
+    case core::ExprKind::kFieldAccess: {
+      auto field = expr->asUnchecked<core::FieldAccessTypedExpr>();
+      if (field->isInputColumn()) {
+        // Input column field access has no children
+        VELOX_CHECK(newChildren.empty(), "Input column FieldAccessTypedExpr should have no children");
+        return std::make_shared<core::FieldAccessTypedExpr>(
+            field->type(), field->name());
+      } else {
+        // Struct field access has one child
+        VELOX_CHECK_EQ(newChildren.size(), 1, "Struct FieldAccessTypedExpr requires exactly one child");
+        return std::make_shared<core::FieldAccessTypedExpr>(
+            field->type(), newChildren[0], field->name());
+      }
+    }
+    default:
+      VELOX_UNSUPPORTED("copyWithChildren not implemented for expression kind: {}", expr->kind());
+  }
+}
 
-  
+core::TypedExprPtr ProjectSequence::preprocess(const core::TypedExprPtr& tree) {
+  if (!tree) {
+    return tree;
+  }
+
+  // First, recursively preprocess all children
+  std::vector<core::TypedExprPtr> newInputs;
+  bool anyChanged = false;
+
+  for (const auto& input : tree->inputs()) {
+    auto newInput = preprocess(input);
+    if (newInput != input) {
+      anyChanged = true;
+    }
+    newInputs.push_back(newInput);
+  }
+
+  // Check if this is a call with all constant arguments
+  if (tree->kind() == core::ExprKind::kCall) {
+    auto call = tree->asUnchecked<core::CallTypedExpr>();
+    bool allConstant = true;
+
+    for (const auto& input : newInputs) {
+      if (input->kind() != core::ExprKind::kConstant) {
+        allConstant = false;
+        break;
+      }
+    }
+
+    if (allConstant && !newInputs.empty()) {
+      try {
+        // Create the expression with new inputs for constant folding
+        auto exprToFold = anyChanged ?
+            std::make_shared<core::CallTypedExpr>(call->type(), newInputs, call->name()) :
+            tree;
+
+        // Create evaluator if not exists
+        if (!evaluator_) {
+          evaluator_ = std::make_unique<SimpleExpressionEvaluator>(
+              operatorCtx_->driverCtx()->task->queryCtx().get(),
+              operatorCtx_->pool());
+        }
+
+        // Try to compile and check if it resulted in a constant
+        auto exprSet = evaluator_->compile(exprToFold);
+        auto& compiledExprs = exprSet->exprs();
+
+        if (!compiledExprs.empty() && compiledExprs[0]->isConstant()) {
+          // The expression was folded to a constant
+          auto constantExpr = dynamic_cast<const ConstantExpr*>(compiledExprs[0].get());
+          if (constantExpr) {
+            return std::make_shared<core::ConstantTypedExpr>(constantExpr->value());
+          }
+        }
+      } catch (...) {
+        // If constant folding fails, fall through to return original
+      }
+    }
+  }
+
+  // If any inputs changed, create a new expression with the new inputs
+  if (anyChanged) {
+    return copyWithChildren(tree, newInputs);
+  }
+
+  // No changes, return original
+  return tree;
+}
+
+
   OperandIdx TranslateCtx::makeCall(std::string& name, const TypePtr& type, std::vector<core::TypedExprPtr>& inputs, OperandIdx result, bool fixedResult) {
     auto metadata = linearMetadata(name);
-    
+
   }
 
   void  TranslateCtx::makeSwitch(const TypePtr& type, std::vector<core::TypedExprPtr>& inputs) {
@@ -47,7 +156,7 @@ OperandIdx TranslateCtx::translateExpr(
       if (it != state_.fieldToOperand.end()) {
         return it->second;
       }
-      VELOX_FAIL("Would expect to have getters defined for :" << expr->toString();
+      VELOX_FAIL("Would expect to have getters defined for : {}",  expr->toString();)
     }
 
     case core::ExprKind::kConstant: {
@@ -73,13 +182,13 @@ OperandIdx TranslateCtx::translateExpr(
       return it->second;
     }
 
-    case core::ExprKind::kCall:
-      auto call = expr->asUnchecked<core::CallTypedExpr>();
-      return makeCall(call->name(), expr->type(), call->inputs());
+  case core::ExprKind::kCall: {
+    auto call = expr->asUnchecked<core::CallTypedExpr>();
+    return makeCall(call->name(), expr->type(), call->inputs());
   }
   case core::ExprKind::kCast:
     return makeCall("cast", expr->type(), expr->inputs());
-}
+  }
 }
 
 bool isField(const core::TypedExprPtr& expr, std::vector<int32_t>& path) {
