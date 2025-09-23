@@ -220,8 +220,9 @@ class TranslateCtx {
       StageData& stage,
       OperandIdx firstTempIdx,
       std::vector<TypePtr>& temps,
-	       ExprOperandMap& constants)
-    : stage_(stage), firstTempIdx_(firstTempIdx), temps_(temps), constants_(constants) {}
+	       ExprOperandMap& constants,
+      int32_t& stateCounter)
+    : stage_(stage), firstTempIdx_(firstTempIdx), temps_(temps), constants_(constants), stateCounter_(stateCounter) {}
 
   void translateExpr(const core::TypedExprPtr&, ExprProgram& program, OperandIdx result);
 
@@ -257,6 +258,7 @@ private:
   // work units must have separate temps.
   std::unordered_set<OperandIdx> usedTemps_;
   ExprOperandMap& constants_;
+  int32_t& stateCounter_;
 };
 
 } // namespace facebook::velox::exec
