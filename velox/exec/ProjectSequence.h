@@ -121,12 +121,33 @@ class ProjectSequence : public Operator {
 
   void initialize() override;
 
-  OperandIdx firstTempIdx() const { return firstTempIdx_; }
-  std::vector<TypePtr>& tempTypes() { return tempTypes_; }
-  const std::vector<TypePtr>& tempTypes() const { return tempTypes_; }
-  ExprOperandMap& constants() { return constants_; }
-  const ExprOperandMap& constants() const { return constants_; }
-  int32_t& stateCounter() { return stateCounter_; }
+  OperandIdx firstTempIdx() const {
+    return firstTempIdx_;
+  }
+
+  std::vector<TypePtr>& tempTypes() {
+    return tempTypes_;
+  }
+
+  const std::vector<TypePtr>& tempTypes() const {
+    return tempTypes_;
+  }
+
+  ExprOperandMap& constants() {
+    return constants_;
+  }
+
+  const ExprOperandMap& constants() const {
+    return constants_;
+  }
+
+  int32_t& stateCounter() {
+    return stateCounter_;
+  }
+
+  std::vector<VectorPtr>& tempVectors() {
+    return tempVectors_;
+  }
 
   core::TypedExprPtr preprocess(const core::TypedExprPtr& tree);
 
@@ -188,7 +209,7 @@ class ProjectSequence : public Operator {
   std::vector<std::vector<WorkUnit>> work_;
 
   // State for all projections. Instructions reference
-  // inputs/temporaries/outputs via an index into this.
+  // inputs/temporaries/outputs/constants via an index into this.
   std::vector<VectorPtr*> state_;
 
   std::vector<std::vector<std::vector<int32_t>>> allPaths_;
@@ -227,12 +248,14 @@ struct TypeComparer {
 /// State during conversion from TypedExpr to ExprProgram
 class TranslateCtx {
  public:
-  TranslateCtx(
-      StageData& stage,
-      ProjectSequence* projectSequence)
-    : stage_(stage), projectSequence_(projectSequence) {}
+  TranslateCtx(StageData& stage, ProjectSequence* projectSequence);
 
-  void translateExpr(const core::TypedExprPtr&, ExprProgram& program, OperandIdx result);
+  OperandIdx
+  translateExpr(const core::TypedExprPtr&, OperandIdx result, bool fixedResult);
+
+  void setProgram(ExprProgram* program) {
+    program_ = program;
+  }
 
   void noReuseOfTemp() {
     for (auto i : distinctTemps_) {
@@ -240,12 +263,20 @@ class TranslateCtx {
     }
   }
 
+ private:
   OperandIdx getTemp(const TypePtr& type);
+  void releaseTemp(OperandIdx idx);
+  OperandIdx makeCall(
+		      const std::string& name,
+      const TypePtr& type,
+		      const std::vector<core::TypedExprPtr>& inputs,
+      OperandIdx result,
+      bool fixedResult);
+  void makeSwitch(
+      const TypePtr& type,
+      std::vector<core::TypedExprPtr>& inputs,
+      OperandIdx result);
 
-private:
-  OperandIdx makeCall(std::string& name, const TypePtr& type, std::vector<core::TypedExprPtr>& inputs, OperandIdx result, bool fixedResult);
-  void makeSwitch(const TypePtr& type, std::vector<core::TypedExprPtr>& inputs);
-  
   RowTypePtr inputType_;
 
   // Operands are checked non-nul for active rows.
@@ -264,6 +295,8 @@ private:
   // work units must have separate temps.
   std::unordered_set<OperandIdx> usedTemps_;
   ProjectSequence* projectSequence_;
+
+  ExprProgram* program_{nullptr};
 };
 
 } // namespace facebook::velox::exec

@@ -115,6 +115,77 @@ ProjectSequence::ProjectSequence(
       projects_(projects),
       inputType_(projects_.front()->sources()[0]->outputType()) {}
 
+TranslateCtx::TranslateCtx(
+    StageData& stage,
+    ProjectSequence* projectSequence)
+    : stage_(stage), projectSequence_(projectSequence) {
+  // Initialize tempVectors_ map based on tempTypes and constants
+  auto& tempTypes = projectSequence_->tempTypes();
+  auto& constants = projectSequence_->constants();
+  auto firstTempIdx = projectSequence_->firstTempIdx();
+
+  for (size_t i = 0; i < tempTypes.size(); ++i) {
+    auto operandIdx = firstTempIdx + i;
+
+    // Check if this operandIdx is NOT used by any constant
+    bool isUsedByConstant = false;
+    for (const auto& pair : constants) {
+      if (pair.second == operandIdx) {
+        isUsedByConstant = true;
+        break;
+      }
+    }
+
+    if (!isUsedByConstant) {
+      // Add this operandIdx to the vector for the corresponding type
+      tempVectors_[tempTypes[i]].push_back(operandIdx);
+    }
+  }
+}
+
+OperandIdx TranslateCtx::getTemp(const TypePtr& type) {
+  OperandIdx idx;
+
+  // Look up the type in tempVectors_
+  auto it = tempVectors_.find(type);
+  if (it != tempVectors_.end() && !it->second.empty()) {
+    // Found and vector is not empty, pop the last value
+    idx = it->second.back();
+    it->second.pop_back();
+  } else {
+    // No match or vector is empty, create new idx
+    idx = projectSequence_->stateCounter()++;
+    auto firstTempIdx = projectSequence_->firstTempIdx();
+    auto& tempTypes = projectSequence_->tempTypes();
+
+    // Add the type to tempTypes at index (idx - firstTempIdx)
+    auto tempIndex = idx - firstTempIdx;
+    if (tempIndex >= tempTypes.size()) {
+      tempTypes.resize(tempIndex + 1);
+    }
+    tempTypes[tempIndex] = type;
+  }
+
+  // Add idx to distinctTemps_ in both cases
+  distinctTemps_.insert(idx);
+
+  return idx;
+}
+
+void TranslateCtx::releaseTemp(OperandIdx idx) {
+  auto firstTempIdx = projectSequence_->firstTempIdx();
+  auto& tempTypes = projectSequence_->tempTypes();
+
+  // Look up the type of the idx from tempTypes at index (idx - firstTempIdx)
+  auto tempIndex = idx - firstTempIdx;
+  VELOX_CHECK_LT(tempIndex, tempTypes.size(), "Invalid temp index for release");
+
+  auto type = tempTypes[tempIndex];
+
+  // Add the idx to the vector in tempVectors_ that corresponds to the type
+  tempVectors_[type].push_back(idx);
+}
+
 void ProjectSequence::makeWorkUnits(int stageIdx) {
   const core::AbstractProjectNode* project = projects_[stageIdx].get();
   std::vector<std::vector<core::TypedExprPtr>> groups;
@@ -135,12 +206,12 @@ void ProjectSequence::makeWorkUnits(int stageIdx) {
         operatorCtx_->pool(),
         operatorCtx_->driverCtx()->task->queryCtx().get());
     unit.program = std::make_unique<ExprProgram>();
-
+    ctx.setProgram(unit.program.get());
     for (auto i = 0; i < group.size(); ++i) {
       auto expr = stage.exprForPath[exprIdx];
       ++exprIdx;
       if (expr) {
-        ctx.translateExpr(expr, *unit.program, stage.output[exprIdx].operand);
+        ctx.translateExpr(expr, stage.output[exprIdx].operand, true);
       }
     }
     ctx.noReuseOfTemp();

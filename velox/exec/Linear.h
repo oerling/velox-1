@@ -38,7 +38,9 @@ struct FunctionLinearMetadata {
   
 FunctionLinearMetadata linearMetadata(const std::string& name);
 
-void registerLinenarMetadata(const std::string& name, FunctionLinearMetadata metadata);
+void registerLinearMetadata(const std::string& name, FunctionLinearMetadata metadata);
+
+void setupLinearMetadata();
   
 using OperandIdx = uint32_t;
 constexpr OperandIdx kNoOperand = ~0;
