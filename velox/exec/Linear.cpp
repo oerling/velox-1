@@ -124,7 +124,21 @@ core::TypedExprPtr copyWithChildren(
   }
 
   void ProjectSequence::setConstantValueInfo(const core::TypedExprPtr& constant, ValueInfoMap& map) {
-    
+    auto constantExpr = constant->asUnchecked<core::ConstantTypedExpr>();
+
+    VectorPtr vector;
+    if (constantExpr->hasValueVector()) {
+      vector = constantExpr->valueVector();
+    } else {
+      vector = BaseVector::createConstant(
+          constantExpr->type(),
+          constantExpr->value(),
+          1,
+          operatorCtx()->pool());
+    }
+
+    auto info = vectorValueInfo(*vector);
+    valueMap_[constant.get()] = std::move(info);
   }
 
   void setCallValueInfo(const core::TypedExprPtr& call, ValueInfoMap& map);
