@@ -23,6 +23,9 @@ namespace facebook::velox::exec {
 
 
   struct ValueInfo {
+    ValueInfo(bool notNull, bool recursiveNotNull, std::vector<ValueInfo> children = {})
+      : notNull(notNull), recursiveNotNull(recursiveNotNull), children(std::move(children)) {}
+
     bool notNull{false};
     bool recursiveNotNull{false};
     core::TypedExprPtr constant;

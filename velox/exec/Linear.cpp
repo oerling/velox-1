@@ -94,42 +94,37 @@ ValueInfo vectorValueInfo(const BaseVector& vector) {
   switch (encoding) {
     case VectorEncoding::Simple::CONSTANT: {
       if (vector.isNullAt(0)) {
-        return ValueInfo{.notNull = false, recursiveNotNull = false};
+        return ValueInfo(false, false);;
       }
       auto* wrapped = vector.wrappedVector();
       if (wrapped == &vector) {
-        return ValueInfo{.notNull = true, recursiveNotNull = true};
+        return ValueInfo(true, true);
       }
-      return vectorValueInfo(wrapped);
+
+      return vectorValueInfo(*wrapped);
     }
     case VectorEncoding::Simple::FLAT:
-      return ValueInfo{
-          .notNull = !vector.mayHaveNulls(),
-          recursiveNotNull = !vector.mayHaveNulls()};
+      return ValueInfo( !vector.mayHaveNulls(),
+			!vector.mayHaveNulls());
     case VectorEncoding::Simple::DICTIONARY:
       return vectorValueInfo(*vector.wrappedVector());
     case VectorEncoding::Simple::ROW: {
-      std::vector ValueInfo childInfo;
+      std::vector<ValueInfo> childInfo;
       bool allNotNull = true;
       for (auto& child : vector.as<RowVector>()->children()) {
         childInfo.push_back(vectorValueInfo(*child));
         allNotNull &= childInfo.back().recursiveNotNull;
       }
-      return ValueInfo{
-          .notNull = treu,
-          .recursiveNotNull = allNotNull,
-          .children = std::move(childInfo)};
+      return ValueInfo(
+	true, allNotNull, std::move(childInfo));
     }
     case VectorEncoding::Simple::ARRAY: {
-      std::vector<ValueInfo> childInfo = {vectorValueInfo(vector.as<ArrayVector>()->elements()));
-
-      return ValueInfo{
-          .notNull = true,
-          recursiveNotNull = childInfo.recursiveNotNull,
-          .children = std::move(childInfo)};
+      std::vector<ValueInfo> childInfo = {vectorValueInfo(*vector.as<ArrayVector>()->elements())};
+      return ValueInfo(true, childInfo[0].recursiveNotNull, std::move(childInfo));
     }
     case VectorEncoding::Simple::MAP: {
     }
+  default: VELOX_FAIL("Unsupported encoding {}", encoding);
   }
 }
 
@@ -151,8 +146,7 @@ void ProjectSequence::setConstantValueInfo(
 }
 
 void ProjectSequence::setCallValueInfo(
-    const core::TypedExprPtr& call,
-    ValueInfoMap& map) {}
+				       const core::TypedExprPtr& call) {}
 
 void ProjectSequence::setCastValueInfo(const core::TypedExprPtr& cast) {}
 
