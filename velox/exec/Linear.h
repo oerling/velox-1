@@ -29,9 +29,9 @@ namespace facebook::velox::exec {
     std::vector<ValueInfo> children;
   };
 
-  using ValueInfoMap = std::unordered_map<core::ITypedExpr*, ValueInfo>;
+  using ValueInfoMap = std::unordered_map<const core::ITypedExpr*, ValueInfo>;
   
-const  ValueInfo* valueInfo(const core::ITypedExpr* expr, const ValueInfoMap*& map);
+const  ValueInfo* valueInfo(const core::ITypedExpr* expr, const ValueInfoMap& map);
 
   /// Map from expr to nullness etc for value and its subfields.
 struct ValueCtx {

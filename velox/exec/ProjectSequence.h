@@ -149,20 +149,26 @@ class ProjectSequence : public Operator {
     return tempVectors_;
   }
 
-  core::TypedExprPtr preprocess(const core::TypedExprPtr& tree);
+  core::TypedExprPtr preprocess(const core::TypedExprPtr& tree, ValueCtx& ctx);
 
-  void setConstantValueInfo(const core::TypedExprPtr& constant);
+  core::TypedExprPtr tryFoldConstant(
+      const core::TypedExprPtr& expr,
+      ValueCtx& ctx);
+
+  void setConstantValueInfo(
+      const core::TypedExprPtr& constant,
+      ValueInfoMap& map);
 
   void setCallValueInfo(const core::TypedExprPtr& call);
 
-    void setCastValueInfo(const core::TypedExprPtr& cast);
+  void setCastValueInfo(const core::TypedExprPtr& cast);
 
-  
+
   ValueInfoMap& valueMap() {
     return valueMap_;
   }
 
-  
+
  private:
   // A unit of potentially parallel work. If the same stage has multiple units,
   // the inputs, temporary results and results of these units must be

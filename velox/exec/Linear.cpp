@@ -82,72 +82,115 @@ core::TypedExprPtr copyWithChildren(
   }
 }
 
-  const  ValueInfo* valueInfo(const core::ITypedExpr* expr, const ValueInfoMap*& map) {
-    auto it = map.find(expr);
-    return it == map.end() ? nullptr : &it->second;
-  }
+const ValueInfo* valueInfo(
+    const core::ITypedExpr* expr,
+    const ValueInfoMap& map) {
+  auto it = map.find(expr);
+  return it == map.end() ? nullptr : &it->second;
+}
 
-
-  ValueInfo vectorValueInfo(const BaseVector& vector) {
-    auto encoding = vector.encoding();
-    switch (encoding) {
+ValueInfo vectorValueInfo(const BaseVector& vector) {
+  auto encoding = vector.encoding();
+  switch (encoding) {
     case VectorEncoding::Simple::CONSTANT: {
       if (vector.isNullAt(0)) {
-	return ValueInfo{.notNull = false, recursiveNotNull = false};
+        return ValueInfo{.notNull = false, recursiveNotNull = false};
       }
       auto* wrapped = vector.wrappedVector();
       if (wrapped == &vector) {
-	return ValueInfo{.notNull = true, recursiveNotNull = true};
+        return ValueInfo{.notNull = true, recursiveNotNull = true};
       }
       return vectorValueInfo(wrapped);
     }
     case VectorEncoding::Simple::FLAT:
-      return ValueInfo(.notNull = !vector.mayHaveNulls(), recursiveNotNull = !vector.mayHaveNulls()};
+      return ValueInfo{
+          .notNull = !vector.mayHaveNulls(),
+          recursiveNotNull = !vector.mayHaveNulls()};
     case VectorEncoding::Simple::DICTIONARY:
       return vectorValueInfo(*vector.wrappedVector());
     case VectorEncoding::Simple::ROW: {
       std::vector ValueInfo childInfo;
       bool allNotNull = true;
       for (auto& child : vector.as<RowVector>()->children()) {
-	childInfo.push_back(vectorValueInfo(*child));
-	allNotNull &= childInfo.back().recursiveNotNull;
+        childInfo.push_back(vectorValueInfo(*child));
+        allNotNull &= childInfo.back().recursiveNotNull;
       }
-      return ValueInfo{.notNull = treu, .recursiveNotNull = allNotNull, children = std::move(childInfo)};
+      return ValueInfo{
+          .notNull = treu,
+          .recursiveNotNull = allNotNull,
+          .children = std::move(childInfo)};
     }
     case VectorEncoding::Simple::ARRAY: {
-      std::vector<ValueInfo> childInfo = {vectorValueInfo(vector.as<ArrayVector>()->elements()));\};
-      return ValueInfo{.notNull = true, recursiveNotNull = childInfo.recursiveNotNull, .children = std::move(childInfo)};
-      
+      std::vector<ValueInfo> childInfo = {vectorValueInfo(vector.as<ArrayVector>()->elements()));
+
+      return ValueInfo{
+          .notNull = true,
+          recursiveNotNull = childInfo.recursiveNotNull,
+          .children = std::move(childInfo)};
     }
-    case VectorEncoding::Simple::MAP:
+    case VectorEncoding::Simple::MAP: {
     }
   }
+}
 
-  void ProjectSequence::setConstantValueInfo(const core::TypedExprPtr& constant, ValueInfoMap& map) {
-    auto constantExpr = constant->asUnchecked<core::ConstantTypedExpr>();
+void ProjectSequence::setConstantValueInfo(
+    const core::TypedExprPtr& constant,
+    ValueInfoMap& map) {
+  auto constantExpr = constant->asUnchecked<core::ConstantTypedExpr>();
 
-    VectorPtr vector;
-    if (constantExpr->hasValueVector()) {
-      vector = constantExpr->valueVector();
-    } else {
-      vector = BaseVector::createConstant(
-          constantExpr->type(),
-          constantExpr->value(),
-          1,
-          operatorCtx()->pool());
-    }
-
-    auto info = vectorValueInfo(*vector);
-    valueMap_[constant.get()] = std::move(info);
+  VectorPtr vector;
+  if (constantExpr->hasValueVector()) {
+    vector = constantExpr->valueVector();
+  } else {
+    vector = BaseVector::createConstant(
+        constantExpr->type(), constantExpr->value(), 1, operatorCtx()->pool());
   }
 
-  void setCallValueInfo(const core::TypedExprPtr& call, ValueInfoMap& map);
+  auto info = vectorValueInfo(*vector);
+  valueMap_[constant.get()] = std::move(info);
+}
 
-    void setCastValueInfo(const core::TypedExprPtr& cast, ValueInfoMap& map);
+void ProjectSequence::setCallValueInfo(
+    const core::TypedExprPtr& call,
+    ValueInfoMap& map) {}
 
-  
-  
-  core::TypedExprPtr ProjectSequence::preprocess(const core::TypedExprPtr& tree, ValueCtx& ctx) {
+void ProjectSequence::setCastValueInfo(const core::TypedExprPtr& cast) {}
+
+core::TypedExprPtr ProjectSequence::tryFoldConstant(
+    const core::TypedExprPtr& expr,
+    ValueCtx& ctx) {
+  // Create evaluator if not exists
+  if (!evaluator_) {
+    evaluator_ = std::make_unique<SimpleExpressionEvaluator>(
+        operatorCtx()->driverCtx()->task->queryCtx().get(),
+        operatorCtx()->pool());
+  }
+
+  try {
+    // Try to compile and check if it resulted in a constant
+    auto exprSet = evaluator_->compile(expr);
+    auto& compiledExprs = exprSet->exprs();
+
+    if (!compiledExprs.empty() && compiledExprs[0]->isConstant()) {
+      // The expression was folded to a constant
+      auto constantExpr =
+          dynamic_cast<const ConstantExpr*>(compiledExprs[0].get());
+      if (constantExpr) {
+        auto constant =
+            std::make_shared<core::ConstantTypedExpr>(constantExpr->value());
+        setConstantValueInfo(constant, ctx.valueInfo);
+        return constant;
+      }
+    }
+  } catch (...) {
+    // If constant folding fails, return original
+  }
+  return expr;
+}
+
+core::TypedExprPtr ProjectSequence::preprocess(
+    const core::TypedExprPtr& tree,
+    ValueCtx& ctx) {
   if (!tree) {
     return tree;
   }
@@ -159,7 +202,7 @@ core::TypedExprPtr copyWithChildren(
     }
     return tree;
   }
-  
+
   // First, recursively preprocess all children
   std::vector<core::TypedExprPtr> newInputs;
   bool anyChanged = false;
@@ -185,45 +228,31 @@ core::TypedExprPtr copyWithChildren(
     }
 
     if (allConstant && !newInputs.empty()) {
-      try {
-        // Create the expression with new inputs for constant folding
-        auto exprToFold = anyChanged
-            ? std::make_shared<core::CallTypedExpr>(
-                  call->type(), newInputs, call->name())
-            : tree;
-
-        // Create evaluator if not exists
-        if (!evaluator_) {
-          evaluator_ = std::make_unique<SimpleExpressionEvaluator>(
-              operatorCtx_->driverCtx()->task->queryCtx().get(),
-              operatorCtx_->pool());
-        }
-
-        // Try to compile and check if it resulted in a constant
-        auto exprSet = evaluator_->compile(exprToFold);
-        auto& compiledExprs = exprSet->exprs();
-
-        if (!compiledExprs.empty() && compiledExprs[0]->isConstant()) {
-          // The expression was folded to a constant
-          auto constantExpr =
-              dynamic_cast<const ConstantExpr*>(compiledExprs[0].get());
-          if (constantExpr) {
-            auto constant = std::make_shared<core::ConstantTypedExpr>(
-                constantExpr->value());
-	    setConstantValueInfo(constant, ctx);
-	    return constant;
-          }
-        }
-      } catch (...) {
-        // If constant folding fails, fall through to return original
-      }
+      // Create the expression with new inputs for constant folding
+      auto exprToFold = anyChanged ? std::make_shared<core::CallTypedExpr>(
+                                         call->type(), newInputs, call->name())
+                                   : tree;
+      return tryFoldConstant(exprToFold, ctx);
     }
     auto md = linearMetadata(call->name());
-    if (md->rewrite) {
-      auto rewritten = md->rewrite(tree, ctx);
+    if (md.rewrite) {
+      auto rewritten = md.rewrite(tree, ctx);
       if (rewritten != tree) {
-	return preprocess(rewritten, ctx);
+        return preprocess(rewritten, ctx);
       }
+    }
+  }
+
+  // Check if this is a cast with constant argument
+  if (tree->kind() == core::ExprKind::kCast) {
+    if (!newInputs.empty() &&
+        newInputs[0]->kind() == core::ExprKind::kConstant) {
+      auto cast = tree->asUnchecked<core::CastTypedExpr>();
+      auto exprToFold = anyChanged
+          ? std::make_shared<core::CastTypedExpr>(
+                cast->type(), newInputs, cast->isTryCast())
+          : tree;
+      return tryFoldConstant(exprToFold, ctx);
     }
   }
 
@@ -238,9 +267,9 @@ core::TypedExprPtr copyWithChildren(
 }
 
 OperandIdx TranslateCtx::makeCall(
-				  const std::string& name,
+    const std::string& name,
     const TypePtr& type,
-				  const std::vector<core::TypedExprPtr>& inputs,
+    const std::vector<core::TypedExprPtr>& inputs,
     OperandIdx result,
     bool fixedResult) {
   auto metadata = linearMetadata(name);
@@ -293,11 +322,11 @@ OperandIdx TranslateCtx::translateExpr(
               projectSequence_->operatorCtx()->pool());
         }
         temps[idx] = vector->type();
-	auto& vectors = projectSequence_->tempVectors();
-	if (vectors.size() <= idx) {
-	  vectors.resize(idx + 1);
-	}
-	vectors[idx] = vector;
+        auto& vectors = projectSequence_->tempVectors();
+        if (vectors.size() <= idx) {
+          vectors.resize(idx + 1);
+        }
+        vectors[idx] = vector;
         constants[expr.get()] = idx;
         return idx;
       }
@@ -306,11 +335,14 @@ OperandIdx TranslateCtx::translateExpr(
 
     case core::ExprKind::kCall: {
       auto call = expr->asUnchecked<core::CallTypedExpr>();
-      return makeCall(call->name(), expr->type(), call->inputs(), result, fixedResult);
+      return makeCall(
+          call->name(), expr->type(), call->inputs(), result, fixedResult);
     }
     case core::ExprKind::kCast:
-      return makeCall("cast", expr->type(), expr->inputs(), result, fixedResult);
-  default: VELOX_FAIL("Expr not supported: ", expr->toString()); 
+      return makeCall(
+          "cast", expr->type(), expr->inputs(), result, fixedResult);
+    default:
+      VELOX_FAIL("Expr not supported: ", expr->toString());
   }
 }
 
@@ -366,8 +398,8 @@ void registerLinearMetadata(
 }
 
 void setupLinearMetadata() {
-  // Register binary arithmetic functions that return the same type as arguments.
-  // These functions can move an argument to the result.
+  // Register binary arithmetic functions that return the same type as
+  // arguments. These functions can move an argument to the result.
   const std::vector<std::string> binaryArithmeticFunctions = {
       "plus",
       "minus",
