@@ -82,17 +82,76 @@ core::TypedExprPtr copyWithChildren(
   }
 }
 
-core::TypedExprPtr ProjectSequence::preprocess(const core::TypedExprPtr& tree) {
+  const  ValueInfo* valueInfo(const core::ITypedExpr* expr, const ValueInfoMap*& map) {
+    auto it = map.find(expr);
+    return it == map.end() ? nullptr : &it->second;
+  }
+
+
+  ValueInfo vectorValueInfo(const BaseVector& vector) {
+    auto encoding = vector.encoding();
+    switch (encoding) {
+    case VectorEncoding::Simple::CONSTANT: {
+      if (vector.isNullAt(0)) {
+	return ValueInfo{.notNull = false, recursiveNotNull = false};
+      }
+      auto* wrapped = vector.wrappedVector();
+      if (wrapped == &vector) {
+	return ValueInfo{.notNull = true, recursiveNotNull = true};
+      }
+      return vectorValueInfo(wrapped);
+    }
+    case VectorEncoding::Simple::FLAT:
+      return ValueInfo(.notNull = !vector.mayHaveNulls(), recursiveNotNull = !vector.mayHaveNulls()};
+    case VectorEncoding::Simple::DICTIONARY:
+      return vectorValueInfo(*vector.wrappedVector());
+    case VectorEncoding::Simple::ROW: {
+      std::vector ValueInfo childInfo;
+      bool allNotNull = true;
+      for (auto& child : vector.as<RowVector>()->children()) {
+	childInfo.push_back(vectorValueInfo(*child));
+	allNotNull &= childInfo.back().recursiveNotNull;
+      }
+      return ValueInfo{.notNull = treu, .recursiveNotNull = allNotNull, children = std::move(childInfo)};
+    }
+    case VectorEncoding::Simple::ARRAY: {
+      std::vector<ValueInfo> childInfo = {vectorValueInfo(vector.as<ArrayVector>()->elements()));\};
+      return ValueInfo{.notNull = true, recursiveNotNull = childInfo.recursiveNotNull, .children = std::move(childInfo)};
+      
+    }
+    case VectorEncoding::Simple::MAP:
+    }
+  }
+
+  void ProjectSequence::setConstantValueInfo(const core::TypedExprPtr& constant, ValueInfoMap& map) {
+    
+  }
+
+  void setCallValueInfo(const core::TypedExprPtr& call, ValueInfoMap& map);
+
+    void setCastValueInfo(const core::TypedExprPtr& cast, ValueInfoMap& map);
+
+  
+  
+  core::TypedExprPtr ProjectSequence::preprocess(const core::TypedExprPtr& tree, ValueCtx& ctx) {
   if (!tree) {
     return tree;
   }
 
+  if (tree->kind() == core::ExprKind::kFieldAccess) {
+    auto* info = valueInfo(tree.get(), ctx);
+    if (info && info->constant) {
+      return info->constant;
+    }
+    return tree;
+  }
+  
   // First, recursively preprocess all children
   std::vector<core::TypedExprPtr> newInputs;
   bool anyChanged = false;
 
   for (const auto& input : tree->inputs()) {
-    auto newInput = preprocess(input);
+    auto newInput = preprocess(input, ctx);
     if (newInput != input) {
       anyChanged = true;
     }
@@ -135,12 +194,21 @@ core::TypedExprPtr ProjectSequence::preprocess(const core::TypedExprPtr& tree) {
           auto constantExpr =
               dynamic_cast<const ConstantExpr*>(compiledExprs[0].get());
           if (constantExpr) {
-            return std::make_shared<core::ConstantTypedExpr>(
+            auto constant = std::make_shared<core::ConstantTypedExpr>(
                 constantExpr->value());
+	    setConstantValueInfo(constant, ctx);
+	    return constant;
           }
         }
       } catch (...) {
         // If constant folding fails, fall through to return original
+      }
+    }
+    auto md = linearMetadata(call->name());
+    if (md->rewrite) {
+      auto rewritten = md->rewrite(tree, ctx);
+      if (rewritten != tree) {
+	return preprocess(rewritten, ctx);
       }
     }
   }
@@ -151,6 +219,7 @@ core::TypedExprPtr ProjectSequence::preprocess(const core::TypedExprPtr& tree) {
   }
 
   // No changes, return original
+
   return tree;
 }
 

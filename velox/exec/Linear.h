@@ -21,6 +21,29 @@
 
 namespace facebook::velox::exec {
 
+
+  struct ValueInfo {
+    bool notNull{false};
+    bool recursiveNotNull{false};
+    core::TypedExprPtr constant;
+    std::vector<ValueInfo> children;
+  };
+
+  using ValueInfoMap = std::unordered_map<core::ITypedExpr*, ValueInfo>;
+  
+const  ValueInfo* valueInfo(const core::ITypedExpr* expr, const ValueInfoMap*& map);
+
+  /// Map from expr to nullness etc for value and its subfields.
+struct ValueCtx {
+    std::unordered_map<const core::ITypedExpr*, ValueInfo> valueInfo;
+  };
+  
+
+  /// Function that can rewrite an expr based on knowledge of input ValueInfo. Returns 'expr' if no change, else returns the new expr. Must fill in ValueInfo for any new expr, this produces.
+  using LinearRewrite = std::function<core::TypedExprPtr(const core::TypedExprPtr& expr, ValueCtx& ctx)>;
+
+  using MakeValueInfo = std::function<ValueInfo(const core::TypedExprPtr& expr, ValueCtx& ctx)>;
+  
 struct FunctionLinearMetadata {
   /// True if the function can move a whole argument to the result. For example,
   /// plus can update arguments in place if there are no other uses.
@@ -29,12 +52,11 @@ struct FunctionLinearMetadata {
   /// True if an argument may be contained inside a complex type result. This is
   /// true of row/map/array constructors and similar.
   bool resultMayContainArg{false};
-};
 
-  struct ValueInfo {
-    bool notNull{false};
-    std::vector<ValueInfo> children;
-  };
+  MakeValueInfo makeValueInfo;
+  
+  LinearRewrite rewrite;
+};
   
 FunctionLinearMetadata linearMetadata(const std::string& name);
 

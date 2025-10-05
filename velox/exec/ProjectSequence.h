@@ -151,6 +151,18 @@ class ProjectSequence : public Operator {
 
   core::TypedExprPtr preprocess(const core::TypedExprPtr& tree);
 
+  void setConstantValueInfo(const core::TypedExprPtr& constant);
+
+  void setCallValueInfo(const core::TypedExprPtr& call);
+
+    void setCastValueInfo(const core::TypedExprPtr& cast);
+
+  
+  ValueInfoMap& valueMap() {
+    return valueMap_;
+  }
+
+  
  private:
   // A unit of potentially parallel work. If the same stage has multiple units,
   // the inputs, temporary results and results of these units must be
@@ -226,6 +238,7 @@ class ProjectSequence : public Operator {
   std::vector<TypePtr> tempTypes_;
   std::vector<VectorPtr> tempVectors_;
   int32_t stateCounter_{0};
+  ValueInfoMap valueMap_;
   ExprOperandMap constants_;
   std::unique_ptr<SimpleExpressionEvaluator> evaluator_;
 };
@@ -262,7 +275,6 @@ class TranslateCtx {
       usedTemps_.insert(i);
     }
   }
-
  private:
   OperandIdx getTemp(const TypePtr& type);
   void releaseTemp(OperandIdx idx);
