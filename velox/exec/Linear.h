@@ -89,7 +89,7 @@ constexpr OperandIdx kNoOperand = ~0;
   
   class Instruction {
  public:
-    enum class OpCode : uint8_t { kNulls, kNullsEnd, kIf, kCall };
+    enum class OpCode : uint8_t { kNulls, kNullsEnd, kIf, kCoalesce, kCall, kField };
 
     Instruction(OpCode opCode, OperandIdx result)
       : opCode_(opCode), result_(result) {}
@@ -120,12 +120,31 @@ constexpr OperandIdx kNoOperand = ~0;
 
 class Field : public Instruction {
  public:
+  Field(OperandIdx result, OperandIdx input, int32_t childIdx)
+    : Instruction(OpCode::kField, result), input_(input), childIdx_(childIdx) {}
+
+  OperandIdx input() const { return input_; }
+  int32_t childIdx() const { return childIdx_; }
+
+private:
   OperandIdx input_;
   int32_t childIdx_;
 };
 
 class If : public Instruction {
  public:
+  If(OperandIdx result, OperandIdx cond, OperandIdx t, int32_t elseIdx_, int32_t endIdx_)
+    : Instruction(OpCode::kIf, result), condition(cond), temp(t), elseIdx(elseIdx_), endIdx(endIdx_) {}
+
+  OperandIdx condition() const { return condition; }
+  OperandIdx temp() const { return temp; }
+  int32_t elseIdx() const { return elseIdx; }
+  int32_t endIdx() const { return endIdx; }
+
+  void setElse(int32_t idx) { elseIdx = idx; }
+  void setEnd(int32_t idx) { endIdx = idx; }
+
+private:
   OperandIdx condition;
   OperandIdx temp{kNoOperand};
   int32_t elseIdx;
@@ -134,25 +153,51 @@ class If : public Instruction {
 
 class Nulls : public Instruction {
  public:
+  Nulls(OperandIdx result, std::vector<OperandIdx> operands, int32_t nullFlagIdx)
+    : Instruction(OpCode::kNulls, result), operands_(std::move(operands)), nullFlagIdx_(nullFlagIdx) {}
+
+  const std::vector<OperandIdx>& operands() const { return operands_; }
+  int32_t nullFlagIdx() const { return nullFlagIdx_; }
+
   std::vector<OperandIdx> operands_;
   int32_t nullFlagIdx_;
 };
 
-  class EndNulls : public Instruction {
+  class NullsEnd : public Instruction {
   public:
+    NullsEnd(OperandIdx result, int32_t nullFlagIdx, OperandIdx value)
+      : Instruction(OpCode::kNullsEnd, result), nullFlagIdx_(nullFlagIdx), value_(value) {}
 
+    int32_t nullFlagIdx() const { return nullFlagIdx_; }
+    OperandIdx value() const { return value_; }
+
+  private:
     int32_t nullFlagIdx_;
     OperandIdx value_;
   };
   
 class Coalesce : public Instruction {
  public:
+  Coalesce(OperandIdx result, OperandIdx input, OperandIdx defaultVal)
+    : Instruction(OpCode::kCoalesce, result), input_(input), default_(defaultVal) {}
+
+  OperandIdx input() const { return input_; }
+  OperandIdx defaultValue() const { return default_; }
+
+private:
   OperandIdx input_;
   OperandIdx default_;
 };
 
 class Call : public Instruction {
  public:
+  Call(OperandIdx result, std::vector<OperandIdx> args, TypePtr type, bool mayReturnInput)
+    : Instruction(OpCode::kCall, result), args_(std::move(args)), type_(std::move(type)), mayReturnInput_(mayReturnInput) {}
+
+  const std::vector<OperandIdx>& args() const { return args_; }
+  const TypePtr& type() const { return type_; }
+  bool mayReturnInput() const { return mayReturnInput_; }
+
   std::vector<OperandIdx> args_;
   TypePtr type_;
   bool mayReturnInput_;
