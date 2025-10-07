@@ -149,16 +149,14 @@ class ProjectSequence : public Operator {
     return tempVectors_;
   }
 
-  core::TypedExprPtr preprocess(const core::TypedExprPtr& tree, ValueCtx& ctx);
+  core::TypedExprPtr preprocess(const core::TypedExprPtr& tree);
 
   core::TypedExprPtr tryFoldConstant(
-      const core::TypedExprPtr& expr,
-      ValueCtx& ctx);
+      const core::TypedExprPtr& expr);
 
   void setConstantValueInfo(
-      const core::TypedExprPtr& constant,
-      ValueInfoMap& map);
-
+			    const core::TypedExprPtr& constant);
+ 
   void setCallValueInfo(const core::TypedExprPtr& call);
 
   void setCastValueInfo(const core::TypedExprPtr& cast);
@@ -247,6 +245,12 @@ class ProjectSequence : public Operator {
   ValueInfoMap valueMap_;
   ExprOperandMap constants_;
   std::unique_ptr<SimpleExpressionEvaluator> evaluator_;
+
+  // The type of input for the stage being preprocessed.
+  RowTypePtr stageInputType_;
+
+  // Corresponds 1:1 to children of 'stageInputType_'.
+  std::vector<ValueInfo> stageInputValueInfo_;
 };
 
 struct TypeHasher {

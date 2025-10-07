@@ -23,11 +23,13 @@ namespace facebook::velox::exec {
 
 
   struct ValueInfo {
-    ValueInfo(bool notNull, bool recursiveNotNull, std::vector<ValueInfo> children = {})
-      : notNull(notNull), recursiveNotNull(recursiveNotNull), children(std::move(children)) {}
+    ValueInfo() = default;
+    ValueInfo(bool notNull, bool recursiveNotNull, std::vector<ValueInfo> children = {}, bool defaultNulls = false)
+      : notNull(notNull), recursiveNotNull(recursiveNotNull), allDefaultNullBehavior(defaultNulls), children(std::move(children)) {}
 
     bool notNull{false};
     bool recursiveNotNull{false};
+    bool allDefaultNullBehavior{false};
     core::TypedExprPtr constant;
     std::vector<ValueInfo> children;
   };
@@ -56,6 +58,9 @@ struct FunctionLinearMetadata {
   /// true of row/map/array constructors and similar.
   bool resultMayContainArg{false};
 
+  /// True if all non-null arguments can produce a null.
+  bool nullFromNonNull{false};
+  
   MakeValueInfo makeValueInfo;
   
   LinearRewrite rewrite;
@@ -66,7 +71,9 @@ FunctionLinearMetadata linearMetadata(const std::string& name);
 void registerLinearMetadata(const std::string& name, FunctionLinearMetadata metadata);
 
 void setupLinearMetadata();
-  
+
+
+ 
 using OperandIdx = uint32_t;
 constexpr OperandIdx kNoOperand = ~0;
   constexpr OperandIdx kMultiple = 0x80000000;
@@ -75,9 +82,14 @@ constexpr OperandIdx kNoOperand = ~0;
     return idx & ~kMultiple;
   }
 
+  class TranslateCtx;
+  
+  using TranslateSpecialForm = std::function<OperandIdx(TranslateCtx& ctx, const core::TypedExprPtr expr, OperandIdx result, bool fixedResult);
+
+  
   class Instruction {
  public:
-  enum class OpCode : uint8_t { kNulls, kIf, kCall };
+    enum class OpCode : uint8_t { kNulls, kNullsEnd, kIf, kCall };
 
   template <typename T>
   const T* as() const {
@@ -104,6 +116,7 @@ class Field : public Instruction {
 class If : public Instruction {
  public:
   OperandIdx condition;
+  OperandIdx temp{kNoOperand};
   int32_t elseIdx;
   int32_t endIdx;
 };
@@ -150,7 +163,16 @@ struct Assignment {
   int32_t leafRow{-1};
 };
 
-/// Represents a sequential set of instructions for computing
+
+
+  struct RunState {
+    selectivityVector* active;
+    VectorPtr* state;
+    std::vector<std::unique_ptr<SelectivityVector>> selectionStack;
+  };
+
+
+  /// Represents a sequential set of instructions for computing
 /// mulytiple projections base on data in a state. The result is
 /// deposited into the state. The program is single threaded but
 /// multiple programs can run in parallel on the same state as long
@@ -159,7 +181,7 @@ class ExprProgram {
  public:
   ExprProgram() {}
 
-  void eval(EvalCtx* ctx, int32_t begin, int32_t end, VectorPtr* state);
+  void eval(EvalCtx* ctx, int32_t begin, int32_t end, RunState& state);
 
   std::vector<std::unique_ptr<Instruction>>& instructions() {
     return instructions_;

@@ -19,6 +19,7 @@
 #include "velox/exec/ProjectSequence.h"
 #include "velox/exec/Task.h"
 #include "velox/expression/ConstantExpr.h"
+#include "velox/expression/VectorFunction.h"
 
 namespace facebook::velox::exec {
 
@@ -129,8 +130,7 @@ ValueInfo vectorValueInfo(const BaseVector& vector) {
 }
 
 void ProjectSequence::setConstantValueInfo(
-    const core::TypedExprPtr& constant,
-    ValueInfoMap& map) {
+    const core::TypedExprPtr& constant) {
   auto constantExpr = constant->asUnchecked<core::ConstantTypedExpr>();
 
   VectorPtr vector;
@@ -146,13 +146,43 @@ void ProjectSequence::setConstantValueInfo(
 }
 
 void ProjectSequence::setCallValueInfo(
-				       const core::TypedExprPtr& call) {}
+    const core::TypedExprPtr& call) {
+  auto callExpr = call->asUnchecked<core::CallTypedExpr>();
+  auto md = linearMetadata(callExpr->name());
+  ValueCtx ctx{ valueMap_ };
+  ValueInfo info(false, false);
+
+  // If the function has custom makeValueInfo, use it
+  if (md.makeValueInfo) {
+    info = md.makeValueInfo(call, ctx);
+  } else {
+    // Check if function has default null behavior
+    auto functionMetadata = getVectorFunctionMetadata(callExpr->name());
+
+    if (functionMetadata && functionMetadata->defaultNullBehavior) {
+      // Result is not null if all arguments are not null
+      bool allNotNull = true;
+      for (const auto& input : callExpr->inputs()) {
+        auto* inputInfo = valueInfo(input.get(), ctx.valueInfo);
+        if (!inputInfo || !inputInfo->notNull) {
+          allNotNull = false;
+          break;
+        }
+      }
+      info = ValueInfo(allNotNull, allNotNull);
+    } else {
+      // Otherwise, result is nullable
+      info = ValueInfo(false, false);
+    }
+  }
+
+  valueMap_[call.get()] = std::move(info);
+}
 
 void ProjectSequence::setCastValueInfo(const core::TypedExprPtr& cast) {}
 
 core::TypedExprPtr ProjectSequence::tryFoldConstant(
-    const core::TypedExprPtr& expr,
-    ValueCtx& ctx) {
+    const core::TypedExprPtr& expr) {
   // Create evaluator if not exists
   if (!evaluator_) {
     evaluator_ = std::make_unique<SimpleExpressionEvaluator>(
@@ -172,7 +202,7 @@ core::TypedExprPtr ProjectSequence::tryFoldConstant(
       if (constantExpr) {
         auto constant =
             std::make_shared<core::ConstantTypedExpr>(constantExpr->value());
-        setConstantValueInfo(constant, ctx.valueInfo);
+        setConstantValueInfo(constant);
         return constant;
       }
     }
@@ -183,14 +213,19 @@ core::TypedExprPtr ProjectSequence::tryFoldConstant(
 }
 
 core::TypedExprPtr ProjectSequence::preprocess(
-    const core::TypedExprPtr& tree,
-    ValueCtx& ctx) {
+    const core::TypedExprPtr& tree) {
   if (!tree) {
     return tree;
   }
 
   if (tree->kind() == core::ExprKind::kFieldAccess) {
-    auto* info = valueInfo(tree.get(), ctx);
+    auto* info = valueInfo(tree.get(), valueMap_);
+    if (!info){
+      auto input = expr->inputs()[0];
+      if (!input || input->kind() == core::ExprKind::kInputReference) {
+	
+      }
+    }
     if (info && info->constant) {
       return info->constant;
     }
@@ -202,7 +237,7 @@ core::TypedExprPtr ProjectSequence::preprocess(
   bool anyChanged = false;
 
   for (const auto& input : tree->inputs()) {
-    auto newInput = preprocess(input, ctx);
+    auto newInput = preprocess(input);
     if (newInput != input) {
       anyChanged = true;
     }
@@ -226,13 +261,14 @@ core::TypedExprPtr ProjectSequence::preprocess(
       auto exprToFold = anyChanged ? std::make_shared<core::CallTypedExpr>(
                                          call->type(), newInputs, call->name())
                                    : tree;
-      return tryFoldConstant(exprToFold, ctx);
+      return tryFoldConstant(exprToFold);
     }
     auto md = linearMetadata(call->name());
     if (md.rewrite) {
+      ValueCtx ctx {valueMap_};
       auto rewritten = md.rewrite(tree, ctx);
       if (rewritten != tree) {
-        return preprocess(rewritten, ctx);
+        return preprocess(rewritten);
       }
     }
   }
@@ -246,7 +282,7 @@ core::TypedExprPtr ProjectSequence::preprocess(
           ? std::make_shared<core::CastTypedExpr>(
                 cast->type(), newInputs, cast->isTryCast())
           : tree;
-      return tryFoldConstant(exprToFold, ctx);
+      return tryFoldConstant(exprToFold);
     }
   }
 
@@ -329,6 +365,11 @@ OperandIdx TranslateCtx::translateExpr(
 
     case core::ExprKind::kCall: {
       auto call = expr->asUnchecked<core::CallTypedExpr>();
+      auto& name = call->name();
+      auto special = specialForm(name);
+      if (special) {
+	return special(*this, call, result, fixedResult);
+      }
       return makeCall(
           call->name(), expr->type(), call->inputs(), result, fixedResult);
     }
