@@ -91,7 +91,10 @@ constexpr OperandIdx kNoOperand = ~0;
  public:
     enum class OpCode : uint8_t { kNulls, kNullsEnd, kIf, kCall };
 
-  template <typename T>
+    Instruction(OpCode opCode, OperandIdx result)
+      : opCode_(opCode), result_(result) {}
+
+    template <typename T>
   const T* as() const {
     return reinterpret_cast<const T*>(this);
   }
@@ -101,7 +104,15 @@ constexpr OperandIdx kNoOperand = ~0;
     return reinterpret_cast<T*>(this);
   }
 
- protected:
+    OpCode opCode() const {
+      return opCode_;
+    }
+
+    OperandIdx result() const {
+      return result_;
+    }
+
+  protected:
   OpCode opCode_;
   OperandIdx result_;
     OperandIdx standbyResult{kNoOperand};
@@ -124,21 +135,26 @@ class If : public Instruction {
 class Nulls : public Instruction {
  public:
   std::vector<OperandIdx> operands_;
-  int32_t end;
+  int32_t nullFlagIdx_;
 };
 
+  class EndNulls : public Instruction {
+  public:
+
+    int32_t nullFlagIdx_;
+    OperandIdx value_;
+  };
+  
 class Coalesce : public Instruction {
  public:
   OperandIdx input_;
   OperandIdx default_;
-  OperandIdx result_;
 };
 
 class Call : public Instruction {
  public:
   std::vector<OperandIdx> args_;
   TypePtr type_;
-  
   bool mayReturnInput_;
 };
 
@@ -169,6 +185,10 @@ struct Assignment {
     selectivityVector* active;
     VectorPtr* state;
     std::vector<std::unique_ptr<SelectivityVector>> selectionStack;
+
+    BufferPtr pendingNulls;
+    BufferPtr temp1;
+    BufferPtr temp2;
   };
 
 

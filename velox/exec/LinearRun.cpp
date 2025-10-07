@@ -26,8 +26,8 @@ namespace facebook::velox::exec {
   void ExprProgram::eval(EvalCtx* ctx, int32_t begin, int32_t end, VectorPtr* state)
   
     for (auto i = begin; i < end; ++i) {
-      const auto& inst = *instructions[i];
-      siwtch (inst.op) {
+      const auto& instruction = *instructions_[i];
+      switch (inst.op()) {
 	case kIf: {
 	  auto ifInst = *inst.as<If>();
 	  auto flags = state[ifInst.condition]->as<FlatVector<bool>>();
