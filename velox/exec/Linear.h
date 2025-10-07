@@ -85,10 +85,16 @@ constexpr OperandIdx kNoOperand = ~0;
   }
 
   class TranslateCtx;
-  
-  using TranslateSpecialForm = std::function<OperandIdx(TranslateCtx& ctx, const core::TypedExprPtr expr, OperandIdx result, bool fixedResult);
 
-  
+  using TranslateSpecialForm = std::function<OperandIdx(TranslateCtx& ctx, const core::TypedExprPtr expr, OperandIdx result, bool fixedResult)>;
+
+TranslateSpecialForm specialForm(const std::string& name);
+
+void registerSpecialForm(const std::string& name, TranslateSpecialForm form);
+
+void setupSpecialForms();
+
+
   class Instruction {
  public:
     enum class OpCode : uint8_t { kNulls, kNullsEnd, kIf, kCoalesce, kCall, kField };

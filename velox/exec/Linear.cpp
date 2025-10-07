@@ -32,6 +32,13 @@ getLinearMetadataMap() {
   return metadataMap;
 }
 
+// Returns a reference to the static map of special forms.
+std::unordered_map<std::string, TranslateSpecialForm>&
+getSpecialFormMap() {
+  static std::unordered_map<std::string, TranslateSpecialForm> specialFormMap;
+  return specialFormMap;
+}
+
 } // namespace
 
 core::TypedExprPtr copyWithChildren(
@@ -552,6 +559,25 @@ void registerLinearMetadata(
     FunctionLinearMetadata metadata) {
   auto& metadataMap = getLinearMetadataMap();
   metadataMap[name] = metadata;
+}
+
+TranslateSpecialForm specialForm(const std::string& name) {
+  auto& specialFormMap = getSpecialFormMap();
+  auto it = specialFormMap.find(name);
+  if (it != specialFormMap.end()) {
+    return it->second;
+  }
+  // Return nullptr if not found.
+  return nullptr;
+}
+
+void registerSpecialForm(const std::string& name, TranslateSpecialForm form) {
+  auto& specialFormMap = getSpecialFormMap();
+  specialFormMap[name] = form;
+}
+
+void setupSpecialForms() {
+  // Special forms will be registered here
 }
 
 namespace {
