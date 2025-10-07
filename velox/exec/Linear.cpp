@@ -262,29 +262,32 @@ core::TypedExprPtr ProjectSequence::preprocess(
   }
 
   if (tree->kind() == core::ExprKind::kFieldAccess) {
-    auto* info = valueInfo(tree.get(), valueMap_);
-    if (!info){
-      auto input = expr->inputs()[0];
-      if (!input || input->kind() == core::ExprKind::kInputReference) {
+    auto fieldAccess = tree->asUnchecked<core::FieldAccessTypedExpr>();
 
-      }
+    // Check if this is an input field or has input reference as input
+    if (fieldAccess->inputs().empty() ||
+        fieldAccess->inputs()[0]->kind() == core::ExprKind::kInputReference) {
+      // Find the index of the field in stageInputType_
+      auto fieldIdx = stageInputType_->getChildIdx(fieldAccess->name());
+      // Set the value info to corresponding element of stageInputValueInfo_
+      valueMap_[tree.get()] = stageInputValueInfo_[fieldIdx];
+      return tree;
     }
-    if (info && info->constant) {
-      auto result = info->constant;
-      if (result->kind() == core::ExprKind::kCall) {
-        setCallValueInfo(result);
-      } else if (result->kind() == core::ExprKind::kCast) {
-        setCastValueInfo(result);
-      }
-      return result;
+
+    // Otherwise, preprocess the input and extract child value info
+    auto input = preprocess(fieldAccess->inputs()[0]);
+    auto inputType = input->type()->asRow();
+    auto fieldIdx = inputType.getChildIdx(fieldAccess->name());
+
+    // Get the value info of the input
+    auto* inputInfo = valueInfo(input.get(), valueMap_);
+    if (inputInfo && fieldIdx < inputInfo->children.size()) {
+      valueMap_[tree.get()] = inputInfo->children[fieldIdx];
+    } else {
+      valueMap_[tree.get()] = ValueInfo(false, false);
     }
-    auto result = tree;
-    if (result->kind() == core::ExprKind::kCall) {
-      setCallValueInfo(result);
-    } else if (result->kind() == core::ExprKind::kCast) {
-      setCastValueInfo(result);
-    }
-    return result;
+
+    return tree;
   }
 
   // First, recursively preprocess all children
