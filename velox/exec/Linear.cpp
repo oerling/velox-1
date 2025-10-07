@@ -129,6 +129,34 @@ ValueInfo vectorValueInfo(const BaseVector& vector) {
   }
 }
 
+ValueInfo makeEmptyValueInfo(const TypePtr& type) {
+  std::vector<ValueInfo> children;
+
+  if (type->kind() == TypeKind::ROW) {
+    auto rowType = type->asRow();
+    for (int i = 0; i < rowType.size(); ++i) {
+      children.push_back(makeEmptyValueInfo(rowType.childAt(i)));
+    }
+  } else if (type->kind() == TypeKind::ARRAY) {
+    children.push_back(makeEmptyValueInfo(type->asArray().elementType()));
+  } else if (type->kind() == TypeKind::MAP) {
+    children.push_back(makeEmptyValueInfo(type->asMap().keyType()));
+    children.push_back(makeEmptyValueInfo(type->asMap().valueType()));
+  }
+
+  return ValueInfo(true, true, std::move(children));
+}
+
+void mergeValueInfo(const ValueInfo other, ValueInfo& result) {
+  result.notNull = result.notNull && other.notNull;
+  result.recursiveNotNull = result.recursiveNotNull && other.recursiveNotNull;
+
+  VELOX_CHECK_EQ(result.children.size(), other.children.size());
+  for (size_t i = 0; i < result.children.size(); ++i) {
+    mergeValueInfo(other.children[i], result.children[i]);
+  }
+}
+
 void ProjectSequence::setConstantValueInfo(
     const core::TypedExprPtr& constant) {
   auto constantExpr = constant->asUnchecked<core::ConstantTypedExpr>();

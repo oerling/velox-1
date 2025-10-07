@@ -38,6 +38,8 @@ namespace facebook::velox::exec {
   
 const  ValueInfo* valueInfo(const core::ITypedExpr* expr, const ValueInfoMap& map);
 
+ValueInfo makeEmptyValueInfo(const TypePtr& type);
+
   /// Map from expr to nullness etc for value and its subfields.
 struct ValueCtx {
     std::unordered_map<const core::ITypedExpr*, ValueInfo> valueInfo;
