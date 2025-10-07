@@ -198,6 +198,28 @@ void ProjectSequence::setCallValueInfo(
         }
       }
       info = ValueInfo(allNotNull, allNotNull);
+
+      // Check if all arguments are constants, fields, or calls with allDefaultNullBehavior
+      bool allDefaultNullBehavior = true;
+      std::vector<int32_t> path;
+      for (const auto& input : callExpr->inputs()) {
+        bool isValid = false;
+        if (input->kind() == core::ExprKind::kConstant) {
+          isValid = true;
+        } else if (input->kind() == core::ExprKind::kFieldAccess && isField(input, path)) {
+          isValid = true;
+        } else if (input->kind() == core::ExprKind::kCall) {
+          auto* inputInfo = valueInfo(input.get(), ctx.valueInfo);
+          if (inputInfo && inputInfo->allDefaultNullBehavior) {
+            isValid = true;
+          }
+        }
+        if (!isValid) {
+          allDefaultNullBehavior = false;
+          break;
+        }
+      }
+      info.allDefaultNullBehavior = allDefaultNullBehavior;
     } else {
       // Otherwise, result is nullable
       info = ValueInfo(false, false);
@@ -220,6 +242,25 @@ void ProjectSequence::setCastValueInfo(const core::TypedExprPtr& cast) {
     }
   }
   // If tryCast is true, result is nullable (default: false, false)
+
+  // Cast has default null behavior, check if argument qualifies for allDefaultNullBehavior
+  if (!castExpr->inputs().empty()) {
+    auto& input = castExpr->inputs()[0];
+    bool allDefaultNullBehavior = false;
+    std::vector<int32_t> path;
+
+    if (input->kind() == core::ExprKind::kConstant) {
+      allDefaultNullBehavior = true;
+    } else if (input->kind() == core::ExprKind::kFieldAccess && isField(input, path)) {
+      allDefaultNullBehavior = true;
+    } else if (input->kind() == core::ExprKind::kCall) {
+      auto* inputInfo = valueInfo(input.get(), valueMap_);
+      if (inputInfo && inputInfo->allDefaultNullBehavior) {
+        allDefaultNullBehavior = true;
+      }
+    }
+    info.allDefaultNullBehavior = allDefaultNullBehavior;
+  }
 
   valueMap_[cast.get()] = std::move(info);
 }
