@@ -207,7 +207,22 @@ void ProjectSequence::setCallValueInfo(
   valueMap_[call.get()] = std::move(info);
 }
 
-void ProjectSequence::setCastValueInfo(const core::TypedExprPtr& cast) {}
+void ProjectSequence::setCastValueInfo(const core::TypedExprPtr& cast) {
+  auto castExpr = cast->asUnchecked<core::CastTypedExpr>();
+
+  ValueInfo info(false, false);
+
+  if (!castExpr->isTryCast() && !castExpr->inputs().empty()) {
+    // If not tryCast, the ValueInfo is nullable if the argument is nullable
+    auto* argInfo = valueInfo(castExpr->inputs()[0].get(), valueMap_);
+    if (argInfo && argInfo->notNull) {
+      info = ValueInfo(true, true);
+    }
+  }
+  // If tryCast is true, result is nullable (default: false, false)
+
+  valueMap_[cast.get()] = std::move(info);
+}
 
 core::TypedExprPtr ProjectSequence::tryFoldConstant(
     const core::TypedExprPtr& expr) {
@@ -251,13 +266,25 @@ core::TypedExprPtr ProjectSequence::preprocess(
     if (!info){
       auto input = expr->inputs()[0];
       if (!input || input->kind() == core::ExprKind::kInputReference) {
-	
+
       }
     }
     if (info && info->constant) {
-      return info->constant;
+      auto result = info->constant;
+      if (result->kind() == core::ExprKind::kCall) {
+        setCallValueInfo(result);
+      } else if (result->kind() == core::ExprKind::kCast) {
+        setCastValueInfo(result);
+      }
+      return result;
     }
-    return tree;
+    auto result = tree;
+    if (result->kind() == core::ExprKind::kCall) {
+      setCallValueInfo(result);
+    } else if (result->kind() == core::ExprKind::kCast) {
+      setCastValueInfo(result);
+    }
+    return result;
   }
 
   // First, recursively preprocess all children
@@ -289,7 +316,13 @@ core::TypedExprPtr ProjectSequence::preprocess(
       auto exprToFold = anyChanged ? std::make_shared<core::CallTypedExpr>(
                                          call->type(), newInputs, call->name())
                                    : tree;
-      return tryFoldConstant(exprToFold);
+      auto result = tryFoldConstant(exprToFold);
+      if (result->kind() == core::ExprKind::kCall) {
+        setCallValueInfo(result);
+      } else if (result->kind() == core::ExprKind::kCast) {
+        setCastValueInfo(result);
+      }
+      return result;
     }
     auto md = linearMetadata(call->name());
     if (md.rewrite) {
@@ -310,18 +343,35 @@ core::TypedExprPtr ProjectSequence::preprocess(
           ? std::make_shared<core::CastTypedExpr>(
                 cast->type(), newInputs, cast->isTryCast())
           : tree;
-      return tryFoldConstant(exprToFold);
+      auto result = tryFoldConstant(exprToFold);
+      if (result->kind() == core::ExprKind::kCall) {
+        setCallValueInfo(result);
+      } else if (result->kind() == core::ExprKind::kCast) {
+        setCastValueInfo(result);
+      }
+      return result;
     }
   }
 
   // If any inputs changed, create a new expression with the new inputs
   if (anyChanged) {
-    return copyWithChildren(tree, newInputs);
+    auto result = copyWithChildren(tree, newInputs);
+    if (result->kind() == core::ExprKind::kCall) {
+      setCallValueInfo(result);
+    } else if (result->kind() == core::ExprKind::kCast) {
+      setCastValueInfo(result);
+    }
+    return result;
   }
 
   // No changes, return original
-
-  return tree;
+  auto result = tree;
+  if (result->kind() == core::ExprKind::kCall) {
+    setCallValueInfo(result);
+  } else if (result->kind() == core::ExprKind::kCast) {
+    setCastValueInfo(result);
+  }
+  return result;
 }
 
 OperandIdx TranslateCtx::makeCall(
