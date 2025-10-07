@@ -554,6 +554,45 @@ void registerLinearMetadata(
   metadataMap[name] = metadata;
 }
 
+namespace {
+
+// Helper function to check if an expression is a constant with a specific bool value
+bool isConstantBool(const core::TypedExprPtr& expr, bool value) {
+  if (expr->kind() != core::ExprKind::kConstant) {
+    return false;
+  }
+  auto constantExpr = expr->asUnchecked<core::ConstantTypedExpr>();
+  if (!constantExpr->value().has_value()) {
+    return false;
+  }
+  if (constantExpr->type()->kind() != TypeKind::BOOLEAN) {
+    return false;
+  }
+  return constantExpr->value().value<bool>() == value;
+}
+
+// Helper function to check if an expression is a constant null
+bool isConstantNull(const core::TypedExprPtr& expr) {
+  if (expr->kind() != core::ExprKind::kConstant) {
+    return false;
+  }
+  auto constantExpr = expr->asUnchecked<core::ConstantTypedExpr>();
+  return !constantExpr->value().has_value();
+}
+
+// Helper function to create a constant bool expression
+core::TypedExprPtr makeConstantBool(bool value) {
+  return std::make_shared<core::ConstantTypedExpr>(
+      BOOLEAN(), variant(value));
+}
+
+// Helper function to create a constant null expression of a given type
+core::TypedExprPtr makeConstantNull(const TypePtr& type) {
+  return std::make_shared<core::ConstantTypedExpr>(type, variant::null(type->kind()));
+}
+
+} // namespace
+
 void setupLinearMetadata() {
   // Register binary arithmetic functions that return the same type as
   // arguments. These functions can move an argument to the result.
@@ -577,6 +616,316 @@ void setupLinearMetadata() {
   for (const auto& funcName : binaryArithmeticFunctions) {
     registerLinearMetadata(funcName, arithmeticMetadata);
   }
+
+  // Register "and" function
+  FunctionLinearMetadata andMetadata;
+  andMetadata.rewrite = [](const core::TypedExprPtr& expr, ValueCtx& ctx) -> core::TypedExprPtr {
+    auto call = expr->asUnchecked<core::CallTypedExpr>();
+    const auto& inputs = call->inputs();
+
+    // If at least one argument is constant false, return constant false
+    for (const auto& input : inputs) {
+      if (isConstantBool(input, false)) {
+        return makeConstantBool(false);
+      }
+    }
+
+    // If at least one argument is constant null, return constant null
+    for (const auto& input : inputs) {
+      if (isConstantNull(input)) {
+        return makeConstantNull(BOOLEAN());
+      }
+    }
+
+    // If all arguments are constant true, return constant true
+    bool allTrue = true;
+    for (const auto& input : inputs) {
+      if (!isConstantBool(input, true)) {
+        allTrue = false;
+        break;
+      }
+    }
+    if (allTrue && !inputs.empty()) {
+      return makeConstantBool(true);
+    }
+
+    return expr;
+  };
+  andMetadata.makeValueInfo = [](const core::TypedExprPtr& expr, ValueCtx& ctx) -> ValueInfo {
+    auto call = expr->asUnchecked<core::CallTypedExpr>();
+    const auto& inputs = call->inputs();
+
+    // If at least one argument is not notNull, return nullable
+    for (const auto& input : inputs) {
+      auto* info = valueInfo(input.get(), ctx.valueInfo);
+      if (!info || !info->notNull) {
+        return ValueInfo(false, false);
+      }
+    }
+    return ValueInfo(true, true);
+  };
+  registerLinearMetadata("and", andMetadata);
+
+  // Register "or" function
+  FunctionLinearMetadata orMetadata;
+  orMetadata.rewrite = [](const core::TypedExprPtr& expr, ValueCtx& ctx) -> core::TypedExprPtr {
+    auto call = expr->asUnchecked<core::CallTypedExpr>();
+    const auto& inputs = call->inputs();
+
+    // If at least one argument is constant true, return constant true
+    for (const auto& input : inputs) {
+      if (isConstantBool(input, true)) {
+        return makeConstantBool(true);
+      }
+    }
+
+    // If at least one argument is constant null, return constant null
+    for (const auto& input : inputs) {
+      if (isConstantNull(input)) {
+        return makeConstantNull(BOOLEAN());
+      }
+    }
+
+    // If all arguments are constant false, return constant false
+    bool allFalse = true;
+    for (const auto& input : inputs) {
+      if (!isConstantBool(input, false)) {
+        allFalse = false;
+        break;
+      }
+    }
+    if (allFalse && !inputs.empty()) {
+      return makeConstantBool(false);
+    }
+
+    return expr;
+  };
+  orMetadata.makeValueInfo = [](const core::TypedExprPtr& expr, ValueCtx& ctx) -> ValueInfo {
+    auto call = expr->asUnchecked<core::CallTypedExpr>();
+    const auto& inputs = call->inputs();
+
+    // If at least one argument is not notNull, return nullable
+    for (const auto& input : inputs) {
+      auto* info = valueInfo(input.get(), ctx.valueInfo);
+      if (!info || !info->notNull) {
+        return ValueInfo(false, false);
+      }
+    }
+    return ValueInfo(true, true);
+  };
+  registerLinearMetadata("or", orMetadata);
+
+  // Register "if" function
+  FunctionLinearMetadata ifMetadata;
+  ifMetadata.rewrite = [](const core::TypedExprPtr& expr, ValueCtx& ctx) -> core::TypedExprPtr {
+    auto call = expr->asUnchecked<core::CallTypedExpr>();
+    const auto& inputs = call->inputs();
+
+    if (inputs.size() >= 3) {
+      // If first argument is constant true, return second argument
+      if (isConstantBool(inputs[0], true)) {
+        return inputs[1];
+      }
+      // If first argument is constant false or constant null, return third argument
+      if (isConstantBool(inputs[0], false) || isConstantNull(inputs[0])) {
+        return inputs[2];
+      }
+    }
+
+    return expr;
+  };
+  ifMetadata.makeValueInfo = [](const core::TypedExprPtr& expr, ValueCtx& ctx) -> ValueInfo {
+    auto call = expr->asUnchecked<core::CallTypedExpr>();
+    const auto& inputs = call->inputs();
+
+    if (inputs.size() >= 3) {
+      auto* thenInfo = valueInfo(inputs[1].get(), ctx.valueInfo);
+      auto* elseInfo = valueInfo(inputs[2].get(), ctx.valueInfo);
+
+      // If either second or third argument is nullable, return nullable
+      bool notNull = true;
+      if (!thenInfo || !thenInfo->notNull || !elseInfo || !elseInfo->notNull) {
+        notNull = false;
+      }
+      return ValueInfo(notNull, notNull);
+    }
+
+    return ValueInfo(false, false);
+  };
+  registerLinearMetadata("if", ifMetadata);
+
+  // Register "coalesce" function
+  FunctionLinearMetadata coalesceMetadata;
+  coalesceMetadata.rewrite = [](const core::TypedExprPtr& expr, ValueCtx& ctx) -> core::TypedExprPtr {
+    auto call = expr->asUnchecked<core::CallTypedExpr>();
+    const auto& inputs = call->inputs();
+
+    VELOX_CHECK_EQ(inputs.size(), 2, "coalesce expects exactly 2 arguments");
+
+    // If the first argument is non-nullable, return the first argument
+    auto* firstInfo = valueInfo(inputs[0].get(), ctx.valueInfo);
+    if (firstInfo && firstInfo->notNull) {
+      return inputs[0];
+    }
+
+    // If the first argument is constant null, return the second argument
+    if (isConstantNull(inputs[0])) {
+      return inputs[1];
+    }
+
+    return expr;
+  };
+  coalesceMetadata.makeValueInfo = [](const core::TypedExprPtr& expr, ValueCtx& ctx) -> ValueInfo {
+    auto call = expr->asUnchecked<core::CallTypedExpr>();
+    const auto& inputs = call->inputs();
+
+    if (inputs.size() >= 2) {
+      auto* firstInfo = valueInfo(inputs[0].get(), ctx.valueInfo);
+      auto* secondInfo = valueInfo(inputs[1].get(), ctx.valueInfo);
+
+      // If either first or second argument is not nullable, return not nullable
+      bool notNull = false;
+      if ((firstInfo && firstInfo->notNull) || (secondInfo && secondInfo->notNull)) {
+        notNull = true;
+      }
+      return ValueInfo(notNull, notNull);
+    }
+
+    return ValueInfo(false, false);
+  };
+  registerLinearMetadata("coalesce", coalesceMetadata);
+
+  // Register "row_constructor" function
+  FunctionLinearMetadata rowConstructorMetadata;
+  rowConstructorMetadata.makeValueInfo = [](const core::TypedExprPtr& expr, ValueCtx& ctx) -> ValueInfo {
+    auto call = expr->asUnchecked<core::CallTypedExpr>();
+    const auto& inputs = call->inputs();
+
+    std::vector<ValueInfo> children;
+    bool recursiveNotNull = true;
+
+    for (const auto& input : inputs) {
+      auto* inputInfo = valueInfo(input.get(), ctx.valueInfo);
+      if (inputInfo) {
+        children.push_back(*inputInfo);
+        if (!inputInfo->recursiveNotNull) {
+          recursiveNotNull = false;
+        }
+      } else {
+        children.push_back(ValueInfo(false, false));
+        recursiveNotNull = false;
+      }
+    }
+
+    return ValueInfo(true, recursiveNotNull, std::move(children));
+  };
+  registerLinearMetadata("row_constructor", rowConstructorMetadata);
+
+  // Register "isnull" function
+  FunctionLinearMetadata isnullMetadata;
+  isnullMetadata.rewrite = [](const core::TypedExprPtr& expr, ValueCtx& ctx) -> core::TypedExprPtr {
+    auto call = expr->asUnchecked<core::CallTypedExpr>();
+    const auto& inputs = call->inputs();
+
+    if (!inputs.empty()) {
+      auto* firstInfo = valueInfo(inputs[0].get(), ctx.valueInfo);
+      // If the first argument is not nullable, return constant false
+      if (firstInfo && firstInfo->notNull) {
+        return makeConstantBool(false);
+      }
+
+      // If the first argument is constant null, return constant true
+      if (isConstantNull(inputs[0])) {
+        return makeConstantBool(true);
+      }
+    }
+
+    return expr;
+  };
+  registerLinearMetadata("isnull", isnullMetadata);
+
+  // Register "not" function
+  FunctionLinearMetadata notMetadata;
+  notMetadata.rewrite = [](const core::TypedExprPtr& expr, ValueCtx& ctx) -> core::TypedExprPtr {
+    auto call = expr->asUnchecked<core::CallTypedExpr>();
+    const auto& inputs = call->inputs();
+
+    if (!inputs.empty()) {
+      // If the first argument is constant false, return constant true
+      if (isConstantBool(inputs[0], false)) {
+        return makeConstantBool(true);
+      }
+
+      // If the first argument is constant true, return constant false
+      if (isConstantBool(inputs[0], true)) {
+        return makeConstantBool(false);
+      }
+
+      // If the first argument is constant null, return constant null
+      if (isConstantNull(inputs[0])) {
+        return makeConstantNull(BOOLEAN());
+      }
+    }
+
+    return expr;
+  };
+  notMetadata.makeValueInfo = [](const core::TypedExprPtr& expr, ValueCtx& ctx) -> ValueInfo {
+    auto call = expr->asUnchecked<core::CallTypedExpr>();
+    const auto& inputs = call->inputs();
+
+    if (!inputs.empty()) {
+      auto* firstInfo = valueInfo(inputs[0].get(), ctx.valueInfo);
+      // The ValueInfo is nullable if the first argument is nullable
+      if (firstInfo && firstInfo->notNull) {
+        return ValueInfo(true, true);
+      }
+    }
+
+    return ValueInfo(false, false);
+  };
+  registerLinearMetadata("not", notMetadata);
+
+  // Register "array_constructor" function
+  FunctionLinearMetadata arrayConstructorMetadata;
+  arrayConstructorMetadata.makeValueInfo = [](const core::TypedExprPtr& expr, ValueCtx& ctx) -> ValueInfo {
+    auto call = expr->asUnchecked<core::CallTypedExpr>();
+    const auto& inputs = call->inputs();
+
+    std::vector<ValueInfo> children;
+    bool recursiveNotNull = true;
+
+    if (inputs.empty()) {
+      // If the argument list is empty, create one child ValueInfo with makeEmptyValueInfo
+      auto arrayType = expr->type()->asArray();
+      children.push_back(makeEmptyValueInfo(arrayType.elementType()));
+    } else {
+      // Initialize from the first argument's ValueInfo
+      auto* firstInfo = valueInfo(inputs[0].get(), ctx.valueInfo);
+      if (firstInfo) {
+        children.push_back(*firstInfo);
+        recursiveNotNull = firstInfo->recursiveNotNull;
+      } else {
+        children.push_back(ValueInfo(false, false));
+        recursiveNotNull = false;
+      }
+
+      // Merge with ValueInfo of non-first arguments
+      for (size_t i = 1; i < inputs.size(); ++i) {
+        auto* inputInfo = valueInfo(inputs[i].get(), ctx.valueInfo);
+        if (inputInfo) {
+          mergeValueInfo(*inputInfo, children[0]);
+        } else {
+          ValueInfo tempInfo(false, false);
+          mergeValueInfo(tempInfo, children[0]);
+        }
+      }
+
+      recursiveNotNull = children[0].recursiveNotNull;
+    }
+
+    return ValueInfo(true, recursiveNotNull, std::move(children));
+  };
+  registerLinearMetadata("array_constructor", arrayConstructorMetadata);
 }
 
 } // namespace facebook::velox::exec
