@@ -539,7 +539,8 @@ std::shared_ptr<Driver> DriverFactory::createDriver(
       if (i < planNodes.size() - 1) {
         auto [seqLength, hasParallelProject] =
             detectProjectSequence(planNodes, i + 1);
-        if (seqLength > 1 || (seqLength == 1 && hasParallelProject)) {
+        if (ctx->queryConfig().useProjectSequence() &&
+            (seqLength > 1 || (seqLength == 1 && hasParallelProject))) {
           // Create FilterProject with just the filter, then let the following
           // ProjectNodes/ParallelProjectNodes be combined into ProjectSequence.
           operators.push_back(std::make_unique<FilterProject>(
@@ -566,7 +567,8 @@ std::shared_ptr<Driver> DriverFactory::createDriver(
 
       // Generate ProjectSequence if there are at least 2 nodes in the sequence
       // OR if there is at least one ParallelProjectNode.
-      if (seqLength >= 2 || hasParallelProject) {
+      if (ctx->queryConfig().useProjectSequence() &&
+          (seqLength >= 2 || hasParallelProject)) {
         ProjectVector projects;
         for (int32_t j = 0; j < seqLength; ++j) {
           projects.push_back(std::static_pointer_cast<

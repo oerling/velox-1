@@ -62,7 +62,13 @@ struct FunctionLinearMetadata {
 
   /// True if all non-null arguments can produce a null.
   bool nullFromNonNull{false};
-  
+
+  /// Trus if can operate on elements given by SelectivityVector, leaving non-selected elements in place. False for Koski functions. 
+  bool supportsSelectivityVector{true};
+
+  /// Ordinal of argument that may be moved unmodified to result.
+  std::optional<int32_t> maybeMovedArg;
+
   MakeValueInfo makeValueInfo;
   
   LinearRewrite rewrite;
@@ -80,13 +86,18 @@ using OperandIdx = uint32_t;
 constexpr OperandIdx kNoOperand = ~0;
   constexpr OperandIdx kMultiple = 0x80000000;
 
+  inline bool isOnlyUse(OperandIdx idx) {
+    return (idx & kMultiple) == 0; 
+  }
+  
   inline   uint32_t operandIdx(OperandIdx idx) {
     return idx & ~kMultiple;
   }
 
+  
   class TranslateCtx;
 
-  using TranslateSpecialForm = std::function<OperandIdx(TranslateCtx& ctx, const core::TypedExprPtr expr, OperandIdx result, bool fixedResult)>;
+  using TranslateSpecialForm = std::function<OperandIdx(TranslateCtx& ctx, const core::TypedExprPtr expr, std::optional<OperandIdx> result)>;
 
 TranslateSpecialForm specialForm(const std::string& name);
 
@@ -207,8 +218,13 @@ class Call : public Instruction {
   bool mayReturnInput() const { return mayReturnInput_; }
 
   std::vector<OperandIdx> args_;
+
+  // Temporary vector for flat contiguous copies of an argument for Koski wrapper. kNoOperand if the corresponding arg can be used.
+  std::vector<OperandIdx>  argCopies_;
   TypePtr type_;
-  bool mayReturnInput_;
+
+  // Ordinal of argument that can be moved to return value. -1 if no argument may be moved to return value.
+  int32_t mayReturnArg_{-1};
 };
 
 /// Describes how to move elements of a RowVector to an operand in state. May

@@ -16,6 +16,7 @@
 
 #include "velox/exec/ProjectSequence.h"
 #include "velox/core/Expressions.h"
+#include "velox/exec/Linear.h"
 #include "velox/exec/Task.h"
 #include "velox/expression/Expr.h"
 #include "velox/expression/ExprUtils.h"
@@ -31,6 +32,122 @@ OperandIdx findInputOperand(
     }
   }
   return kNoOperand;
+}
+
+std::vector<OperandIdx> StageData::gatherInputs(
+    const core::TypedExprPtr& expr) {
+  std::unordered_set<OperandIdx> distinctInputs;
+  std::vector<int32_t> path;
+
+  // Helper function to recursively collect field inputs
+  std::function<void(const core::TypedExprPtr&)> collectFields =
+      [&](const core::TypedExprPtr& e) {
+        if (!e) {
+          return;
+        }
+
+        // Check if this expression is a field
+        if (isField(e, path)) {
+          auto it = fieldToOperand.find(e.get());
+          if (it != fieldToOperand.end()) {
+            // Extract the actual operand index (remove kMultiple flag if present)
+            distinctInputs.insert(OperandIdx(it->second & ~kMultiple));
+          }
+        }
+
+        // Recursively process all child expressions
+        for (const auto& input : e->inputs()) {
+          collectFields(input);
+        }
+      };
+
+  collectFields(expr);
+
+  // Convert set to vector
+  return std::vector<OperandIdx>(distinctInputs.begin(), distinctInputs.end());
+}
+
+std::optional<OperandIdx> ProjectSequence::findReusableInput(
+    const core::TypedExprPtr& expr,
+    StageData& stage) {
+  if (!expr) {
+    return std::nullopt;
+  }
+
+  auto kind = expr->kind();
+
+  // Handle field access
+  if (kind == core::ExprKind::kFieldAccess || kind == core::ExprKind::kDereference) {
+    std::vector<int32_t> path;
+    if (isField(expr, path)) {
+      auto it = stage.fieldToOperand.find(expr.get());
+      if (it != stage.fieldToOperand.end() && isOnlyUse(it->second)) {
+        return operandIdx(it->second);
+      }
+    }
+    return std::nullopt;
+  }
+
+  // Handle constant
+  if (kind == core::ExprKind::kConstant) {
+    return std::nullopt;
+  }
+
+  // Handle cast
+  if (kind == core::ExprKind::kCast) {
+    return std::nullopt;
+  }
+
+  // Handle call
+  if (kind == core::ExprKind::kCall) {
+    auto call = expr->asUnchecked<core::CallTypedExpr>();
+    auto metadata = linearMetadata(call->name());
+    auto& inputs = call->inputs();
+
+    // Check if this is an "if" or "switch" function
+    bool isConditional = (call->name() == "if" || call->name() == "switch");
+
+    if (metadata.mayMoveArgToResult) {
+      // For if/switch, only consider odd indices and the last arg
+      if (isConditional) {
+        for (int i = 1; i < inputs.size(); i += 2) {
+          auto result = findReusableInput(inputs[i], stage);
+          if (result.has_value()) {
+            return result;
+          }
+        }
+        // Also consider the last arg even if it's at an even index
+        if (inputs.size() % 2 == 0 && !inputs.empty()) {
+          auto result = findReusableInput(inputs.back(), stage);
+          if (result.has_value()) {
+            return result;
+          }
+        }
+      } else {
+        // For other functions, check all arguments
+        for (const auto& input : inputs) {
+          auto result = findReusableInput(input, stage);
+          if (result.has_value()) {
+            return result;
+          }
+        }
+      }
+      return std::nullopt;
+    }
+
+    // Check if metadata has maybeMovedArg set
+    if (metadata.maybeMovedArg.has_value()) {
+      int32_t argIndex = metadata.maybeMovedArg.value();
+      if (argIndex >= 0 && argIndex < inputs.size()) {
+        return findReusableInput(inputs[argIndex], stage);
+      }
+    }
+
+    return std::nullopt;
+  }
+
+  // All other cases
+  return std::nullopt;
 }
 
 void ProjectSequence::markExprFields(
@@ -244,6 +361,44 @@ void ProjectSequence::setLeafRow(std::vector<Assignment>& assignments) {
 
 void ProjectSequence::initialize() {
   Operator::initialize();
+
+  // Preprocess all expressions in each project
+  for (int i = 0; i < projects_.size(); ++i) {
+    if (i == 0) {
+      stageInputType_ = inputType_;
+    } else {
+      stageInputType_ = projects_[i - 1]->outputType();
+    }
+
+    // Check if this is a ParallelProjectNode
+    if (auto* parallelProject =
+            dynamic_cast<const core::ParallelProjectNode*>(projects_[i].get())) {
+      // Get mutable access to the parallel project's expression groups
+      auto* mutableParallelProject =
+          const_cast<core::ParallelProjectNode*>(parallelProject);
+      auto& exprGroups = const_cast<std::vector<std::vector<core::TypedExprPtr>>&>(
+          mutableParallelProject->exprGroups());
+
+      // Preprocess each expression in each group and replace it with the result
+      for (auto& group : exprGroups) {
+        for (int j = 0; j < group.size(); ++j) {
+          group[j] = preprocess(group[j]);
+        }
+      }
+    } else {
+      // Get mutable access to the project's projections
+      auto* mutableProject =
+          const_cast<core::AbstractProjectNode*>(projects_[i].get());
+      auto& projections = const_cast<std::vector<core::TypedExprPtr>&>(
+          mutableProject->projections());
+
+      // Preprocess each expression and replace it with the result
+      for (int j = 0; j < projections.size(); ++j) {
+        projections[j] = preprocess(projections[j]);
+      }
+    }
+  }
+
   const auto& inputType = projects_[0]->sources()[0]->outputType();
   stages_.resize(projects_.size());
   for (int32_t level = projects_.size() - 1; level >= 0; --level) {

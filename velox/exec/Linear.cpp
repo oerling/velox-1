@@ -425,21 +425,83 @@ core::TypedExprPtr ProjectSequence::preprocess(
   return result;
 }
 
+  OperandIdx TranslateCtx::makeField(const core::TypedExprPtr& expr, std::optional<OperandIdx> result) {
+    auto idx = state_.fieldIdx(expr_);
+    if (isOnlyUse(idx)) {
+      if (result.has_value()) {
+	state_.setFieldIdx(expr, result.value());
+	return result.value();
+      }
+      return fieldIdx;
+    }
+    return fieldIdx;
+  }
+    
 OperandIdx TranslateCtx::makeCall(
     const std::string& name,
     const TypePtr& type,
     const std::vector<core::TypedExprPtr>& inputs,
-    OperandIdx result,
-    bool fixedResult) {
+    std::optional<OperandIdx> result) {
+  auto& valueMap = projectSequence_->valueMap();
   auto metadata = linearMetadata(name);
-  VELOX_NYI();
+  if (md.mayMoveArgToResult) {
+    auto& inputs = call->inputs();
+    std::vector<OperandIdx> args;
+    for (auto i =0; i < inputs.size(); ++i) {
+      auto input = inputs[i];
+      if (input->kind() == core::ExprKind::kConstant) {
+	args.push_back(translateConstant(arg));
+      } else if (input->kind() == core::ExprKind::kField) {
+	if (isField(input)) {
+	  return makeField(expr, result);
+	}
+	} else {
+	  return makeField(expr, result);
+	}
+      }
+    }
+  if (md.maybeMoveArg.has_value()) {
+    auto idx = md.maybeMoveArg.value();
+    auto moveArg = call->inputs()[idx];
+    OperandIdx moveOperand = kNoOperand;
+    if (moveArg->kind() == core::ExprKind::kField) {
+      moveOperand = makeField(moveArg, result);
+    } else if (moveArg->kind() == core::ExprKind::kConstant) {
+      moveOperand = makeConstant(moveArg); 
+    } else {
+      moveOperand = translateExpr(moveArg, result);
+    }
+    for (auto& input : call->inputs()) {
+      if (input == moveArg) {
+	args.push_back(moveArg);
+      } else {
+	args.push_back(translateExpr(input, std::nullopt));
+      }
+    }
+  } else {
+    // The result is always not same as any of the args.
+    OperandIdx result;
+    if (!result.has_value()) {
+      // Not generating for a specific target.
+      resultIdx = getTemp(expr->type());
+    } else {
+      resultIdx = result.value();
+    }
+    for (auto input : call->inputs()) {
+      auto idx = getReusableInput(input);
+    }
+  }
+  
+
+
+
   return 0;
 }
 
 void TranslateCtx::makeSwitch(
     const TypePtr& type,
     std::vector<core::TypedExprPtr>& inputs,
-    OperandIdx result) {
+    std::optional<OperandIdx> result) {
   for (auto i = 0; i < inputs.size(); i += 2) {
     OperandIdx cond = getTemp(BOOLEAN());
     translateExpr(inputs[i], cond, true);
@@ -449,8 +511,7 @@ void TranslateCtx::makeSwitch(
 
 OperandIdx TranslateCtx::translateExpr(
     const core::TypedExprPtr& expr,
-    OperandIdx result,
-    bool fixedResult) {
+    std::optional<OperandIdx> result) {
   switch (expr->kind()) {
     case core::ExprKind::kFieldAccess:
     case core::ExprKind::kDereference: {
@@ -497,14 +558,14 @@ OperandIdx TranslateCtx::translateExpr(
       auto& name = call->name();
       auto special = specialForm(name);
       if (special) {
-	return special(*this, call, result, fixedResult);
+	return special(*this, call, result);
       }
       return makeCall(
-          call->name(), expr->type(), call->inputs(), result, fixedResult);
+          call->name(), expr->type(), call->inputs(), result);
     }
     case core::ExprKind::kCast:
       return makeCall(
-          "cast", expr->type(), expr->inputs(), result, fixedResult);
+          "cast", expr->type(), expr->inputs(), result);
     default:
       VELOX_FAIL("Expr not supported: ", expr->toString());
   }

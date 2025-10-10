@@ -78,8 +78,46 @@ struct StageData {
   std::vector<IdentityPath> identityPaths;
 
   StageData* next{nullptr};
+
+  OperandIdx fieldIdx(const core::TypedExprPtr& field)  {
+    auto it = fieldToOperand.find(field.get());
+    VELOX_CHECK(it != fieldToOperand.end());
+    return it->second;
+  }
+
+  /// Gathers all distinct OperandIdx for field inputs in the given expression.
+  std::vector<OperandIdx> gatherInputs(const core::TypedExprPtr& expr);
 };
 
+  //// Describes a piece of ExprProgram that produces a single value.
+  struct ExprInfo {
+    /// Fies instruction dx for block.
+    int32_t begin;
+
+    /// First instruction idx after block.
+    int32_t end;
+
+    /// All inputs that are touched by the block.
+    std::vector<OperandIdx> inputs;
+
+    /// The value computed by instructions from begin to end.
+    OperandIdx result;
+  };
+  
+  // A unit of potentially parallel work. If the same stage has multiple units,
+  // the inputs, temporary results and results of these units must be
+  // non-overlapping.
+  struct WorkUnit {
+    // Positions of potential lazies in 'state_' which are to be loaded by this
+    // group.
+    std::vector<OperandIdx> toLoad;
+    std::unique_ptr<core::ExecCtx> execCtx;
+    std::unique_ptr<ExprProgram> program;
+    std::vector<ExprInfo> programExprs;
+  };
+  
+
+  
 class ProjectSequence : public Operator {
  public:
   ProjectSequence(
@@ -154,6 +192,10 @@ class ProjectSequence : public Operator {
   core::TypedExprPtr tryFoldConstant(
       const core::TypedExprPtr& expr);
 
+  std::optional<OperandIdx> findReusableInput(
+      const core::TypedExprPtr& expr,
+      StageData& stage);
+
   void setConstantValueInfo(
 			    const core::TypedExprPtr& constant);
  
@@ -168,17 +210,6 @@ class ProjectSequence : public Operator {
 
 
  private:
-  // A unit of potentially parallel work. If the same stage has multiple units,
-  // the inputs, temporary results and results of these units must be
-  // non-overlapping.
-  struct WorkUnit {
-    // Positions of potential lazies in 'state_' which are to be loaded by this
-    // group.
-    std::vector<OperandIdx> loadOnly;
-    std::unique_ptr<core::ExecCtx> execCtx;
-    std::unique_ptr<ExprProgram> program;
-  };
-
   struct WorkResult {
     WorkResult(std::exception_ptr e) : error(std::move(e)) {}
     std::exception_ptr error;
@@ -274,7 +305,7 @@ class TranslateCtx {
   TranslateCtx(StageData& stage, ProjectSequence* projectSequence);
 
   OperandIdx
-  translateExpr(const core::TypedExprPtr&, OperandIdx result, bool fixedResult);
+  translateExpr(const core::TypedExprPtr&, std::optional<OperandIdx> result);
 
   void setProgram(ExprProgram* program) {
     program_ = program;
@@ -292,18 +323,21 @@ class TranslateCtx {
 		      const std::string& name,
       const TypePtr& type,
 		      const std::vector<core::TypedExprPtr>& inputs,
-      OperandIdx result,
-      bool fixedResult);
+		      std::optional<OperandIdx result>);
+
   void makeSwitch(
       const TypePtr& type,
       std::vector<core::TypedExprPtr>& inputs,
-      OperandIdx result);
+      std::optional<OperandIdx> result);
 
   RowTypePtr inputType_;
 
   // Operands are checked non-nul for active rows.
   bool inNullPropagating_{false};
 
+  // If inside a conditional, specifies the operand with the flag. The flag of the outermost if is element 1, the flag of the next inner is 1 etc.
+  std::vector<OperandIdx> conditions_;
+  
   StageData& stage_;
 
   /// Map from type to operand index for temporary variables. A temp is a vector
