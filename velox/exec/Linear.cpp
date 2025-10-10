@@ -19,8 +19,8 @@
 #include "velox/exec/ProjectSequence.h"
 #include "velox/exec/Task.h"
 #include "velox/expression/ConstantExpr.h"
-#include "velox/expression/VectorFunction.h"
 #include "velox/expression/SimpleFunctionRegistry.h"
+#include "velox/expression/VectorFunction.h"
 
 namespace facebook::velox::exec {
 
@@ -36,14 +36,16 @@ resolveVectorFunctionForLinear(
   // Create empty constant inputs vector (all nullptr) aligned with inputTypes
   std::vector<VectorPtr> constantInputs(inputTypes.size(), nullptr);
 
-  // First try to get vector function with metadata from vector function registry
+  // First try to get vector function with metadata from vector function
+  // registry
   if (auto functionWithMetadata = getVectorFunctionWithMetadata(
           name, inputTypes, constantInputs, config)) {
     return *functionWithMetadata;
   }
 
   // Then try simple function registry
-  if (auto simpleFunctionEntry = simpleFunctions().resolveFunction(name, inputTypes)) {
+  if (auto simpleFunctionEntry =
+          simpleFunctions().resolveFunction(name, inputTypes)) {
     auto func = simpleFunctionEntry->createFunction()->createVectorFunction(
         inputTypes, constantInputs, config);
     return {std::move(func), simpleFunctionEntry->metadata()};
@@ -64,8 +66,7 @@ getLinearMetadataMap() {
 }
 
 // Returns a reference to the static map of special forms.
-std::unordered_map<std::string, TranslateSpecialForm>&
-getSpecialFormMap() {
+std::unordered_map<std::string, TranslateSpecialForm>& getSpecialFormMap() {
   static std::unordered_map<std::string, TranslateSpecialForm> specialFormMap;
   return specialFormMap;
 }
@@ -133,7 +134,8 @@ ValueInfo vectorValueInfo(const BaseVector& vector) {
   switch (encoding) {
     case VectorEncoding::Simple::CONSTANT: {
       if (vector.isNullAt(0)) {
-        return ValueInfo(false, false);;
+        return ValueInfo(false, false);
+        ;
       }
       auto* wrapped = vector.wrappedVector();
       if (wrapped == &vector) {
@@ -143,8 +145,7 @@ ValueInfo vectorValueInfo(const BaseVector& vector) {
       return vectorValueInfo(*wrapped);
     }
     case VectorEncoding::Simple::FLAT:
-      return ValueInfo( !vector.mayHaveNulls(),
-			!vector.mayHaveNulls());
+      return ValueInfo(!vector.mayHaveNulls(), !vector.mayHaveNulls());
     case VectorEncoding::Simple::DICTIONARY:
       return vectorValueInfo(*vector.wrappedVector());
     case VectorEncoding::Simple::ROW: {
@@ -154,16 +155,18 @@ ValueInfo vectorValueInfo(const BaseVector& vector) {
         childInfo.push_back(vectorValueInfo(*child));
         allNotNull &= childInfo.back().recursiveNotNull;
       }
-      return ValueInfo(
-	true, allNotNull, std::move(childInfo));
+      return ValueInfo(true, allNotNull, std::move(childInfo));
     }
     case VectorEncoding::Simple::ARRAY: {
-      std::vector<ValueInfo> childInfo = {vectorValueInfo(*vector.as<ArrayVector>()->elements())};
-      return ValueInfo(true, childInfo[0].recursiveNotNull, std::move(childInfo));
+      std::vector<ValueInfo> childInfo = {
+          vectorValueInfo(*vector.as<ArrayVector>()->elements())};
+      return ValueInfo(
+          true, childInfo[0].recursiveNotNull, std::move(childInfo));
     }
     case VectorEncoding::Simple::MAP: {
     }
-  default: VELOX_FAIL("Unsupported encoding {}", encoding);
+    default:
+      VELOX_FAIL("Unsupported encoding {}", encoding);
   }
 }
 
@@ -195,8 +198,7 @@ void mergeValueInfo(const ValueInfo other, ValueInfo& result) {
   }
 }
 
-void ProjectSequence::setConstantValueInfo(
-    const core::TypedExprPtr& constant) {
+void ProjectSequence::setConstantValueInfo(const core::TypedExprPtr& constant) {
   auto constantExpr = constant->asUnchecked<core::ConstantTypedExpr>();
 
   VectorPtr vector;
@@ -211,11 +213,10 @@ void ProjectSequence::setConstantValueInfo(
   valueMap_[constant.get()] = std::move(info);
 }
 
-void ProjectSequence::setCallValueInfo(
-    const core::TypedExprPtr& call) {
+void ProjectSequence::setCallValueInfo(const core::TypedExprPtr& call) {
   auto callExpr = call->asUnchecked<core::CallTypedExpr>();
   auto md = linearMetadata(callExpr->name());
-  ValueCtx ctx{ valueMap_ };
+  ValueCtx ctx{valueMap_};
   ValueInfo info(false, false);
 
   // If the function has custom makeValueInfo, use it
@@ -237,14 +238,17 @@ void ProjectSequence::setCallValueInfo(
       }
       info = ValueInfo(allNotNull, allNotNull);
 
-      // Check if all arguments are constants, fields, or calls with allDefaultNullBehavior
+      // Check if all arguments are constants, fields, or calls with
+      // allDefaultNullBehavior
       bool allDefaultNullBehavior = true;
       std::vector<int32_t> path;
       for (const auto& input : callExpr->inputs()) {
         bool isValid = false;
         if (input->kind() == core::ExprKind::kConstant) {
           isValid = true;
-        } else if (input->kind() == core::ExprKind::kFieldAccess && isField(input, path)) {
+        } else if (
+            input->kind() == core::ExprKind::kFieldAccess &&
+            isField(input, path)) {
           isValid = true;
         } else if (input->kind() == core::ExprKind::kCall) {
           auto* inputInfo = valueInfo(input.get(), ctx.valueInfo);
@@ -281,7 +285,8 @@ void ProjectSequence::setCastValueInfo(const core::TypedExprPtr& cast) {
   }
   // If tryCast is true, result is nullable (default: false, false)
 
-  // Cast has default null behavior, check if argument qualifies for allDefaultNullBehavior
+  // Cast has default null behavior, check if argument qualifies for
+  // allDefaultNullBehavior
   if (!castExpr->inputs().empty()) {
     auto& input = castExpr->inputs()[0];
     bool allDefaultNullBehavior = false;
@@ -289,7 +294,8 @@ void ProjectSequence::setCastValueInfo(const core::TypedExprPtr& cast) {
 
     if (input->kind() == core::ExprKind::kConstant) {
       allDefaultNullBehavior = true;
-    } else if (input->kind() == core::ExprKind::kFieldAccess && isField(input, path)) {
+    } else if (
+        input->kind() == core::ExprKind::kFieldAccess && isField(input, path)) {
       allDefaultNullBehavior = true;
     } else if (input->kind() == core::ExprKind::kCall) {
       auto* inputInfo = valueInfo(input.get(), valueMap_);
@@ -334,8 +340,7 @@ core::TypedExprPtr ProjectSequence::tryFoldConstant(
   return expr;
 }
 
-core::TypedExprPtr ProjectSequence::preprocess(
-    const core::TypedExprPtr& tree) {
+core::TypedExprPtr ProjectSequence::preprocess(const core::TypedExprPtr& tree) {
   if (!tree) {
     return tree;
   }
@@ -408,7 +413,7 @@ core::TypedExprPtr ProjectSequence::preprocess(
     }
     auto md = linearMetadata(call->name());
     if (md.rewrite) {
-      ValueCtx ctx {valueMap_};
+      ValueCtx ctx{valueMap_};
       auto rewritten = md.rewrite(tree, ctx);
       if (rewritten != tree) {
         return preprocess(rewritten);
@@ -521,7 +526,10 @@ OperandIdx TranslateCtx::makeCall(
   }
 
   // Resolve the vector function and metadata
-  auto& queryConfig = projectSequence_->operatorCtx()->driverCtx()->task->queryCtx()->queryConfig();
+  auto& queryConfig = projectSequence_->operatorCtx()
+                          ->driverCtx()
+                          ->task->queryCtx()
+                          ->queryConfig();
   auto [vectorFunction, vectorFunctionMetadata] =
       resolveVectorFunctionForLinear(name, inputTypes, queryConfig);
 
@@ -609,14 +617,12 @@ OperandIdx TranslateCtx::translateExpr(
       auto& name = call->name();
       auto special = specialForm(name);
       if (special) {
-	return special(*this, call, result);
+        return special(*this, call, result);
       }
-      return makeCall(
-          call->name(), expr->type(), call->inputs(), result);
+      return makeCall(call->name(), expr->type(), call->inputs(), result);
     }
     case core::ExprKind::kCast:
-      return makeCall(
-          "cast", expr->type(), expr->inputs(), result);
+      return makeCall("cast", expr->type(), expr->inputs(), result);
     default:
       VELOX_FAIL("Expr not supported: ", expr->toString());
   }
@@ -694,7 +700,8 @@ void setupSpecialForms() {
 
 namespace {
 
-// Helper function to check if an expression is a constant with a specific bool value
+// Helper function to check if an expression is a constant with a specific bool
+// value
 bool isConstantBool(const core::TypedExprPtr& expr, bool value) {
   if (expr->kind() != core::ExprKind::kConstant) {
     return false;
@@ -720,13 +727,13 @@ bool isConstantNull(const core::TypedExprPtr& expr) {
 
 // Helper function to create a constant bool expression
 core::TypedExprPtr makeConstantBool(bool value) {
-  return std::make_shared<core::ConstantTypedExpr>(
-      BOOLEAN(), variant(value));
+  return std::make_shared<core::ConstantTypedExpr>(BOOLEAN(), variant(value));
 }
 
 // Helper function to create a constant null expression of a given type
 core::TypedExprPtr makeConstantNull(const TypePtr& type) {
-  return std::make_shared<core::ConstantTypedExpr>(type, variant::null(type->kind()));
+  return std::make_shared<core::ConstantTypedExpr>(
+      type, variant::null(type->kind()));
 }
 
 } // namespace
@@ -757,7 +764,8 @@ void setupLinearMetadata() {
 
   // Register "and" function
   FunctionLinearMetadata andMetadata;
-  andMetadata.rewrite = [](const core::TypedExprPtr& expr, ValueCtx& ctx) -> core::TypedExprPtr {
+  andMetadata.rewrite = [](const core::TypedExprPtr& expr,
+                           ValueCtx& ctx) -> core::TypedExprPtr {
     auto call = expr->asUnchecked<core::CallTypedExpr>();
     const auto& inputs = call->inputs();
 
@@ -789,7 +797,8 @@ void setupLinearMetadata() {
 
     return expr;
   };
-  andMetadata.makeValueInfo = [](const core::TypedExprPtr& expr, ValueCtx& ctx) -> ValueInfo {
+  andMetadata.makeValueInfo = [](const core::TypedExprPtr& expr,
+                                 ValueCtx& ctx) -> ValueInfo {
     auto call = expr->asUnchecked<core::CallTypedExpr>();
     const auto& inputs = call->inputs();
 
@@ -806,7 +815,8 @@ void setupLinearMetadata() {
 
   // Register "or" function
   FunctionLinearMetadata orMetadata;
-  orMetadata.rewrite = [](const core::TypedExprPtr& expr, ValueCtx& ctx) -> core::TypedExprPtr {
+  orMetadata.rewrite = [](const core::TypedExprPtr& expr,
+                          ValueCtx& ctx) -> core::TypedExprPtr {
     auto call = expr->asUnchecked<core::CallTypedExpr>();
     const auto& inputs = call->inputs();
 
@@ -838,7 +848,8 @@ void setupLinearMetadata() {
 
     return expr;
   };
-  orMetadata.makeValueInfo = [](const core::TypedExprPtr& expr, ValueCtx& ctx) -> ValueInfo {
+  orMetadata.makeValueInfo = [](const core::TypedExprPtr& expr,
+                                ValueCtx& ctx) -> ValueInfo {
     auto call = expr->asUnchecked<core::CallTypedExpr>();
     const auto& inputs = call->inputs();
 
@@ -855,7 +866,8 @@ void setupLinearMetadata() {
 
   // Register "if" function
   FunctionLinearMetadata ifMetadata;
-  ifMetadata.rewrite = [](const core::TypedExprPtr& expr, ValueCtx& ctx) -> core::TypedExprPtr {
+  ifMetadata.rewrite = [](const core::TypedExprPtr& expr,
+                          ValueCtx& ctx) -> core::TypedExprPtr {
     auto call = expr->asUnchecked<core::CallTypedExpr>();
     const auto& inputs = call->inputs();
 
@@ -864,7 +876,8 @@ void setupLinearMetadata() {
       if (isConstantBool(inputs[0], true)) {
         return inputs[1];
       }
-      // If first argument is constant false or constant null, return third argument
+      // If first argument is constant false or constant null, return third
+      // argument
       if (isConstantBool(inputs[0], false) || isConstantNull(inputs[0])) {
         return inputs[2];
       }
@@ -872,7 +885,8 @@ void setupLinearMetadata() {
 
     return expr;
   };
-  ifMetadata.makeValueInfo = [](const core::TypedExprPtr& expr, ValueCtx& ctx) -> ValueInfo {
+  ifMetadata.makeValueInfo = [](const core::TypedExprPtr& expr,
+                                ValueCtx& ctx) -> ValueInfo {
     auto call = expr->asUnchecked<core::CallTypedExpr>();
     const auto& inputs = call->inputs();
 
@@ -894,7 +908,8 @@ void setupLinearMetadata() {
 
   // Register "coalesce" function
   FunctionLinearMetadata coalesceMetadata;
-  coalesceMetadata.rewrite = [](const core::TypedExprPtr& expr, ValueCtx& ctx) -> core::TypedExprPtr {
+  coalesceMetadata.rewrite = [](const core::TypedExprPtr& expr,
+                                ValueCtx& ctx) -> core::TypedExprPtr {
     auto call = expr->asUnchecked<core::CallTypedExpr>();
     const auto& inputs = call->inputs();
 
@@ -913,7 +928,8 @@ void setupLinearMetadata() {
 
     return expr;
   };
-  coalesceMetadata.makeValueInfo = [](const core::TypedExprPtr& expr, ValueCtx& ctx) -> ValueInfo {
+  coalesceMetadata.makeValueInfo = [](const core::TypedExprPtr& expr,
+                                      ValueCtx& ctx) -> ValueInfo {
     auto call = expr->asUnchecked<core::CallTypedExpr>();
     const auto& inputs = call->inputs();
 
@@ -923,7 +939,8 @@ void setupLinearMetadata() {
 
       // If either first or second argument is not nullable, return not nullable
       bool notNull = false;
-      if ((firstInfo && firstInfo->notNull) || (secondInfo && secondInfo->notNull)) {
+      if ((firstInfo && firstInfo->notNull) ||
+          (secondInfo && secondInfo->notNull)) {
         notNull = true;
       }
       return ValueInfo(notNull, notNull);
@@ -935,7 +952,8 @@ void setupLinearMetadata() {
 
   // Register "row_constructor" function
   FunctionLinearMetadata rowConstructorMetadata;
-  rowConstructorMetadata.makeValueInfo = [](const core::TypedExprPtr& expr, ValueCtx& ctx) -> ValueInfo {
+  rowConstructorMetadata.makeValueInfo = [](const core::TypedExprPtr& expr,
+                                            ValueCtx& ctx) -> ValueInfo {
     auto call = expr->asUnchecked<core::CallTypedExpr>();
     const auto& inputs = call->inputs();
 
@@ -961,7 +979,8 @@ void setupLinearMetadata() {
 
   // Register "isnull" function
   FunctionLinearMetadata isnullMetadata;
-  isnullMetadata.rewrite = [](const core::TypedExprPtr& expr, ValueCtx& ctx) -> core::TypedExprPtr {
+  isnullMetadata.rewrite = [](const core::TypedExprPtr& expr,
+                              ValueCtx& ctx) -> core::TypedExprPtr {
     auto call = expr->asUnchecked<core::CallTypedExpr>();
     const auto& inputs = call->inputs();
 
@@ -984,7 +1003,8 @@ void setupLinearMetadata() {
 
   // Register "not" function
   FunctionLinearMetadata notMetadata;
-  notMetadata.rewrite = [](const core::TypedExprPtr& expr, ValueCtx& ctx) -> core::TypedExprPtr {
+  notMetadata.rewrite = [](const core::TypedExprPtr& expr,
+                           ValueCtx& ctx) -> core::TypedExprPtr {
     auto call = expr->asUnchecked<core::CallTypedExpr>();
     const auto& inputs = call->inputs();
 
@@ -1007,7 +1027,8 @@ void setupLinearMetadata() {
 
     return expr;
   };
-  notMetadata.makeValueInfo = [](const core::TypedExprPtr& expr, ValueCtx& ctx) -> ValueInfo {
+  notMetadata.makeValueInfo = [](const core::TypedExprPtr& expr,
+                                 ValueCtx& ctx) -> ValueInfo {
     auto call = expr->asUnchecked<core::CallTypedExpr>();
     const auto& inputs = call->inputs();
 
@@ -1025,7 +1046,8 @@ void setupLinearMetadata() {
 
   // Register "array_constructor" function
   FunctionLinearMetadata arrayConstructorMetadata;
-  arrayConstructorMetadata.makeValueInfo = [](const core::TypedExprPtr& expr, ValueCtx& ctx) -> ValueInfo {
+  arrayConstructorMetadata.makeValueInfo = [](const core::TypedExprPtr& expr,
+                                              ValueCtx& ctx) -> ValueInfo {
     auto call = expr->asUnchecked<core::CallTypedExpr>();
     const auto& inputs = call->inputs();
 
@@ -1033,7 +1055,8 @@ void setupLinearMetadata() {
     bool recursiveNotNull = true;
 
     if (inputs.empty()) {
-      // If the argument list is empty, create one child ValueInfo with makeEmptyValueInfo
+      // If the argument list is empty, create one child ValueInfo with
+      // makeEmptyValueInfo
       auto arrayType = expr->type()->asArray();
       children.push_back(makeEmptyValueInfo(arrayType.elementType()));
     } else {

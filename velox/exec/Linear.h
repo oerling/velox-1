@@ -16,41 +16,52 @@
 
 #pragma once
 
-#include "velox/expression/Expr.h"
 #include "velox/core/ITypedExpr.h"
+#include "velox/expression/Expr.h"
 
 namespace facebook::velox::exec {
 
+struct ValueInfo {
+  ValueInfo() = default;
+  ValueInfo(
+      bool notNull,
+      bool recursiveNotNull,
+      std::vector<ValueInfo> children = {},
+      bool defaultNulls = false)
+      : notNull(notNull),
+        recursiveNotNull(recursiveNotNull),
+        allDefaultNullBehavior(defaultNulls),
+        children(std::move(children)) {}
 
-  struct ValueInfo {
-    ValueInfo() = default;
-    ValueInfo(bool notNull, bool recursiveNotNull, std::vector<ValueInfo> children = {}, bool defaultNulls = false)
-      : notNull(notNull), recursiveNotNull(recursiveNotNull), allDefaultNullBehavior(defaultNulls), children(std::move(children)) {}
+  bool notNull{false};
+  bool recursiveNotNull{false};
+  bool allDefaultNullBehavior{false};
+  core::TypedExprPtr constant;
+  std::vector<ValueInfo> children;
+};
 
-    bool notNull{false};
-    bool recursiveNotNull{false};
-    bool allDefaultNullBehavior{false};
-    core::TypedExprPtr constant;
-    std::vector<ValueInfo> children;
-  };
+using ValueInfoMap = std::unordered_map<const core::ITypedExpr*, ValueInfo>;
 
-  using ValueInfoMap = std::unordered_map<const core::ITypedExpr*, ValueInfo>;
-  
-const  ValueInfo* valueInfo(const core::ITypedExpr* expr, const ValueInfoMap& map);
+const ValueInfo* valueInfo(
+    const core::ITypedExpr* expr,
+    const ValueInfoMap& map);
 
 ValueInfo makeEmptyValueInfo(const TypePtr& type);
 
-  /// Map from expr to nullness etc for value and its subfields.
+/// Map from expr to nullness etc for value and its subfields.
 struct ValueCtx {
-    std::unordered_map<const core::ITypedExpr*, ValueInfo> valueInfo;
-  };
-  
+  std::unordered_map<const core::ITypedExpr*, ValueInfo> valueInfo;
+};
 
-  /// Function that can rewrite an expr based on knowledge of input ValueInfo. Returns 'expr' if no change, else returns the new expr. Must fill in ValueInfo for any new expr, this produces.
-  using LinearRewrite = std::function<core::TypedExprPtr(const core::TypedExprPtr& expr, ValueCtx& ctx)>;
+/// Function that can rewrite an expr based on knowledge of input ValueInfo.
+/// Returns 'expr' if no change, else returns the new expr. Must fill in
+/// ValueInfo for any new expr, this produces.
+using LinearRewrite = std::function<
+    core::TypedExprPtr(const core::TypedExprPtr& expr, ValueCtx& ctx)>;
 
-  using MakeValueInfo = std::function<ValueInfo(const core::TypedExprPtr& expr, ValueCtx& ctx)>;
-  
+using MakeValueInfo =
+    std::function<ValueInfo(const core::TypedExprPtr& expr, ValueCtx& ctx)>;
+
 struct FunctionLinearMetadata {
   /// True if the function can move a whole argument to the result. For example,
   /// plus can update arguments in place if there are no other uses.
@@ -63,41 +74,44 @@ struct FunctionLinearMetadata {
   /// True if all non-null arguments can produce a null.
   bool nullFromNonNull{false};
 
-  /// Trus if can operate on elements given by SelectivityVector, leaving non-selected elements in place. False for Koski functions. 
+  /// Trus if can operate on elements given by SelectivityVector, leaving
+  /// non-selected elements in place. False for Koski functions.
   bool supportsSelectivityVector{true};
 
   /// Ordinal of argument that may be moved unmodified to result.
   std::optional<int32_t> maybeMovedArg;
 
   MakeValueInfo makeValueInfo;
-  
+
   LinearRewrite rewrite;
 };
-  
+
 FunctionLinearMetadata linearMetadata(const std::string& name);
 
-void registerLinearMetadata(const std::string& name, FunctionLinearMetadata metadata);
+void registerLinearMetadata(
+    const std::string& name,
+    FunctionLinearMetadata metadata);
 
 void setupLinearMetadata();
 
-
- 
 using OperandIdx = uint32_t;
 constexpr OperandIdx kNoOperand = ~0;
-  constexpr OperandIdx kMultiple = 0x80000000;
+constexpr OperandIdx kMultiple = 0x80000000;
 
-  inline bool isOnlyUse(OperandIdx idx) {
-    return (idx & kMultiple) == 0; 
-  }
-  
-  inline   uint32_t operandIdx(OperandIdx idx) {
-    return idx & ~kMultiple;
-  }
+inline bool isOnlyUse(OperandIdx idx) {
+  return (idx & kMultiple) == 0;
+}
 
-  
-  class TranslateCtx;
+inline uint32_t operandIdx(OperandIdx idx) {
+  return idx & ~kMultiple;
+}
 
-  using TranslateSpecialForm = std::function<OperandIdx(TranslateCtx& ctx, const core::TypedExprPtr expr, std::optional<OperandIdx> result)>;
+class TranslateCtx;
+
+using TranslateSpecialForm = std::function<OperandIdx(
+    TranslateCtx& ctx,
+    const core::TypedExprPtr expr,
+    std::optional<OperandIdx> result)>;
 
 TranslateSpecialForm specialForm(const std::string& name);
 
@@ -105,15 +119,21 @@ void registerSpecialForm(const std::string& name, TranslateSpecialForm form);
 
 void setupSpecialForms();
 
-
-  class Instruction {
+class Instruction {
  public:
-    enum class OpCode : uint8_t { kNulls, kNullsEnd, kIf, kCoalesce, kCall, kField };
+  enum class OpCode : uint8_t {
+    kNulls,
+    kNullsEnd,
+    kIf,
+    kCoalesce,
+    kCall,
+    kField
+  };
 
-    Instruction(OpCode opCode, OperandIdx result)
+  Instruction(OpCode opCode, OperandIdx result)
       : opCode_(opCode), result_(result) {}
 
-    template <typename T>
+  template <typename T>
   const T* as() const {
     return reinterpret_cast<const T*>(this);
   }
@@ -123,48 +143,74 @@ void setupSpecialForms();
     return reinterpret_cast<T*>(this);
   }
 
-    OpCode opCode() const {
-      return opCode_;
-    }
+  OpCode opCode() const {
+    return opCode_;
+  }
 
-    OperandIdx result() const {
-      return result_;
-    }
+  OperandIdx result() const {
+    return result_;
+  }
 
-  protected:
+ protected:
   OpCode opCode_;
   OperandIdx result_;
-    OperandIdx standbyResult{kNoOperand};
+  OperandIdx standbyResult{kNoOperand};
 };
 
 class Field : public Instruction {
  public:
   Field(OperandIdx result, OperandIdx input, int32_t childIdx)
-    : Instruction(OpCode::kField, result), input_(input), childIdx_(childIdx) {}
+      : Instruction(OpCode::kField, result),
+        input_(input),
+        childIdx_(childIdx) {}
 
-  OperandIdx input() const { return input_; }
-  int32_t childIdx() const { return childIdx_; }
+  OperandIdx input() const {
+    return input_;
+  }
+  int32_t childIdx() const {
+    return childIdx_;
+  }
 
-private:
+ private:
   OperandIdx input_;
   int32_t childIdx_;
 };
 
 class If : public Instruction {
  public:
-  If(OperandIdx result, OperandIdx cond, OperandIdx t, int32_t elseIdx_, int32_t endIdx_)
-    : Instruction(OpCode::kIf, result), condition(cond), temp(t), elseIdx(elseIdx_), endIdx(endIdx_) {}
+  If(OperandIdx result,
+     OperandIdx cond,
+     OperandIdx t,
+     int32_t elseIdx_,
+     int32_t endIdx_)
+      : Instruction(OpCode::kIf, result),
+        condition(cond),
+        temp(t),
+        elseIdx(elseIdx_),
+        endIdx(endIdx_) {}
 
-  OperandIdx condition() const { return condition; }
-  OperandIdx temp() const { return temp; }
-  int32_t elseIdx() const { return elseIdx; }
-  int32_t endIdx() const { return endIdx; }
+  OperandIdx condition() const {
+    return condition_;
+  }
+  OperandIdx temp() const {
+    return temp;
+  }
+  int32_t elseIdx() const {
+    return elseIdx;
+  }
+  int32_t endIdx() const {
+    return endIdx;
+  }
 
-  void setElse(int32_t idx) { elseIdx = idx; }
-  void setEnd(int32_t idx) { endIdx = idx; }
+  void setElse(int32_t idx) {
+    elseIdx = idx;
+  }
+  void setEnd(int32_t idx) {
+    endIdx = idx;
+  }
 
-private:
-  OperandIdx condition;
+ private:
+  OperandIdx condition_;
   OperandIdx temp{kNoOperand};
   int32_t elseIdx;
   int32_t endIdx;
@@ -172,65 +218,104 @@ private:
 
 class Nulls : public Instruction {
  public:
-  Nulls(OperandIdx result, std::vector<OperandIdx> operands, int32_t nullFlagIdx)
-    : Instruction(OpCode::kNulls, result), operands_(std::move(operands)), nullFlagIdx_(nullFlagIdx) {}
+  Nulls(
+      OperandIdx result,
+      std::vector<OperandIdx> operands,
+      int32_t nullFlagIdx)
+      : Instruction(OpCode::kNulls, result),
+        operands_(std::move(operands)),
+        nullFlagIdx_(nullFlagIdx) {}
 
-  const std::vector<OperandIdx>& operands() const { return operands_; }
-  int32_t nullFlagIdx() const { return nullFlagIdx_; }
+  const std::vector<OperandIdx>& operands() const {
+    return operands_;
+  }
+  int32_t nullFlagIdx() const {
+    return nullFlagIdx_;
+  }
 
   std::vector<OperandIdx> operands_;
   int32_t nullFlagIdx_;
 };
 
-  class NullsEnd : public Instruction {
-  public:
-    NullsEnd(OperandIdx result, int32_t nullFlagIdx, OperandIdx value)
-      : Instruction(OpCode::kNullsEnd, result), nullFlagIdx_(nullFlagIdx), value_(value) {}
+class NullsEnd : public Instruction {
+ public:
+  NullsEnd(OperandIdx result, int32_t nullFlagIdx, OperandIdx value)
+      : Instruction(OpCode::kNullsEnd, result),
+        nullFlagIdx_(nullFlagIdx),
+        value_(value) {}
 
-    int32_t nullFlagIdx() const { return nullFlagIdx_; }
-    OperandIdx value() const { return value_; }
+  int32_t nullFlagIdx() const {
+    return nullFlagIdx_;
+  }
+  OperandIdx value() const {
+    return value_;
+  }
 
-  private:
-    int32_t nullFlagIdx_;
-    OperandIdx value_;
-  };
-  
+ private:
+  int32_t nullFlagIdx_;
+  OperandIdx value_;
+};
+
 class Coalesce : public Instruction {
  public:
   Coalesce(OperandIdx result, OperandIdx input, OperandIdx defaultVal)
-    : Instruction(OpCode::kCoalesce, result), input_(input), default_(defaultVal) {}
+      : Instruction(OpCode::kCoalesce, result),
+        input_(input),
+        default_(defaultVal) {}
 
-  OperandIdx input() const { return input_; }
-  OperandIdx defaultValue() const { return default_; }
+  OperandIdx input() const {
+    return input_;
+  }
+  OperandIdx defaultValue() const {
+    return default_;
+  }
 
-private:
+ private:
   OperandIdx input_;
   OperandIdx default_;
 };
 
 class Call : public Instruction {
  public:
-  Call(OperandIdx result, std::vector<OperandIdx> args, TypePtr type, int32_t returnedArg,
-       std::shared_ptr<VectorFunction> vectorFunction, VectorFunctionMetadata vectorFunctionMetadata)
-    : Instruction(OpCode::kCall, result), args_(std::move(args)),
-      vectorFunction_(std::move(vectorFunction)),
-      vectorFunctionMetadata_(std::move(vectorFunctionMetadata)),
-      type_(std::move(type)), returnedArg_(returnedArg) {}
+  Call(
+      OperandIdx result,
+      std::vector<OperandIdx> args,
+      TypePtr type,
+      int32_t returnedArg,
+      std::shared_ptr<VectorFunction> vectorFunction,
+      VectorFunctionMetadata vectorFunctionMetadata)
+      : Instruction(OpCode::kCall, result),
+        args_(std::move(args)),
+        vectorFunction_(std::move(vectorFunction)),
+        vectorFunctionMetadata_(std::move(vectorFunctionMetadata)),
+        type_(std::move(type)),
+        returnedArg_(returnedArg) {}
 
-  const std::vector<OperandIdx>& args() const { return args_; }
-  const TypePtr& type() const { return type_; }
+  const std::vector<OperandIdx>& args() const {
+    return args_;
+  }
+  const TypePtr& type() const {
+    return type_;
+  }
 
-  int32_t returnedArg() const { return returnedArg_; }
+  int32_t returnedArg() const {
+    return returnedArg_;
+  }
 
-  const std::shared_ptr<VectorFunction>& vectorFunction() const { return vectorFunction_; }
-  const VectorFunctionMetadata& vectorFunctionMetadata() const { return vectorFunctionMetadata_; }
+  const std::shared_ptr<VectorFunction>& vectorFunction() const {
+    return vectorFunction_;
+  }
+  const VectorFunctionMetadata& vectorFunctionMetadata() const {
+    return vectorFunctionMetadata_;
+  }
 
   std::vector<OperandIdx> args_;
   std::shared_ptr<VectorFunction> vectorFunction_;
   VectorFunctionMetadata vectorFunctionMetadata_;
 
-  // Temporary vector for flat contiguous copies of an argument for Koski wrapper. kNoOperand if the corresponding arg can be used.
-  std::vector<OperandIdx>  argCopies_;
+  // Temporary vector for flat contiguous copies of an argument for Koski
+  // wrapper. kNoOperand if the corresponding arg can be used.
+  std::vector<OperandIdx> argCopies_;
   TypePtr type_;
 
   // Ordinal of argument that has the same slot as return value. -1 if none.
@@ -243,7 +328,7 @@ class Call : public Instruction {
 /// of a LinearExprSet.
 struct Assignment {
   Assignment(std::vector<int32_t> path, OperandIdx operand, int32_t sourceRow)
-    : path{path}, operand{operand}, sourceRow{sourceRow} {}
+      : path{path}, operand{operand}, sourceRow{sourceRow} {}
 
   /// The index in the outer row, next inner etc.
   std::vector<int32_t> path;
@@ -251,27 +336,25 @@ struct Assignment {
   // The position in state.
   OperandIdx operand;
 
-/// Designates the RowVector 'pth' starts from. 0 is input, then consecutive outputs, then temporary
+  /// Designates the RowVector 'pth' starts from. 0 is input, then consecutive
+  /// outputs, then temporary
   int32_t sourceRow;
 
   /// Designates the leaf row into which path.back() is an index.
   int32_t leafRow{-1};
 };
 
+struct RunState {
+  selectivityVector* active;
+  VectorPtr* state;
+  std::vector<std::unique_ptr<SelectivityVector>> selectionStack;
 
+  BufferPtr pendingNulls;
+  BufferPtr temp1;
+  BufferPtr temp2;
+};
 
-  struct RunState {
-    selectivityVector* active;
-    VectorPtr* state;
-    std::vector<std::unique_ptr<SelectivityVector>> selectionStack;
-
-    BufferPtr pendingNulls;
-    BufferPtr temp1;
-    BufferPtr temp2;
-  };
-
-
-  /// Represents a sequential set of instructions for computing
+/// Represents a sequential set of instructions for computing
 /// mulytiple projections base on data in a state. The result is
 /// deposited into the state. The program is single threaded but
 /// multiple programs can run in parallel on the same state as long
@@ -285,7 +368,7 @@ class ExprProgram {
   std::vector<std::unique_ptr<Instruction>>& instructions() {
     return instructions_;
   }
-  
+
   std::vector<std::unique_ptr<Instruction>> instructions_;
 
   // A tenporary vector for use as arguments to a Velox function.
@@ -293,6 +376,6 @@ class ExprProgram {
   std::vector<SelectivityVector> rowsStack_;
 };
 
-  bool isField(const core::TypedExprPtr& expr, std::vector<int32_t>& path);
+bool isField(const core::TypedExprPtr& expr, std::vector<int32_t>& path);
 
-      } // namespace facebook::velox::exec
+} // namespace facebook::velox::exec

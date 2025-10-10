@@ -50,7 +50,8 @@ std::vector<OperandIdx> StageData::gatherInputs(
         if (isField(e, path)) {
           auto it = fieldToOperand.find(e.get());
           if (it != fieldToOperand.end()) {
-            // Extract the actual operand index (remove kMultiple flag if present)
+            // Extract the actual operand index (remove kMultiple flag if
+            // present)
             distinctInputs.insert(OperandIdx(it->second & ~kMultiple));
           }
         }
@@ -77,7 +78,8 @@ std::optional<OperandIdx> ProjectSequence::findReusableInput(
   auto kind = expr->kind();
 
   // Handle field access
-  if (kind == core::ExprKind::kFieldAccess || kind == core::ExprKind::kDereference) {
+  if (kind == core::ExprKind::kFieldAccess ||
+      kind == core::ExprKind::kDereference) {
     std::vector<int32_t> path;
     if (isField(expr, path)) {
       auto it = stage.fieldToOperand.find(expr.get());
@@ -234,9 +236,7 @@ ProjectSequence::ProjectSequence(
       projects_(projects),
       inputType_(projects_.front()->sources()[0]->outputType()) {}
 
-TranslateCtx::TranslateCtx(
-    StageData& stage,
-    ProjectSequence* projectSequence)
+TranslateCtx::TranslateCtx(StageData& stage, ProjectSequence* projectSequence)
     : stage_(stage), projectSequence_(projectSequence) {
   // Initialize tempVectors_ map based on tempTypes and constants
   auto& tempTypes = projectSequence_->tempTypes();
@@ -373,13 +373,14 @@ void ProjectSequence::initialize() {
     }
 
     // Check if this is a ParallelProjectNode
-    if (auto* parallelProject =
-            dynamic_cast<const core::ParallelProjectNode*>(projects_[i].get())) {
+    if (auto* parallelProject = dynamic_cast<const core::ParallelProjectNode*>(
+            projects_[i].get())) {
       // Get mutable access to the parallel project's expression groups
       auto* mutableParallelProject =
           const_cast<core::ParallelProjectNode*>(parallelProject);
-      auto& exprGroups = const_cast<std::vector<std::vector<core::TypedExprPtr>>&>(
-          mutableParallelProject->exprGroups());
+      auto& exprGroups =
+          const_cast<std::vector<std::vector<core::TypedExprPtr>>&>(
+              mutableParallelProject->exprGroups());
 
       // Preprocess each expression in each group and replace it with the result
       for (auto& group : exprGroups) {
@@ -506,7 +507,8 @@ void ProjectSequence::setState() {
   if (results_.empty()) {
     for (auto& project : projects_) {
       results_.push_back(
-			 BaseVector::create<RowVector>(project->outputType(), input_->size(), operatorCtx_->pool()));
+          BaseVector::create<RowVector>(
+              project->outputType(), input_->size(), operatorCtx_->pool()));
     }
   }
   auto& inputPaths = allPaths_.front();
