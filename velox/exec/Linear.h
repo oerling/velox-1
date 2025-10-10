@@ -210,25 +210,31 @@ private:
 
 class Call : public Instruction {
  public:
-  Call(OperandIdx result, std::vector<OperandIdx> args, TypePtr type, int32_t returnedArg)
-    : Instruction(OpCode::kCall, result), args_(std::move(args)), type_(std::move(type)), returnedArg_(returnedArg) {}
+  Call(OperandIdx result, std::vector<OperandIdx> args, TypePtr type, int32_t returnedArg,
+       std::shared_ptr<VectorFunction> vectorFunction, VectorFunctionMetadata vectorFunctionMetadata)
+    : Instruction(OpCode::kCall, result), args_(std::move(args)), type_(std::move(type)),
+      returnedArg_(returnedArg), vectorFunction_(std::move(vectorFunction)),
+      vectorFunctionMetadata_(std::move(vectorFunctionMetadata)) {}
 
   const std::vector<OperandIdx>& args() const { return args_; }
   const TypePtr& type() const { return type_; }
 
-  int32_t returnedArg() const { return returndArg_; }
+  int32_t returnedArg() const { return returnedArg_; }
+
+  const std::shared_ptr<VectorFunction>& vectorFunction() const { return vectorFunction_; }
+  const VectorFunctionMetadata& vectorFunctionMetadata() const { return vectorFunctionMetadata_; }
 
   std::vector<OperandIdx> args_;
-  const std::shared_ptr<VectorFunction> vectorFunction_;
-  const VectorFunctionMetadata vectorFunctionMetadata_;
+  std::shared_ptr<VectorFunction> vectorFunction_;
+  VectorFunctionMetadata vectorFunctionMetadata_;
 
-  
+
   // Temporary vector for flat contiguous copies of an argument for Koski wrapper. kNoOperand if the corresponding arg can be used.
   std::vector<OperandIdx>  argCopies_;
   TypePtr type_;
 
   // Ordinal of argument that has the same slot as return value. -1 if none.
-  int32_t mayReturnArg_{-1};
+  int32_t returnedArg_{-1};
 };
 
 /// Describes how to move elements of a RowVector to an operand in state. May

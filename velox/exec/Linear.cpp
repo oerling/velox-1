@@ -20,10 +20,38 @@
 #include "velox/exec/Task.h"
 #include "velox/expression/ConstantExpr.h"
 #include "velox/expression/VectorFunction.h"
+#include "velox/expression/SimpleFunctionRegistry.h"
 
 namespace facebook::velox::exec {
 
 namespace {
+
+// Helper function to resolve vector function and metadata for linear execution
+// Returns a pair of (VectorFunction, VectorFunctionMetadata)
+std::pair<std::shared_ptr<VectorFunction>, VectorFunctionMetadata>
+resolveVectorFunctionForLinear(
+    const std::string& name,
+    const std::vector<TypePtr>& inputTypes,
+    const core::QueryConfig& config) {
+  // First try to get vector function with metadata from vector function registry
+  if (auto functionWithMetadata = getVectorFunctionWithMetadata(
+          name, inputTypes, {}, config)) {
+    return *functionWithMetadata;
+  }
+
+  // Then try simple function registry
+  if (auto simpleFunctionEntry = simpleFunctions().resolveFunction(name, inputTypes)) {
+    auto func = simpleFunctionEntry->createFunction()->createVectorFunction(
+        inputTypes, {}, config);
+    return {std::move(func), simpleFunctionEntry->metadata()};
+  }
+
+  // If neither registry has the function, throw an error
+  VELOX_USER_FAIL(
+      "Scalar function name not registered: {}, called with arguments: ({}).",
+      name,
+      folly::join(", ", inputTypes));
+}
 
 // Returns a reference to the static map of linear metadata.
 std::unordered_map<std::string, FunctionLinearMetadata>&
@@ -444,58 +472,90 @@ OperandIdx TranslateCtx::makeCall(
     std::optional<OperandIdx> result) {
   auto& valueMap = projectSequence_->valueMap();
   auto metadata = linearMetadata(name);
-  if (md.mayMoveArgToResult) {
-    auto& inputs = call->inputs();
-    std::vector<OperandIdx> args;
+  std::vector<OperandIdx> args;
+  OperandIdx resultIdx;
+
+  if (metadata.mayMoveArgToResult) {
     bool reusedInput = false;
-    for (auto i =0; i < inputs.size(); ++i) {
+    for (auto i = 0; i < inputs.size(); ++i) {
       auto input = inputs[i];
       auto reusable = projectSequence_->findReusableInput(input, stage_);
       if (reusable.has_value()) {
-	if (result.has_value() && !reusedInput) {
-	  args.push_back(translateExpr(input, result));
-	  reusedInput = true;
-	  continue;
-	}
+        if (result.has_value() && !reusedInput) {
+          args.push_back(translateExpr(input, result));
+          reusedInput = true;
+          continue;
+        }
       }
       args.push_back(translateExpr(input, reusable));
     }
-  }
-  if (md.maybeMoveArg.has_value()) {
-    auto idx = md.maybeMoveArg.value();
-    auto moveArg = call->inputs()[idx];
+    resultIdx = reusedInput ? result.value() : getTemp(type);
+  } else if (metadata.maybeMovedArg.has_value()) {
+    auto idx = metadata.maybeMovedArg.value();
+    auto moveArg = inputs[idx];
     OperandIdx moveOperand = kNoOperand;
-    auto reusable = projectSequence_->findReusableInput(moveArg, state_);
+    auto reusable = projectSequence_->findReusableInput(moveArg, stage_);
     if (reusable.has_value() && result.has_value()) {
       moveOperand = translateExpr(moveArg, result);
     } else {
       moveOperand = translateExpr(moveArg, reusable);
     }
-    for (auto& input : call->inputs()) {
+    for (auto& input : inputs) {
       if (input == moveArg) {
-	args.push_back(moveArg);
+        args.push_back(moveOperand);
       } else {
-	args.push_back(translateExpr(input, std::nullopt));
+        args.push_back(translateExpr(input, std::nullopt));
       }
     }
+    resultIdx = moveOperand;
   } else {
     // The result is always not same as any of the args.
-    OperandIdx resultIdx;
     if (!result.has_value()) {
       // Not generating for a specific target.
-      resultIdx = getTemp(expr->type());
+      resultIdx = getTemp(type);
     } else {
       resultIdx = result.value();
     }
-    for (auto input : call->inputs()) {
-      auto reusable = projectSequence_->findReusableInput(input, state_);
+    for (auto input : inputs) {
+      auto reusable = projectSequence_->findReusableInput(input, stage_);
       args.push_back(translateExpr(input, reusable));
     }
-    
   }
-  
 
+  // Get input types from the TypedExpr inputs
+  std::vector<TypePtr> inputTypes;
+  inputTypes.reserve(inputs.size());
+  for (const auto& input : inputs) {
+    inputTypes.push_back(input->type());
+  }
 
+  // Resolve the vector function and metadata
+  auto& queryConfig = projectSequence_->operatorCtx()->driverCtx()->task->queryCtx()->queryConfig();
+  auto [vectorFunction, vectorFunctionMetadata] =
+      resolveVectorFunctionForLinear(name, inputTypes, queryConfig);
+
+  // Determine if the result is the same as one of the arguments
+  int32_t returnedArg = kNoOperand;
+  for (size_t i = 0; i < args.size(); ++i) {
+    if (args[i] == resultIdx) {
+      returnedArg = static_cast<int32_t>(i);
+      break;
+    }
+  }
+
+  // Create the Call instruction
+  auto callInstruction = std::make_unique<Call>(
+      resultIdx,
+      std::move(args),
+      type,
+      returnedArg,
+      std::move(vectorFunction),
+      std::move(vectorFunctionMetadata));
+
+  // Add the Call to the program's instructions
+  program_->instructions().push_back(std::move(callInstruction));
+
+  return resultIdx;
 }
 
 void TranslateCtx::makeSwitch(
