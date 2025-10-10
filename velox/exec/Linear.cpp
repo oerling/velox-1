@@ -33,16 +33,19 @@ resolveVectorFunctionForLinear(
     const std::string& name,
     const std::vector<TypePtr>& inputTypes,
     const core::QueryConfig& config) {
+  // Create empty constant inputs vector (all nullptr) aligned with inputTypes
+  std::vector<VectorPtr> constantInputs(inputTypes.size(), nullptr);
+
   // First try to get vector function with metadata from vector function registry
   if (auto functionWithMetadata = getVectorFunctionWithMetadata(
-          name, inputTypes, {}, config)) {
+          name, inputTypes, constantInputs, config)) {
     return *functionWithMetadata;
   }
 
   // Then try simple function registry
   if (auto simpleFunctionEntry = simpleFunctions().resolveFunction(name, inputTypes)) {
     auto func = simpleFunctionEntry->createFunction()->createVectorFunction(
-        inputTypes, {}, config);
+        inputTypes, constantInputs, config);
     return {std::move(func), simpleFunctionEntry->metadata()};
   }
 
@@ -453,18 +456,6 @@ core::TypedExprPtr ProjectSequence::preprocess(
   return result;
 }
 
-  OperandIdx TranslateCtx::makeField(const core::TypedExprPtr& expr, std::optional<OperandIdx> result) {
-    auto idx = state_.fieldIdx(expr_);
-    if (isOnlyUse(idx)) {
-      if (result.has_value()) {
-	state_.setFieldIdx(expr, result.value());
-	return result.value();
-      }
-      return fieldIdx;
-    }
-    return fieldIdx;
-  }
-    
 OperandIdx TranslateCtx::makeCall(
     const std::string& name,
     const TypePtr& type,
@@ -564,7 +555,7 @@ void TranslateCtx::makeSwitch(
     std::optional<OperandIdx> result) {
   for (auto i = 0; i < inputs.size(); i += 2) {
     OperandIdx cond = getTemp(BOOLEAN());
-    translateExpr(inputs[i], cond, true);
+    translateExpr(inputs[i], cond);
     // program_.add
   }
 }

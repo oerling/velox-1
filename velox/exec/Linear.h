@@ -212,9 +212,10 @@ class Call : public Instruction {
  public:
   Call(OperandIdx result, std::vector<OperandIdx> args, TypePtr type, int32_t returnedArg,
        std::shared_ptr<VectorFunction> vectorFunction, VectorFunctionMetadata vectorFunctionMetadata)
-    : Instruction(OpCode::kCall, result), args_(std::move(args)), type_(std::move(type)),
-      returnedArg_(returnedArg), vectorFunction_(std::move(vectorFunction)),
-      vectorFunctionMetadata_(std::move(vectorFunctionMetadata)) {}
+    : Instruction(OpCode::kCall, result), args_(std::move(args)),
+      vectorFunction_(std::move(vectorFunction)),
+      vectorFunctionMetadata_(std::move(vectorFunctionMetadata)),
+      type_(std::move(type)), returnedArg_(returnedArg) {}
 
   const std::vector<OperandIdx>& args() const { return args_; }
   const TypePtr& type() const { return type_; }
@@ -228,13 +229,12 @@ class Call : public Instruction {
   std::shared_ptr<VectorFunction> vectorFunction_;
   VectorFunctionMetadata vectorFunctionMetadata_;
 
-
   // Temporary vector for flat contiguous copies of an argument for Koski wrapper. kNoOperand if the corresponding arg can be used.
   std::vector<OperandIdx>  argCopies_;
   TypePtr type_;
 
   // Ordinal of argument that has the same slot as return value. -1 if none.
-  int32_t returnedArg_{-1};
+  int32_t returnedArg_;
 };
 
 /// Describes how to move elements of a RowVector to an operand in state. May

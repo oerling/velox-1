@@ -328,10 +328,10 @@ void ProjectSequence::makeWorkUnits(int stageIdx) {
     ctx.setProgram(unit.program.get());
     for (auto i = 0; i < group.size(); ++i) {
       auto expr = stage.exprForPath[exprIdx];
-      ++exprIdx;
       if (expr) {
-        ctx.translateExpr(expr, stage.output[exprIdx].operand, true);
+        ctx.translateExpr(expr, stage.output[exprIdx].operand);
       }
+      ++exprIdx;
     }
     ctx.noReuseOfTemp();
   }
@@ -407,6 +407,8 @@ void ProjectSequence::initialize() {
     if (level < projects_.size() - 1) {
       stages_[level].next = &stages_[level + 1];
     }
+    stages_[level].inputSourceIdx = level;
+    stages_[level].outputSourceIdx = level + 1;
     makeRowStageData(projects_[level]->projections(), stages_[level]);
   }
   allPaths();
@@ -504,7 +506,7 @@ void ProjectSequence::setState() {
   if (results_.empty()) {
     for (auto& project : projects_) {
       results_.push_back(
-			 BaseVector::create<RowVector>(std::static_pointer_cast<const Type>(project->outputType()), input_->size(), operatorCtx_->pool()));
+			 BaseVector::create<RowVector>(project->outputType(), input_->size(), operatorCtx_->pool()));
     }
   }
   auto& inputPaths = allPaths_.front();
@@ -515,8 +517,8 @@ void ProjectSequence::setState() {
 
   for (auto i = 0; i < stages_.size(); ++i) {
     auto& paths = allPaths_[i + 1];
-    for (auto i = 0; i < paths.size(); ++i) {
-      resultRows_[fill + i] = getRowAt(results_[i].get(), paths[i]);
+    for (auto j = 0; j < paths.size(); ++j) {
+      resultRows_[fill + j] = getRowAt(results_[i].get(), paths[j]);
     }
     fill += paths.size();
   }

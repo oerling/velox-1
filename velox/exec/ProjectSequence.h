@@ -323,7 +323,7 @@ class TranslateCtx {
 		      const std::string& name,
       const TypePtr& type,
 		      const std::vector<core::TypedExprPtr>& inputs,
-		      std::optional<OperandIdx result>);
+		      std::optional<OperandIdx> result);
 
   void makeSwitch(
       const TypePtr& type,
