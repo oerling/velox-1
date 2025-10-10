@@ -447,29 +447,29 @@ OperandIdx TranslateCtx::makeCall(
   if (md.mayMoveArgToResult) {
     auto& inputs = call->inputs();
     std::vector<OperandIdx> args;
+    bool reusedInput = false;
     for (auto i =0; i < inputs.size(); ++i) {
       auto input = inputs[i];
-      if (input->kind() == core::ExprKind::kConstant) {
-	args.push_back(translateConstant(arg));
-      } else if (input->kind() == core::ExprKind::kField) {
-	if (isField(input)) {
-	  return makeField(expr, result);
-	}
-	} else {
-	  return makeField(expr, result);
+      auto reusable = projectSequence_->findReusableInput(input, stage_);
+      if (reusable.has_value()) {
+	if (result.has_value() && !reusedInput) {
+	  args.push_back(translateExpr(input, result));
+	  reusedInput = true;
+	  continue;
 	}
       }
+      args.push_back(translateExpr(input, reusable));
     }
+  }
   if (md.maybeMoveArg.has_value()) {
     auto idx = md.maybeMoveArg.value();
     auto moveArg = call->inputs()[idx];
     OperandIdx moveOperand = kNoOperand;
-    if (moveArg->kind() == core::ExprKind::kField) {
-      moveOperand = makeField(moveArg, result);
-    } else if (moveArg->kind() == core::ExprKind::kConstant) {
-      moveOperand = makeConstant(moveArg); 
-    } else {
+    auto reusable = projectSequence_->findReusableInput(moveArg, state_);
+    if (reusable.has_value() && result.has_value()) {
       moveOperand = translateExpr(moveArg, result);
+    } else {
+      moveOperand = translateExpr(moveArg, reusable);
     }
     for (auto& input : call->inputs()) {
       if (input == moveArg) {
@@ -480,7 +480,7 @@ OperandIdx TranslateCtx::makeCall(
     }
   } else {
     // The result is always not same as any of the args.
-    OperandIdx result;
+    OperandIdx resultIdx;
     if (!result.has_value()) {
       // Not generating for a specific target.
       resultIdx = getTemp(expr->type());
@@ -488,14 +488,14 @@ OperandIdx TranslateCtx::makeCall(
       resultIdx = result.value();
     }
     for (auto input : call->inputs()) {
-      auto idx = getReusableInput(input);
+      auto reusable = projectSequence_->findReusableInput(input, state_);
+      args.push_back(translateExpr(input, reusable));
     }
+    
   }
   
 
 
-
-  return 0;
 }
 
 void TranslateCtx::makeSwitch(

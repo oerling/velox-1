@@ -210,20 +210,24 @@ private:
 
 class Call : public Instruction {
  public:
-  Call(OperandIdx result, std::vector<OperandIdx> args, TypePtr type, bool mayReturnInput)
-    : Instruction(OpCode::kCall, result), args_(std::move(args)), type_(std::move(type)), mayReturnInput_(mayReturnInput) {}
+  Call(OperandIdx result, std::vector<OperandIdx> args, TypePtr type, int32_t returnedArg)
+    : Instruction(OpCode::kCall, result), args_(std::move(args)), type_(std::move(type)), returnedArg_(returnedArg) {}
 
   const std::vector<OperandIdx>& args() const { return args_; }
   const TypePtr& type() const { return type_; }
-  bool mayReturnInput() const { return mayReturnInput_; }
+
+  int32_t returnedArg() const { return returndArg_; }
 
   std::vector<OperandIdx> args_;
+  const std::shared_ptr<VectorFunction> vectorFunction_;
+  const VectorFunctionMetadata vectorFunctionMetadata_;
 
+  
   // Temporary vector for flat contiguous copies of an argument for Koski wrapper. kNoOperand if the corresponding arg can be used.
   std::vector<OperandIdx>  argCopies_;
   TypePtr type_;
 
-  // Ordinal of argument that can be moved to return value. -1 if no argument may be moved to return value.
+  // Ordinal of argument that has the same slot as return value. -1 if none.
   int32_t mayReturnArg_{-1};
 };
 

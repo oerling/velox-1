@@ -101,35 +101,37 @@ std::optional<OperandIdx> ProjectSequence::findReusableInput(
   // Handle call
   if (kind == core::ExprKind::kCall) {
     auto call = expr->asUnchecked<core::CallTypedExpr>();
-    auto metadata = linearMetadata(call->name());
     auto& inputs = call->inputs();
 
-    // Check if this is an "if" or "switch" function
-    bool isConditional = (call->name() == "if" || call->name() == "switch");
+    // Check if this is an "if" or "switch" function first
+    // These should be treated specially regardless of metadata
+    if (call->name() == "if" || call->name() == "switch") {
+      // For if/switch, only consider odd indices and the last arg
+      for (int i = 1; i < inputs.size(); i += 2) {
+        auto result = findReusableInput(inputs[i], stage);
+        if (result.has_value()) {
+          return result;
+        }
+      }
+      // Also consider the last arg even if it's at an even index
+      if (inputs.size() % 2 == 0 && !inputs.empty()) {
+        auto result = findReusableInput(inputs.back(), stage);
+        if (result.has_value()) {
+          return result;
+        }
+      }
+      return std::nullopt;
+    }
+
+    // For other functions, use metadata
+    auto metadata = linearMetadata(call->name());
 
     if (metadata.mayMoveArgToResult) {
-      // For if/switch, only consider odd indices and the last arg
-      if (isConditional) {
-        for (int i = 1; i < inputs.size(); i += 2) {
-          auto result = findReusableInput(inputs[i], stage);
-          if (result.has_value()) {
-            return result;
-          }
-        }
-        // Also consider the last arg even if it's at an even index
-        if (inputs.size() % 2 == 0 && !inputs.empty()) {
-          auto result = findReusableInput(inputs.back(), stage);
-          if (result.has_value()) {
-            return result;
-          }
-        }
-      } else {
-        // For other functions, check all arguments
-        for (const auto& input : inputs) {
-          auto result = findReusableInput(input, stage);
-          if (result.has_value()) {
-            return result;
-          }
+      // Check all arguments
+      for (const auto& input : inputs) {
+        auto result = findReusableInput(input, stage);
+        if (result.has_value()) {
+          return result;
         }
       }
       return std::nullopt;
