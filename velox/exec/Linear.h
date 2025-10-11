@@ -17,6 +17,7 @@
 #pragma once
 
 #include "velox/core/ITypedExpr.h"
+#include "velox/core/Expressions.h"
 #include "velox/expression/Expr.h"
 
 namespace facebook::velox::exec {
@@ -47,6 +48,8 @@ const ValueInfo* valueInfo(
     const ValueInfoMap& map);
 
 ValueInfo makeEmptyValueInfo(const TypePtr& type);
+
+ValueInfo makeDefaultValueInfo(const TypePtr& type);
 
 /// Map from expr to nullness etc for value and its subfields.
 struct ValueCtx {
@@ -110,7 +113,7 @@ class TranslateCtx;
 
 using TranslateSpecialForm = std::function<OperandIdx(
     TranslateCtx& ctx,
-    const core::TypedExprPtr expr,
+    const core::CallTypedExpr* call,
     std::optional<OperandIdx> result)>;
 
 TranslateSpecialForm specialForm(const std::string& name);
@@ -178,42 +181,37 @@ class Field : public Instruction {
 
 class If : public Instruction {
  public:
-  If(OperandIdx result,
      OperandIdx cond,
-     OperandIdx t,
-     int32_t elseIdx_,
-     int32_t endIdx_)
-      : Instruction(OpCode::kIf, result),
-        condition(cond),
-        temp(t),
-        elseIdx(elseIdx_),
-        endIdx(endIdx_) {}
+     int32_t _elseIdx,
+     int32_t _endIdx)
+      : Instruction(OpCode::kIf, kNoOperand),
+        condition_(cond),
+        elseIdx_(_elseIdx),
+        endIdx_(_endIdx) {}
 
   OperandIdx condition() const {
     return condition_;
   }
-  OperandIdx temp() const {
-    return temp;
-  }
+
   int32_t elseIdx() const {
-    return elseIdx;
+    return elseIdx_;
   }
   int32_t endIdx() const {
-    return endIdx;
+    return endIdx_;
   }
 
   void setElse(int32_t idx) {
-    elseIdx = idx;
+    elseIdx_ = idx;
   }
   void setEnd(int32_t idx) {
-    endIdx = idx;
+    endIdx_ = idx;
   }
 
  private:
   OperandIdx condition_;
-  OperandIdx temp{kNoOperand};
-  int32_t elseIdx;
-  int32_t endIdx;
+  OperandIdx temp_{kNoOperand};
+  int32_t elseIdx_;
+  int32_t endIdx_;
 };
 
 class Nulls : public Instruction {
@@ -345,7 +343,7 @@ struct Assignment {
 };
 
 struct RunState {
-  selectivityVector* active;
+  SelectivityVector* active;
   VectorPtr* state;
   std::vector<std::unique_ptr<SelectivityVector>> selectionStack;
 

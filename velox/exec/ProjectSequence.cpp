@@ -23,6 +23,36 @@
 #include "velox/expression/FieldReference.h"
 
 namespace facebook::velox::exec {
+
+// Creates a chain of FieldAccessTypedExpr for the given path starting from an
+// InputTypedExpr. For each index in path, creates a FieldAccessTypedExpr that
+// accesses the field at that index from the current row type.
+core::TypedExprPtr getterForPath(
+    const RowTypePtr& rowType,
+    const std::vector<int32_t>& path) {
+  // Start with an input reference
+  core::TypedExprPtr current = std::make_shared<core::InputTypedExpr>(rowType);
+
+  auto currentRowType = rowType;
+
+  // For each index in path, add a FieldAccessTypedExpr
+  for (auto idx : path) {
+    auto fieldName = currentRowType->nameOf(idx);
+    auto fieldType = currentRowType->childAt(idx);
+
+    // Create FieldAccessTypedExpr with current as input
+    current = std::make_shared<core::FieldAccessTypedExpr>(
+        fieldType, current, fieldName);
+
+    // If the field type is a ROW, update currentRowType for next iteration
+    if (fieldType->kind() == TypeKind::ROW) {
+      currentRowType = std::dynamic_pointer_cast<const RowType>(fieldType);
+    }
+  }
+
+  return current;
+}
+
 OperandIdx findInputOperand(
     const StageData& stage,
     const std::vector<int32_t>& path) {
@@ -187,6 +217,7 @@ void ProjectSequence::markExprFields(
   }
   if (target != kNoOperand) {
     state.exprForPath.push_back(expr);
+    state.identityPath.emplace_back();
   }
   for (auto i = 0; i < expr->inputs().size(); ++i) {
     markExprFields(expr->inputs()[i], kNoOperand, state);
@@ -368,9 +399,14 @@ void ProjectSequence::initialize() {
   for (int i = 0; i < projects_.size(); ++i) {
     if (i == 0) {
       stageInputType_ = inputType_;
+      stageInputValueInfo_ = makeDefaultValueInfo(inputType_);
     } else {
       stageInputType_ = projects_[i - 1]->outputType();
+      // stageInputValueInfo_ was already set at the end of the previous iteration
     }
+
+    // Create nextValueInfo for accumulating this stage's output
+    ValueInfo nextValueInfo(true, false);
 
     // Check if this is a ParallelProjectNode
     if (auto* parallelProject = dynamic_cast<const core::ParallelProjectNode*>(
@@ -386,6 +422,13 @@ void ProjectSequence::initialize() {
       for (auto& group : exprGroups) {
         for (int j = 0; j < group.size(); ++j) {
           group[j] = preprocess(group[j]);
+          // Get the ValueInfo for this expression and add as child
+          auto* info = valueInfo(group[j].get(), valueMap_);
+          if (info) {
+            nextValueInfo.children.push_back(*info);
+          } else {
+            nextValueInfo.children.push_back(ValueInfo(false, false));
+          }
         }
       }
     } else {
@@ -398,8 +441,21 @@ void ProjectSequence::initialize() {
       // Preprocess each expression and replace it with the result
       for (int j = 0; j < projections.size(); ++j) {
         projections[j] = preprocess(projections[j]);
+        // Get the ValueInfo for this expression and add as child
+        auto* info = valueInfo(projections[j].get(), valueMap_);
+        if (info) {
+          nextValueInfo.children.push_back(*info);
+        } else {
+          nextValueInfo.children.push_back(ValueInfo(false, false));
+        }
       }
     }
+
+    // Append nextValueInfo to stageValueInfos_
+    stageValueInfos_.push_back(nextValueInfo);
+
+    // Set stageInputValueInfo_ for the next stage
+    stageInputValueInfo_ = nextValueInfo;
   }
 
   const auto& inputType = projects_[0]->sources()[0]->outputType();

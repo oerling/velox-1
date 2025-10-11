@@ -281,7 +281,10 @@ class ProjectSequence : public Operator {
   RowTypePtr stageInputType_;
 
   // Corresponds 1:1 to children of 'stageInputType_'.
-  std::vector<ValueInfo> stageInputValueInfo_;
+  ValueInfo stageInputValueInfo_;
+
+  // ValueInfo for each stage's output. One entry per project in projects_.
+  std::vector<ValueInfo> stageValueInfos_;
 };
 
 struct TypeHasher {

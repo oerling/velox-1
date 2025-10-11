@@ -174,7 +174,7 @@ ValueInfo makeEmptyValueInfo(const TypePtr& type) {
   std::vector<ValueInfo> children;
 
   if (type->kind() == TypeKind::ROW) {
-    auto rowType = type->asRow();
+    auto& rowType = type->asRow();
     for (int i = 0; i < rowType.size(); ++i) {
       children.push_back(makeEmptyValueInfo(rowType.childAt(i)));
     }
@@ -186,6 +186,24 @@ ValueInfo makeEmptyValueInfo(const TypePtr& type) {
   }
 
   return ValueInfo(true, true, std::move(children));
+}
+
+ValueInfo makeDefaultValueInfo(const TypePtr& type) {
+  std::vector<ValueInfo> children;
+
+  if (type->kind() == TypeKind::ROW) {
+    auto& rowType = type->asRow();
+    for (int i = 0; i < rowType.size(); ++i) {
+      children.push_back(makeDefaultValueInfo(rowType.childAt(i)));
+    }
+  } else if (type->kind() == TypeKind::ARRAY) {
+    children.push_back(makeDefaultValueInfo(type->asArray().elementType()));
+  } else if (type->kind() == TypeKind::MAP) {
+    children.push_back(makeDefaultValueInfo(type->asMap().keyType()));
+    children.push_back(makeDefaultValueInfo(type->asMap().valueType()));
+  }
+
+  return ValueInfo(false, false, std::move(children));
 }
 
 void mergeValueInfo(const ValueInfo other, ValueInfo& result) {
@@ -350,17 +368,17 @@ core::TypedExprPtr ProjectSequence::preprocess(const core::TypedExprPtr& tree) {
 
     // Check if this is an input field or has input reference as input
     if (fieldAccess->inputs().empty() ||
-        fieldAccess->inputs()[0]->kind() == core::ExprKind::kInputReference) {
+        fieldAccess->inputs()[0]->kind() == core::ExprKind::kInput) {
       // Find the index of the field in stageInputType_
       auto fieldIdx = stageInputType_->getChildIdx(fieldAccess->name());
       // Set the value info to corresponding element of stageInputValueInfo_
-      valueMap_[tree.get()] = stageInputValueInfo_[fieldIdx];
+      valueMap_[tree.get()] = stageInputValueInfo_.children[fieldIdx];
       return tree;
     }
 
     // Otherwise, preprocess the input and extract child value info
     auto input = preprocess(fieldAccess->inputs()[0]);
-    auto inputType = input->type()->asRow();
+    auto& inputType = input->type()->asRow();
     auto fieldIdx = inputType.getChildIdx(fieldAccess->name());
 
     // Get the value info of the input
@@ -561,10 +579,26 @@ void TranslateCtx::makeSwitch(
     const TypePtr& type,
     std::vector<core::TypedExprPtr>& inputs,
     std::optional<OperandIdx> result) {
+  int32_t resultIdx;
+  if (!result.has_value()) {
+    resultIdx  = getTemp (expr->type());
+  } else {
+    resultIdx = result.value();
+  }
+  std::vector<If*> ifs;
   for (auto i = 0; i < inputs.size(); i += 2) {
-    OperandIdx cond = getTemp(BOOLEAN());
-    translateExpr(inputs[i], cond);
-    // program_.add
+    auto cond = translateExpr(inputs[i], std::nullopt);
+    program_->instructions().push_back(std::make_unique<If>(cond, 0, 0));
+    ifs.push_back(program_->instructions().back()->as<If>(); = program_->instructions().back().get());
+    conditions_.push_back(cond);
+    translateExpr(inputs[i + 1], resultIdx);
+    ifs.back()->setElse(program_.instructions().size());
+    if (i == inputs.size()) {
+      // No else.
+      Variant(expr->type()->kind()
+      program_->instructions().push_back(std::make_unique<Assign>(result, null));
+    }
+    return resultIdx;
   }
 }
 
@@ -574,6 +608,9 @@ OperandIdx TranslateCtx::translateExpr(
   switch (expr->kind()) {
     case core::ExprKind::kFieldAccess:
     case core::ExprKind::kDereference: {
+      if (!isField(expr, path)) {
+	VELOX_NYI("field access to outside of input row");
+      }
       auto it = stage_.fieldToOperand.find(expr.get());
       if (it != stage_.fieldToOperand.end()) {
         return it->second;
@@ -707,9 +744,6 @@ bool isConstantBool(const core::TypedExprPtr& expr, bool value) {
     return false;
   }
   auto constantExpr = expr->asUnchecked<core::ConstantTypedExpr>();
-  if (!constantExpr->value().has_value()) {
-    return false;
-  }
   if (constantExpr->type()->kind() != TypeKind::BOOLEAN) {
     return false;
   }
@@ -722,7 +756,7 @@ bool isConstantNull(const core::TypedExprPtr& expr) {
     return false;
   }
   auto constantExpr = expr->asUnchecked<core::ConstantTypedExpr>();
-  return !constantExpr->value().has_value();
+  return constantExpr->value().isNull();
 }
 
 // Helper function to create a constant bool expression

@@ -17,11 +17,13 @@
 #include "velox/exec/tests/utils/FeatureGen.h"
 #include "velox/exec/tests/utils/HiveConnectorTestBase.h"
 #include "velox/exec/tests/utils/PlanBuilder.h"
+#include "velox/exec/tests/utils/AssertQueryBuilder.h"
 #include "velox/exec/ProjectSequence.h"
 #include "velox/exec/Linear.h"
 #include "velox/parse/Expressions.h"
 #include "velox/core/Expressions.h"
 #include "velox/parse/TypeResolver.h"
+#include "velox/core/QueryConfig.h"
 
 namespace facebook::velox::exec {
 namespace {
@@ -32,6 +34,32 @@ class LinearProjectTest : public test::HiveConnectorTestBase {
   void SetUp() override {
     test::HiveConnectorTestBase::SetUp();
     setupLinearMetadata();
+  }
+
+  // Runs the plan against the splits twice: once with use_project_sequence=false
+  // and once with use_project_sequence=true. Verifies that both runs produce
+  // the same results.
+  void checkSame(
+      const core::PlanNodePtr& plan,
+      const std::vector<std::shared_ptr<connector::hive::HiveConnectorSplit>>& splits) {
+    // Run with use_project_sequence = false
+    auto resultsWithoutProjectSequence =
+        AssertQueryBuilder(plan)
+            .splits(splits)
+            .config(core::QueryConfig::kUseProjectSequence, "false")
+            .copyResults(pool_.get());
+
+    // Run with use_project_sequence = true
+    auto resultsWithProjectSequence =
+        AssertQueryBuilder(plan)
+            .splits(splits)
+            .config(core::QueryConfig::kUseProjectSequence, "true")
+            .copyResults(pool_.get());
+
+    // Compare results
+    assertEqualResults(
+        {resultsWithoutProjectSequence},
+        {resultsWithProjectSequence});
   }
 };
 
