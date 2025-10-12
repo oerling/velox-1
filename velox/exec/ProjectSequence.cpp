@@ -369,7 +369,28 @@ void ProjectSequence::makeWorkUnits(int stageIdx) {
     for (auto i = 0; i < group.size(); ++i) {
       auto expr = stage.exprForPath[exprIdx];
       if (expr) {
+        // Record begin instruction index
+        int32_t begin = unit.program->instructions().size();
+
+        // Translate the expression
         ctx.translateExpr(expr, stage.output[exprIdx].operand);
+
+        // Record end instruction index
+        int32_t end = unit.program->instructions().size();
+
+        // Get result operand
+        OperandIdx result = stage.output[exprIdx].operand;
+
+        // Gather inputs from the expression
+        std::vector<OperandIdx> inputs = stage.gatherInputs(expr);
+
+        // Create and append ExprInfo
+        ExprInfo exprInfo;
+        exprInfo.begin = begin;
+        exprInfo.end = end;
+        exprInfo.inputs = std::move(inputs);
+        exprInfo.result = result;
+        unit.programExprs.push_back(exprInfo);
       }
       ++exprIdx;
     }

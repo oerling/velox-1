@@ -208,6 +208,8 @@ class ProjectSequence : public Operator {
 
   std::string explainExprs() const;
 
+  std::string explainPrograms() const;
+
  private:
   struct WorkResult {
     WorkResult(std::exception_ptr e) : error(std::move(e)) {}

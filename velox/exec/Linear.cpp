@@ -419,6 +419,48 @@ std::string ProjectSequence::explainExprs() const {
   return result;
 }
 
+std::string ProjectSequence::explainPrograms() const {
+  std::string result;
+
+  for (size_t i = 0; i < work_.size(); ++i) {
+    result += fmt::format("Stage {}:\n", i);
+
+    const auto& units = work_[i];
+    for (size_t unitIdx = 0; unitIdx < units.size(); ++unitIdx) {
+      const auto& unit = units[unitIdx];
+      result += fmt::format("  WorkUnit {}:\n", unitIdx);
+
+      for (size_t exprIdx = 0; exprIdx < unit.programExprs.size(); ++exprIdx) {
+        const auto& exprInfo = unit.programExprs[exprIdx];
+
+        // Format inputs as comma-separated list
+        std::string inputsStr;
+        for (size_t j = 0; j < exprInfo.inputs.size(); ++j) {
+          if (j > 0) {
+            inputsStr += ", ";
+          }
+          inputsStr += std::to_string(exprInfo.inputs[j]);
+        }
+
+        result += fmt::format(
+            "    ExprInfo {}: result={} inputs=[{}]\n",
+            exprIdx,
+            exprInfo.result,
+            inputsStr);
+
+        // Print instructions from begin to end (exclusive)
+        for (int32_t instrIdx = exprInfo.begin; instrIdx < exprInfo.end;
+             ++instrIdx) {
+          const auto& instr = unit.program->instructions()[instrIdx];
+          result += fmt::format("      {}: {}", instrIdx, instr->toString());
+        }
+      }
+    }
+  }
+
+  return result;
+}
+
 void ProjectSequence::setCallValueInfo(const core::TypedExprPtr& call) {
   auto callExpr = call->asUnchecked<core::CallTypedExpr>();
   auto md = linearMetadata(callExpr->name());
