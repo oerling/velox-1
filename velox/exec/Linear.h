@@ -16,6 +16,7 @@
 
 #pragma once
 
+#include "velox/common/Enums.h"
 #include "velox/core/Expressions.h"
 #include "velox/core/ITypedExpr.h"
 #include "velox/core/PlanNode.h"
@@ -134,6 +135,8 @@ class Instruction {
     kField,
     kAssign
   };
+
+  VELOX_DECLARE_EMBEDDED_ENUM_NAME(OpCode);
 
   Instruction(OpCode opCode, OperandIdx result)
       : opCode_(opCode), result_(result) {}

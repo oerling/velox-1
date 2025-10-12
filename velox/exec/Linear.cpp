@@ -26,6 +26,26 @@ namespace facebook::velox::exec {
 
 namespace {
 
+const auto& opCodeNames() {
+  static const folly::F14FastMap<Instruction::OpCode, std::string_view> kNames =
+      {
+          {Instruction::OpCode::kNulls, "kNulls"},
+          {Instruction::OpCode::kNullsEnd, "kNullsEnd"},
+          {Instruction::OpCode::kIf, "kIf"},
+          {Instruction::OpCode::kCoalesce, "kCoalesce"},
+          {Instruction::OpCode::kCall, "kCall"},
+          {Instruction::OpCode::kField, "kField"},
+          {Instruction::OpCode::kAssign, "kAssign"},
+      };
+  return kNames;
+}
+
+} // namespace
+
+VELOX_DEFINE_EMBEDDED_ENUM_NAME(Instruction, OpCode, opCodeNames)
+
+namespace {
+
 // Helper function to resolve vector function and metadata for linear execution
 // Returns a pair of (VectorFunction, VectorFunctionMetadata)
 std::pair<std::shared_ptr<VectorFunction>, VectorFunctionMetadata>
