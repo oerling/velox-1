@@ -23,32 +23,27 @@
 
 namespace facebook::velox::exec {
 
-  void ExprProgram::eval(EvalCtx* ctx, int32_t begin, int32_t end, VectorPtr* state)
-  
-    for (auto i = begin; i < end; ++i) {
-      const auto& instruction = *instructions_[i];
-      switch (inst.op()) {
-	case kIf: {
-	  auto ifInst = *inst.as<If>();
-	  auto flags = state[ifInst.condition]->as<FlatVector<bool>>();
-	      const auto booleanMix = getFlatBool(
-        condition.get(),
-        *remainingRows.get(),
-        context,
-        &tempValues_,
-        nullptr,
-        true,
-        &values,
-        nullptr);
-    switch (booleanMix) {
-
-    }
-	}
-	case kNulls:
-	  case kEndNulls:
-	    
+void ExprProgram::eval(EvalCtx* ctx, int32_t begin, int32_t end, RunState& runState) {
+  for (auto i = begin; i < end; ++i) {
+    const auto& instruction = *instructions_[i];
+    switch (instruction.opCode()) {
+      case Instruction::OpCode::kIf: {
+        auto ifInst = instruction.as<If>();
+        auto flags = runState.state[ifInst->condition()]->as<FlatVector<bool>>();
+        // TODO: Implement If instruction logic
+        break;
       }
+      case Instruction::OpCode::kNulls:
+        // TODO: Implement Nulls instruction logic
+        break;
+      case Instruction::OpCode::kNullsEnd:
+        // TODO: Implement NullsEnd instruction logic
+        break;
+      default:
+        break;
     }
+  }
+}
 }
 
 
