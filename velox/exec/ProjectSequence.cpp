@@ -344,6 +344,17 @@ void TranslateCtx::releaseTemp(OperandIdx idx) {
   tempVectors_[type].push_back(idx);
 }
 
+void TranslateCtx::releaseTemps() {
+  for (auto idx : distinctTemps_) {
+    releaseTemp(idx);
+  }
+  distinctTemps_.clear();
+}
+
+void TranslateCtx::allNewTemps() {
+  tempVectors_.clear();
+}
+
 void ProjectSequence::makeWorkUnits(int stageIdx) {
   const core::AbstractProjectNode* project = projects_[stageIdx].get();
   std::vector<std::vector<core::TypedExprPtr>> groups;
@@ -391,9 +402,14 @@ void ProjectSequence::makeWorkUnits(int stageIdx) {
         exprInfo.inputs = std::move(inputs);
         exprInfo.result = result;
         unit.programExprs.push_back(exprInfo);
+
+        // Release temps used by this expression
+        ctx.releaseTemps();
       }
       ++exprIdx;
     }
+    // Clear temp vectors for the next WorkUnit
+    ctx.allNewTemps();
     ctx.noReuseOfTemp();
   }
   work_.push_back(std::move(units));
@@ -513,6 +529,36 @@ void ProjectSequence::initialize() {
   }
 }
 
+std::unique_ptr<ProjectSequence::WorkResult> ProjectSequence::runWork(
+    WorkUnit& unit) {
+  try {
+    // If selectionStack is empty, make a SelectivityVector and add it
+    if (unit.runState.selectionStack.empty()) {
+      unit.runState.selectionStack.push_back(
+          std::make_unique<SelectivityVector>(input_->size()));
+    }
+
+    // Set active to the first element in selectionStack
+    unit.runState.active = unit.runState.selectionStack[0].get();
+
+    // Set the size and select all elements
+    unit.runState.active->resize(input_->size());
+    unit.runState.active->setAll();
+
+    // Process each ExprInfo
+    for (const auto& exprInfo : unit.programExprs) {
+      unit.program->eval(
+          unit.execCtx.get(), exprInfo.begin, exprInfo.end, unit.runState);
+    }
+
+    // Return empty WorkResult (no error)
+    return std::make_unique<WorkResult>();
+  } catch (...) {
+    // Catch any exception and return it in WorkResult
+    return std::make_unique<WorkResult>(std::current_exception());
+  }
+}
+
 void ProjectSequence::addInput(RowVectorPtr input) {
   input_ = std::move(input);
 }
@@ -535,6 +581,44 @@ RowVectorPtr ProjectSequence::getOutput() {
   VELOX_DCHECK_NOT_NULL(rows);
   rows->setAll();
   setState();
+
+  // Process each stage in work_
+  for (auto& stage : work_) {
+    if (stage.size() == 1) {
+      // Single WorkUnit - run on this thread
+      auto& unit = stage[0];
+      auto result = runWork(unit);
+      if (result->error) {
+        std::rethrow_exception(result->error);
+      }
+    } else if (stage.size() > 1) {
+      // Multiple WorkUnits - run in parallel
+      std::vector<std::shared_ptr<AsyncSource<WorkResult>>> pending;
+
+      for (auto i = 0; i < stage.size(); ++i) {
+        auto& unit = stage[i];
+        pending.push_back(std::make_shared<AsyncSource<WorkResult>>(
+            [this, &unit]() { return runWork(unit); }));
+        auto item = pending.back();
+        operatorCtx_->task()->queryCtx()->executor()->add(
+            [item]() { item->prepare(); });
+      }
+
+      // Wait for all parallel work to complete and handle errors
+      std::exception_ptr error;
+      for (auto i = 0; i < pending.size(); ++i) {
+        auto result = pending[i]->move();
+        stats_.wlock()->getOutputTiming.add(pending[i]->prepareTiming());
+        if (!error && result->error) {
+          error = result->error;
+        }
+      }
+
+      if (error) {
+        std::rethrow_exception(error);
+      }
+    }
+  }
 
   return results_.back();
 }

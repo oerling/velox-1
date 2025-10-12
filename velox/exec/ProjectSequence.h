@@ -102,6 +102,7 @@ struct StageData {
     std::unique_ptr<core::ExecCtx> execCtx;
     std::unique_ptr<ExprProgram> program;
     std::vector<ExprInfo> programExprs;
+    RunState runState;
   };
   
 
@@ -212,9 +213,12 @@ class ProjectSequence : public Operator {
 
  private:
   struct WorkResult {
+    WorkResult() : error(nullptr) {}
     WorkResult(std::exception_ptr e) : error(std::move(e)) {}
     std::exception_ptr error;
   };
+
+  std::unique_ptr<WorkResult> runWork(WorkUnit& unit);
 
   void runStage(int32_t idx);
 
@@ -317,6 +321,11 @@ class TranslateCtx {
       usedTemps_.insert(i);
     }
   }
+
+  void releaseTemps();
+
+  void allNewTemps();
+
  private:
   OperandIdx getTemp(const TypePtr& type);
   void releaseTemp(OperandIdx idx);
