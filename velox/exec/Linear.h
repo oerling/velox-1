@@ -159,6 +159,8 @@ class Instruction {
     return result_;
   }
 
+  virtual std::string toString() const;
+
  protected:
   OpCode opCode_;
   OperandIdx result_;
@@ -179,6 +181,8 @@ class Field : public Instruction {
     return childIdx_;
   }
 
+  std::string toString() const override;
+
  private:
   OperandIdx input_;
   int32_t childIdx_;
@@ -192,6 +196,8 @@ class Assign : public Instruction {
   OperandIdx source() const {
     return source_;
   }
+
+  std::string toString() const override;
 
  private:
   OperandIdx source_;
@@ -223,6 +229,8 @@ class If : public Instruction {
     endIdx_ = idx;
   }
 
+  std::string toString() const override;
+
  private:
   OperandIdx condition_;
   OperandIdx temp_{kNoOperand};
@@ -247,6 +255,8 @@ class Nulls : public Instruction {
     return nullFlagIdx_;
   }
 
+  std::string toString() const override;
+
   std::vector<OperandIdx> operands_;
   int32_t nullFlagIdx_;
 };
@@ -264,6 +274,8 @@ class NullsEnd : public Instruction {
   OperandIdx value() const {
     return value_;
   }
+
+  std::string toString() const override;
 
  private:
   int32_t nullFlagIdx_;
@@ -283,6 +295,8 @@ class Coalesce : public Instruction {
   OperandIdx defaultValue() const {
     return default_;
   }
+
+  std::string toString() const override;
 
  private:
   OperandIdx input_;
@@ -322,6 +336,8 @@ class Call : public Instruction {
   const VectorFunctionMetadata& vectorFunctionMetadata() const {
     return vectorFunctionMetadata_;
   }
+
+  std::string toString() const override;
 
   std::vector<OperandIdx> args_;
   std::shared_ptr<VectorFunction> vectorFunction_;

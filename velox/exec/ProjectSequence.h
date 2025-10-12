@@ -206,6 +206,8 @@ class ProjectSequence : public Operator {
     return stageInputType_;
   }
 
+  std::string explainExprs() const;
+
  private:
   struct WorkResult {
     WorkResult(std::exception_ptr e) : error(std::move(e)) {}

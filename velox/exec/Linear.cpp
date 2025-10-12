@@ -44,6 +44,87 @@ const auto& opCodeNames() {
 
 VELOX_DEFINE_EMBEDDED_ENUM_NAME(Instruction, OpCode, opCodeNames)
 
+std::string Instruction::toString() const {
+  return fmt::format(
+      "{} result={}\n", toName(opCode_), result_);
+}
+
+std::string Field::toString() const {
+  return fmt::format(
+      "{} result={} input={} childIdx={}\n",
+      toName(opCode_),
+      result_,
+      input_,
+      childIdx_);
+}
+
+std::string Assign::toString() const {
+  return fmt::format(
+      "{} result={} source={}\n",
+      toName(opCode_),
+      result_,
+      source_);
+}
+
+std::string If::toString() const {
+  return fmt::format(
+      "{} condition={} elseIdx={} endIdx={}\n",
+      toName(opCode_),
+      condition_,
+      elseIdx_,
+      endIdx_);
+}
+
+std::string Nulls::toString() const {
+  std::string operandsStr;
+  for (size_t i = 0; i < operands_.size(); ++i) {
+    if (i > 0) {
+      operandsStr += ",";
+    }
+    operandsStr += std::to_string(operands_[i]);
+  }
+  return fmt::format(
+      "{} result={} operands=[{}] nullFlagIdx={}\n",
+      toName(opCode_),
+      result_,
+      operandsStr,
+      nullFlagIdx_);
+}
+
+std::string NullsEnd::toString() const {
+  return fmt::format(
+      "{} result={} nullFlagIdx={} value={}\n",
+      toName(opCode_),
+      result_,
+      nullFlagIdx_,
+      value_);
+}
+
+std::string Coalesce::toString() const {
+  return fmt::format(
+      "{} result={} input={} default={}\n",
+      toName(opCode_),
+      result_,
+      input_,
+      default_);
+}
+
+std::string Call::toString() const {
+  std::string argsStr;
+  for (size_t i = 0; i < args_.size(); ++i) {
+    if (i > 0) {
+      argsStr += ",";
+    }
+    argsStr += std::to_string(args_[i]);
+  }
+  return fmt::format(
+      "{} result={} args=[{}] returnedArg={}\n",
+      toName(opCode_),
+      result_,
+      argsStr,
+      returnedArg_);
+}
+
 namespace {
 
 // Helper function to resolve vector function and metadata for linear execution
@@ -292,6 +373,50 @@ OperandIdx ProjectSequence::makeConstant(const core::TypedExprPtr& expr) {
   state_[idx] = &tempVectors_[idx];
 
   return idx;
+}
+
+std::string ProjectSequence::explainExprs() const {
+  std::string result;
+
+  for (size_t i = 0; i < projects_.size(); ++i) {
+    const auto& project = projects_[i];
+
+    // Check if this is a ParallelProjectNode
+    if (auto* parallelProject =
+        dynamic_cast<const core::ParallelProjectNode*>(project.get())) {
+      result += fmt::format("Project {}: parallel project\n", i);
+
+      const auto& exprGroups = parallelProject->exprGroups();
+      const auto& names = parallelProject->exprNames();
+
+      size_t nameIdx = 0;
+      for (size_t groupIdx = 0; groupIdx < exprGroups.size(); ++groupIdx) {
+        result += fmt::format("  Group {}:\n", groupIdx);
+        const auto& group = exprGroups[groupIdx];
+
+        for (const auto& expr : group) {
+          if (nameIdx < names.size()) {
+            result += fmt::format(
+                "    {}: {}\n", names[nameIdx], expr->toString());
+            ++nameIdx;
+          }
+        }
+      }
+    } else {
+      // Regular project
+      result += fmt::format("Project {}: project\n", i);
+
+      const auto& names = project->names();
+      const auto& projections = project->projections();
+
+      for (size_t j = 0; j < projections.size(); ++j) {
+        result += fmt::format(
+            "  {}: {}\n", names[j], projections[j]->toString());
+      }
+    }
+  }
+
+  return result;
 }
 
 void ProjectSequence::setCallValueInfo(const core::TypedExprPtr& call) {
