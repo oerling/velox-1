@@ -42,24 +42,30 @@ class LinearProjectTest : public test::HiveConnectorTestBase {
   void checkSame(
       const core::PlanNodePtr& plan,
       const std::vector<std::shared_ptr<connector::hive::HiveConnectorSplit>>& splits) {
+    // Convert connector splits to exec::Splits
+    std::vector<exec::Split> execSplits;
+    for (auto& connectorSplit : splits) {
+      execSplits.emplace_back(exec::Split(connectorSplit, -1));
+    }
+
     // Run with use_project_sequence = false
     auto resultsWithoutProjectSequence =
         AssertQueryBuilder(plan)
-            .splits(splits)
+            .splits(execSplits)
             .config(core::QueryConfig::kUseProjectSequence, "false")
             .copyResults(pool_.get());
 
     // Run with use_project_sequence = true
     auto resultsWithProjectSequence =
         AssertQueryBuilder(plan)
-            .splits(splits)
+            .splits(execSplits)
             .config(core::QueryConfig::kUseProjectSequence, "true")
             .copyResults(pool_.get());
 
     // Compare results
     assertEqualResults(
-        {resultsWithoutProjectSequence},
-        {resultsWithProjectSequence});
+		       std::vector<RowVectorPtr>{resultsWithoutProjectSequence},
+		       std::vector<RowVectorPtr>{resultsWithProjectSequence});
   }
 };
 

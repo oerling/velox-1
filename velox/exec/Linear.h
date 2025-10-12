@@ -16,8 +16,9 @@
 
 #pragma once
 
-#include "velox/core/ITypedExpr.h"
 #include "velox/core/Expressions.h"
+#include "velox/core/ITypedExpr.h"
+#include "velox/core/PlanNode.h"
 #include "velox/expression/Expr.h"
 
 namespace facebook::velox::exec {
@@ -130,7 +131,8 @@ class Instruction {
     kIf,
     kCoalesce,
     kCall,
-    kField
+    kField,
+    kAssign
   };
 
   Instruction(OpCode opCode, OperandIdx result)
@@ -179,11 +181,22 @@ class Field : public Instruction {
   int32_t childIdx_;
 };
 
+class Assign : public Instruction {
+ public:
+  Assign(OperandIdx result, OperandIdx source)
+      : Instruction(OpCode::kAssign, result), source_(source) {}
+
+  OperandIdx source() const {
+    return source_;
+  }
+
+ private:
+  OperandIdx source_;
+};
+
 class If : public Instruction {
  public:
-     OperandIdx cond,
-     int32_t _elseIdx,
-     int32_t _endIdx)
+  If(OperandIdx cond, int32_t _elseIdx, int32_t _endIdx)
       : Instruction(OpCode::kIf, kNoOperand),
         condition_(cond),
         elseIdx_(_elseIdx),
@@ -337,9 +350,6 @@ struct Assignment {
   /// Designates the RowVector 'pth' starts from. 0 is input, then consecutive
   /// outputs, then temporary
   int32_t sourceRow;
-
-  /// Designates the leaf row into which path.back() is an index.
-  int32_t leafRow{-1};
 };
 
 struct RunState {
@@ -375,5 +385,9 @@ class ExprProgram {
 };
 
 bool isField(const core::TypedExprPtr& expr, std::vector<int32_t>& path);
+
+core::TypedExprPtr exprForPath(
+    const core::AbstractProjectNode& project,
+    const std::vector<int32_t>& path);
 
 } // namespace facebook::velox::exec

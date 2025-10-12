@@ -231,6 +231,49 @@ void ProjectSequence::setConstantValueInfo(const core::TypedExprPtr& constant) {
   valueMap_[constant.get()] = std::move(info);
 }
 
+OperandIdx ProjectSequence::makeConstant(const core::TypedExprPtr& expr) {
+  // Check if expr is already in constants_
+  auto it = constants_.find(expr.get());
+  if (it != constants_.end()) {
+    return it->second;
+  }
+
+  // Add expr to tempExprs_
+  addTempExpr(expr);
+
+  // Get new OperandIdx
+  OperandIdx idx = stateCounter_++;
+
+  // Add to constants_
+  constants_[expr.get()] = idx;
+
+  // Make sure state_ has at least idx + 1 elements
+  if (state_.size() <= idx) {
+    state_.resize(idx + 1);
+  }
+
+  // Create the ConstantVector
+  auto constantExpr = expr->asUnchecked<core::ConstantTypedExpr>();
+  VectorPtr vector;
+  if (constantExpr->hasValueVector()) {
+    vector = constantExpr->valueVector();
+  } else {
+    vector = BaseVector::createConstant(
+        constantExpr->type(), constantExpr->value(), 1, operatorCtx()->pool());
+  }
+
+  // Add to tempVectors_
+  if (tempVectors_.size() <= idx) {
+    tempVectors_.resize(idx + 1);
+  }
+  tempVectors_[idx] = vector;
+
+  // Set state_[idx] to point to the vector
+  state_[idx] = &tempVectors_[idx];
+
+  return idx;
+}
+
 void ProjectSequence::setCallValueInfo(const core::TypedExprPtr& call) {
   auto callExpr = call->asUnchecked<core::CallTypedExpr>();
   auto md = linearMetadata(callExpr->name());
@@ -581,7 +624,7 @@ void TranslateCtx::makeSwitch(
     std::optional<OperandIdx> result) {
   int32_t resultIdx;
   if (!result.has_value()) {
-    resultIdx  = getTemp (expr->type());
+    resultIdx = getTemp(type);
   } else {
     resultIdx = result.value();
   }
@@ -589,18 +632,48 @@ void TranslateCtx::makeSwitch(
   for (auto i = 0; i < inputs.size(); i += 2) {
     auto cond = translateExpr(inputs[i], std::nullopt);
     program_->instructions().push_back(std::make_unique<If>(cond, 0, 0));
-    ifs.push_back(program_->instructions().back()->as<If>(); = program_->instructions().back().get());
+    ifs.push_back(program_->instructions().back()->as<If>());
     conditions_.push_back(cond);
     translateExpr(inputs[i + 1], resultIdx);
-    ifs.back()->setElse(program_.instructions().size());
-    if (i == inputs.size()) {
-      // No else.
-      Variant(expr->type()->kind()
-      program_->instructions().push_back(std::make_unique<Assign>(result, null));
+    ifs.back()->setElse(program_->instructions().size());
+    if (i + 2 >= inputs.size()) {
+      if (i + 1 == inputs.size()) {
+        // No else.
+        auto nullValue = Variant(type->kind());
+        auto null = projectSequence_->makeConstant(
+            std::make_shared<core::ConstantTypedExpr>(type, nullValue));
+        program_->instructions().push_back(
+					   std::make_unique<Assign>(result.value(), null));
+      } else {
+        // There is an else.
+        translateExpr(inputs[i + 2], resultIdx);
+      }
+      // Set each if to end after the else.
+      for (auto* ifInst : ifs) {
+        ifInst->setEnd(program_->instructions().size());
+      }
+      conditions_.pop_back();
+      break;
     }
-    return resultIdx;
+    conditions_.pop_back();
   }
 }
+
+namespace {
+Assignment* findAssignment(
+    std::vector<Assignment>* assignments,
+    const std::vector<int32_t>& path) {
+  if (!assignments) {
+    return nullptr;
+  }
+  for (auto& assignment : *assignments) {
+    if (assignment.path == path) {
+      return &assignment;
+    }
+  }
+  return nullptr;
+}
+} // namespace
 
 OperandIdx TranslateCtx::translateExpr(
     const core::TypedExprPtr& expr,
@@ -608,47 +681,38 @@ OperandIdx TranslateCtx::translateExpr(
   switch (expr->kind()) {
     case core::ExprKind::kFieldAccess:
     case core::ExprKind::kDereference: {
+      std::vector<int32_t> path;
       if (!isField(expr, path)) {
-	VELOX_NYI("field access to outside of input row");
+        VELOX_NYI("field access to outside of input row");
       }
       auto it = stage_.fieldToOperand.find(expr.get());
       if (it != stage_.fieldToOperand.end()) {
-        return it->second;
+        auto idx = it->second;
+        if (!result.has_value()) {
+          return idx;
+        }
+        if (result.has_value() && isOnlyUse(idx) && idx != result.value()) {
+          Assignment* assignment = findAssignment(stage_.input, path);
+          VELOX_CHECK_NOT_NULL(assignment);
+          assignment->operand = result.value();
+          return result.value();
+        }
+        if (result.has_value() && idx == result.value()) {
+          return idx;
+        }
+        program_->instructions().push_back(
+            std::make_unique<Assign>(result.value(), idx));
+        return result.value();
       }
       VELOX_FAIL("Expect to have getters defined for : {}", expr->toString());
     }
     case core::ExprKind::kConstant: {
-      auto& constants = projectSequence_->constants();
-      auto it = constants.find(expr.get());
-      if (it == constants.end()) {
-        auto idx = projectSequence_->stateCounter()++;
-        auto& temps = projectSequence_->tempTypes();
-        if (temps.size() <= idx) {
-          temps.resize(idx + 1);
-        }
-        VectorPtr vector;
-        auto constantExpr = expr->asUnchecked<core::ConstantTypedExpr>();
-        if (constantExpr->hasValueVector()) {
-          vector = constantExpr->valueVector();
-        } else {
-          vector = BaseVector::createConstant(
-              constantExpr->type(),
-              constantExpr->value(),
-              1,
-              projectSequence_->operatorCtx()->pool());
-        }
-        temps[idx] = vector->type();
-        auto& vectors = projectSequence_->tempVectors();
-        if (vectors.size() <= idx) {
-          vectors.resize(idx + 1);
-        }
-        vectors[idx] = vector;
-        constants[expr.get()] = idx;
-        return idx;
+      auto idx = projectSequence_->makeConstant(expr);
+      if (result.has_value() && result.value() != idx) {
+        program_->instructions().push_back(
+            std::make_unique<Assign>(idx, result.value()));
       }
-      return it->second;
     }
-
     case core::ExprKind::kCall: {
       auto call = expr->asUnchecked<core::CallTypedExpr>();
       auto& name = call->name();
@@ -697,6 +761,20 @@ bool isField(const core::TypedExprPtr& expr, std::vector<int32_t>& path) {
   }
 
   return false;
+}
+
+core::TypedExprPtr exprForPath(
+    const core::AbstractProjectNode& project,
+    const std::vector<int32_t>& path) {
+  VELOX_CHECK(!path.empty(), "Path must have at least one element");
+
+  core::TypedExprPtr expr = project.projections()[path[0]];
+
+  for (size_t i = 1; i < path.size(); ++i) {
+    expr = expr->inputs()[path[i]];
+  }
+
+  return expr;
 }
 
 FunctionLinearMetadata linearMetadata(const std::string& name) {

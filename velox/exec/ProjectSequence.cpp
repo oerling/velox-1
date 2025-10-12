@@ -53,17 +53,22 @@ core::TypedExprPtr getterForPath(
   return current;
 }
 
-OperandIdx findInputOperand(
-    const StageData& stage,
-    const std::vector<int32_t>& path) {
-  for (auto& assignment : stage.input) {
-    if (assignment.path == path) {
-      return assignment.operand;
-    }
+
+VectorPtr* addressOfPath(const RowVectorPtr& row, const std::vector<int32_t>& path) {
+  VELOX_CHECK(!path.empty(), "Path must have at least one element");
+
+  RowVector* currentRow = row.get();
+
+  // Navigate through all but the last element of the path
+  for (size_t i = 0; i < path.size() - 1; ++i) {
+    currentRow = currentRow->childAt(path[i])->as<RowVector>();
   }
-  return kNoOperand;
+
+  // Return address of the child at the last path index
+  return &currentRow->children()[path.back()];
 }
 
+  
 std::vector<OperandIdx> StageData::gatherInputs(
     const core::TypedExprPtr& expr) {
   std::unordered_set<OperandIdx> distinctInputs;
@@ -196,28 +201,18 @@ void ProjectSequence::markExprFields(
       auto it = state.fieldToOperand.find(expr.get());
       OperandIdx inputIdx = kNoOperand;
       if (it == state.fieldToOperand.end()) {
-        if (state.next) {
-          inputIdx = findInputOperand(*state.next, path);
-        }
-        if (inputIdx == kNoOperand) {
-          inputIdx = stateCounter_++;
-          state.fieldToOperand[expr.get()] = inputIdx;
-          state.input.emplace_back(path, inputIdx, state.inputSourceIdx);
-        }
+        inputIdx = target == kNoOperand ? stateCounter_++ : target;
+        state.fieldToOperand[expr.get()] = inputIdx;
+        state.input->emplace_back(path, inputIdx, state.inputSourceIdx);
       } else {
         inputIdx = OperandIdx(it->second & ~kMultiple);
         it->second |= kMultiple;
-      }
-      if (target != kNoOperand) {
-        state.exprForPath.push_back(nullptr);
-        state.identityPaths.push_back({path, target});
       }
       return;
     }
   }
   if (target != kNoOperand) {
     state.exprForPath.push_back(expr);
-    state.identityPath.emplace_back();
   }
   for (auto i = 0; i < expr->inputs().size(); ++i) {
     markExprFields(expr->inputs()[i], kNoOperand, state);
@@ -246,11 +241,24 @@ void ProjectSequence::makeRowStageData(
     const std::vector<core::TypedExprPtr>& exprs,
     StageData& state) {
   std::vector<int32_t> path;
-
-  for (auto i = 0; i < exprs.size(); ++i) {
-    path.push_back(i);
-    makeExprStageData(exprs[i], path, state);
-    path.pop_back();
+  if (&state == &stages_.back()) {
+    for (auto i = 0; i < exprs.size(); ++i) {
+      path.push_back(i);
+      makeExprStageData(exprs[i], path, state);
+      path.pop_back();
+    }
+  } else {
+    // Non-last stages start with the paths that were accessed by the next
+    // stage.
+    state.exprForPath.resize(state.output.size());
+    for (auto i = 0; i < state.output.size(); ++i) {
+      auto& out = state.output[i];
+      auto& project = *projects_[&state - &stages_[0]];
+      auto expr = exprForPath(project, out.path);
+      VELOX_CHECK_NE(out.operand, kNoOperand);
+      markExprFields(expr, out.operand, state);
+      state.exprForPath[i] = expr;
+    }
   }
 }
 
@@ -348,6 +356,7 @@ void ProjectSequence::makeWorkUnits(int stageIdx) {
   }
   auto& stage = stages_[stageIdx];
   TranslateCtx ctx(stage, this);
+  stageInputType_ = stageIdx == 0 ? inputType_ : projects_[stageIdx - 1]->outputType();
   int exprIdx = 0;
   for (auto& group : groups) {
     units.emplace_back();
@@ -379,18 +388,13 @@ int32_t findPrefixIdx(
   return it - paths.begin();
 }
 
-void ProjectSequence::setLeafRow(std::vector<Assignment>& assignments) {
+  void ProjectSequence::setLeafRow(std::vector<Assignment>& assignments, const RowVectorPtr& row) {
   for (auto& assignment : assignments) {
-    auto sourceRow = assignment.sourceRow;
-    auto& paths = allPaths_[assignment.sourceRow];
-    if (assignment.path.size() == 1) {
-      assignment.leafRow = pathGroupStart_[assignment.sourceRow];
-    } else {
-      auto idx = findPrefixIdx(allPaths_[sourceRow], assignment.path);
-      assignment.leafRow = pathGroupStart_[sourceRow] + idx;
+    if (state_[assignment.operand]) {
+      continue;
     }
-  }
-}
+    state_[assignment.operand] = addressOfPath(row, assignment.path);
+  }}
 
 void ProjectSequence::initialize() {
   Operator::initialize();
@@ -402,7 +406,8 @@ void ProjectSequence::initialize() {
       stageInputValueInfo_ = makeDefaultValueInfo(inputType_);
     } else {
       stageInputType_ = projects_[i - 1]->outputType();
-      // stageInputValueInfo_ was already set at the end of the previous iteration
+      // stageInputValueInfo_ was already set at the end of the previous
+      // iteration
     }
 
     // Create nextValueInfo for accumulating this stage's output
@@ -461,27 +466,30 @@ void ProjectSequence::initialize() {
   const auto& inputType = projects_[0]->sources()[0]->outputType();
   stages_.resize(projects_.size());
   for (int32_t level = projects_.size() - 1; level >= 0; --level) {
-    if (level < projects_.size() - 1) {
-      stages_[level].next = &stages_[level + 1];
+    if (level == 0) {
+      stages_[0].input = &inputAssignments_;
+    } else {
+      stages_[level].input = &stages_[level - 1].output;
     }
     stages_[level].inputSourceIdx = level;
     stages_[level].outputSourceIdx = level + 1;
     makeRowStageData(projects_[level]->projections(), stages_[level]);
   }
-  allPaths();
-  tempRowIdx_ = 0;
-  for (auto& paths : allPaths_) {
-    tempRowIdx_ += paths.size();
-  }
+  firstTempIdx_ = stateCounter_;
   for (auto i = 0; i < projects_.size(); ++i) {
     makeWorkUnits(i);
   }
-  for (auto& stage : stages_) {
-    setLeafRow(stage.input);
-    setLeafRow(stage.output);
+  for (auto& assignment : inputAssignments_) {
+    // set to non-0 to mark this will be set on first input.
+    state_[assignment.operand] = reinterpret_cast<VectorPtr*>(1);
+  }
+  for (auto i = 0; i < stages_.size(); ++i) {
+    setLeafRow(stages_[i].output, results_[i]);
   }
   tempVectors_.resize(tempTypes_.size());
-  resultRows_.push_back(&tempVectors_);
+  for (auto i = 0; i < tempVectors_.size(); ++i) {
+    state_[firstTempIdx_ + i] = &tempVectors_[i];
+  }
 }
 
 void ProjectSequence::addInput(RowVectorPtr input) {
@@ -525,19 +533,6 @@ void listRows(
   }
 }
 
-void ProjectSequence::allPaths() {
-  std::vector<int32_t> empty;
-  allPaths_.emplace_back();
-  listRows(inputType_.get(), empty, allPaths_.back());
-  pathGroupStart_.push_back(0);
-  pathGroupStart_.push_back(allPaths_.back().size());
-  for (auto& project : projects_) {
-    allPaths_.emplace_back();
-    listRows(project->outputType().get(), empty, allPaths_.back());
-    pathGroupStart_.push_back(pathGroupStart_.back() + allPaths_.back().size());
-  }
-}
-
 std::vector<VectorPtr>* getRowAt(
     RowVector* row,
     const std::vector<int32_t> path) {
@@ -548,46 +543,33 @@ std::vector<VectorPtr>* getRowAt(
   return &row->children();
 }
 
-void ProjectSequence::initState(const std::vector<Assignment>& assignments) {
-  if (assignments.empty()) {
-    return;
-  }
+void ProjectSequence::initState(
+    const std::vector<Assignment>& assignments,
+    const RowVectorPtr& row,
+    bool force) {
   for (auto& assignment : assignments) {
+    if (!force && !state_[assignment.operand]) {
+      continue;
+    }
     state_[operandIdx(assignment.operand)] =
-        &(*resultRows_[assignment.leafRow])[assignment.path.back()];
+      addressOfPath(row, assignment.path);
   }
 }
 
 void ProjectSequence::setState() {
   state_.resize(stateCounter_);
-  if (results_.empty()) {
+  initState(inputAssignments_, input_, true);
+  if (firstBatch_) {
+    firstBatch_ = false;
     for (auto& project : projects_) {
       results_.push_back(
           BaseVector::create<RowVector>(
               project->outputType(), input_->size(), operatorCtx_->pool()));
     }
-  }
-  auto& inputPaths = allPaths_.front();
-  for (auto i = 0; i < inputPaths.size(); ++i) {
-    resultRows_[i] = getRowAt(input_.get(), inputPaths[i]);
-  }
-  int32_t fill = inputPaths.size();
-
-  for (auto i = 0; i < stages_.size(); ++i) {
-    auto& paths = allPaths_[i + 1];
-    for (auto j = 0; j < paths.size(); ++j) {
-      resultRows_[fill + j] = getRowAt(results_[i].get(), paths[j]);
+    for (auto i = 0; i < stages_.size(); ++i) {
+      auto& stage = stages_[i];
+      initState(stage.output, results_[i], false);
     }
-    fill += paths.size();
-  }
-
-  for (int32_t i = stages_.size() - 1; i >= 0; --i) {
-    auto& stage = stages_[i];
-    initState(stage.output);
-    initState(stage.input);
-  }
-  for (auto i = 0; i < tempVectors_.size(); ++i) {
-    state_[firstTempIdx_ + i] = &tempVectors_[i];
   }
 }
 

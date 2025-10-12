@@ -49,14 +49,6 @@ using ExprOperandMap = folly::F14FastMap<
     ITypedExprHasher,
     ITypedExprComparer>;
 
-/// Describes an identity projections, i.e. a result path of one stage is
-/// directly set from a path of input.
-struct IdentityPath {
-  /// The path in input which directly sets 'operand'.
-  std::vector<int32_t> inputPath;
-  OperandIdx operand;
-};
-
 /// Describes the input and output of a stage in ProjectSequence.
 struct StageData {
   /// Operand idx for each set path in the output of this stage.
@@ -66,7 +58,7 @@ struct StageData {
   std::vector<core::TypedExprPtr> exprForPath;
 
   /// OperandIdx for each referenced path in the input of this stage.
-  std::vector<Assignment> input;
+  std::vector<Assignment>* input;
   int32_t inputSourceIdx;
   int32_t outputSourceIdx;
 
@@ -74,10 +66,6 @@ struct StageData {
   /// OperandIdx for each distinct path of field getters in an expr of this
   /// stage.
   ExprOperandMap fieldToOperand;
-
-  std::vector<IdentityPath> identityPaths;
-
-  StageData* next{nullptr};
 
   OperandIdx fieldIdx(const core::TypedExprPtr& field)  {
     auto it = fieldToOperand.find(field.get());
@@ -208,6 +196,15 @@ class ProjectSequence : public Operator {
     return valueMap_;
   }
 
+  void addTempExpr(const core::TypedExprPtr& expr) {
+    tempExprs_.push_back(expr);
+  }
+
+  OperandIdx makeConstant(const core::TypedExprPtr& expr);
+
+  const RowTypePtr& stageInputType() const {
+    return stageInputType_;
+  }
 
  private:
   struct WorkResult {
@@ -233,11 +230,10 @@ class ProjectSequence : public Operator {
 
   void makeWorkUnits(int32_t stageIdx);
 
-  void setLeafRow(std::vector<Assignment>& assignments);
+  void setLeafRow(std::vector<Assignment>& assignments, const RowVectorPtr& row);
 
-  void allPaths();
 
-  void initState(const std::vector<Assignment>& assignments);
+  void initState(const std::vector<Assignment>& assignments,     const RowVectorPtr& row, bool force);
 
   void setState();
 
@@ -246,6 +242,8 @@ class ProjectSequence : public Operator {
   RowTypePtr inputType_;
   bool initialized_{false};
 
+  // Maps from paths in inputType_ to indices in state_.
+  std::vector<Assignment> inputAssignments_;
   std::vector<StageData> stages_;
 
   // Expressions to evaluate. All the WorkUnits in the first inner vector are
@@ -258,15 +256,8 @@ class ProjectSequence : public Operator {
   // State for all projections. Instructions reference
   // inputs/temporaries/outputs/constants via an index into this.
   std::vector<VectorPtr*> state_;
-
-  std::vector<std::vector<std::vector<int32_t>>> allPaths_;
-
-  std::vector<int32_t> pathGroupStart_;
-  // Index of the row with temp vectors  in 'resultRows_'
-  int32_t tempRowIdx_{0};
   // Result vector for each stage.
   std::vector<RowVectorPtr> results_;
-  std::vector<std::vector<VectorPtr>*> resultRows_;
 
   OperandIdx firstTempIdx_{0};
   std::vector<Assignment> temp_;
@@ -275,7 +266,9 @@ class ProjectSequence : public Operator {
   int32_t stateCounter_{0};
   ValueInfoMap valueMap_;
   ExprOperandMap constants_;
+
   std::unique_ptr<SimpleExpressionEvaluator> evaluator_;
+  std::vector<core::TypedExprPtr> tempExprs_;
 
   // The type of input for the stage being preprocessed.
   RowTypePtr stageInputType_;
@@ -285,6 +278,7 @@ class ProjectSequence : public Operator {
 
   // ValueInfo for each stage's output. One entry per project in projects_.
   std::vector<ValueInfo> stageValueInfos_;
+  bool firstBatch_{true};
 };
 
 struct TypeHasher {
