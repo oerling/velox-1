@@ -241,12 +241,9 @@ class If : public Instruction {
 class Nulls : public Instruction {
  public:
   Nulls(
-      OperandIdx result,
-      std::vector<OperandIdx> operands,
-      int32_t nullFlagIdx)
-      : Instruction(OpCode::kNulls, result),
-        operands_(std::move(operands)),
-        nullFlagIdx_(nullFlagIdx) {}
+      std::vector<OperandIdx> operands)
+      : Instruction(OpCode::kNulls, kNoOperand),
+        operands_(std::move(operands)) {}
 
   const std::vector<OperandIdx>& operands() const {
     return operands_;
@@ -263,23 +260,14 @@ class Nulls : public Instruction {
 
 class NullsEnd : public Instruction {
  public:
-  NullsEnd(OperandIdx result, int32_t nullFlagIdx, OperandIdx value)
+  NullsEnd(OperandIdx result)
       : Instruction(OpCode::kNullsEnd, result),
-        nullFlagIdx_(nullFlagIdx),
-        value_(value) {}
+ {}
 
-  int32_t nullFlagIdx() const {
-    return nullFlagIdx_;
-  }
-  OperandIdx value() const {
-    return value_;
-  }
 
   std::string toString() const override;
 
  private:
-  int32_t nullFlagIdx_;
-  OperandIdx value_;
 };
 
 class Coalesce : public Instruction {

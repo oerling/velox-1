@@ -93,11 +93,9 @@ std::string Nulls::toString() const {
 
 std::string NullsEnd::toString() const {
   return fmt::format(
-      "{} result={} nullFlagIdx={} value={}\n",
+      "{} result={}\n",
       toName(opCode_),
-      result_,
-      nullFlagIdx_,
-      value_);
+      result_);
 }
 
 std::string Coalesce::toString() const {
@@ -865,6 +863,25 @@ Assignment* findAssignment(
 OperandIdx TranslateCtx::translateExpr(
     const core::TypedExprPtr& expr,
     std::optional<OperandIdx> result) {
+  // Check if we should add null propagation
+  if (!inNullPropagating_) {
+    auto* info = valueInfo(expr.get(), projectSequence_->valueMap());
+    if (info && info->allDefaultNullBehavior && !info->notNull) {
+      inNullPropagating_ = true;
+      auto nullableInputs = gatherNullableInputs(expr);
+
+      program_->instructions().push_back(
+          std::make_unique<Nulls>(flagOperand, std::move(nullableInputs)));
+
+      OperandIdx value = translateExpr(expr, result);
+
+      inNullPropagating_ = false;
+      program_->instructions().push_back(
+          std::make_unique<NullsEnd>(value));
+      return value;
+    }
+  }
+
   switch (expr->kind()) {
     case core::ExprKind::kFieldAccess:
     case core::ExprKind::kDereference: {
