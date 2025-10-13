@@ -67,7 +67,7 @@ struct StageData {
   /// stage.
   ExprOperandMap fieldToOperand;
 
-  OperandIdx fieldIdx(const core::TypedExprPtr& field)  {
+  OperandIdx fieldIdx(const core::TypedExprPtr& field) {
     auto it = fieldToOperand.find(field.get());
     VELOX_CHECK(it != fieldToOperand.end());
     return it->second;
@@ -77,37 +77,35 @@ struct StageData {
   std::vector<OperandIdx> gatherInputs(const core::TypedExprPtr& expr);
 };
 
-  //// Describes a piece of ExprProgram that produces a single value.
-  struct ExprInfo {
-    /// Fies instruction dx for block.
-    int32_t begin;
+//// Describes a piece of ExprProgram that produces a single value.
+struct ExprInfo {
+  /// Fies instruction dx for block.
+  int32_t begin;
 
-    /// First instruction idx after block.
-    int32_t end;
+  /// First instruction idx after block.
+  int32_t end;
 
-    /// All inputs that are touched by the block.
-    std::vector<OperandIdx> inputs;
+  /// All inputs that are touched by the block.
+  std::vector<OperandIdx> inputs;
 
-    /// The value computed by instructions from begin to end.
-    OperandIdx result;
-  };
-  
-  // A unit of potentially parallel work. If the same stage has multiple units,
-  // the inputs, temporary results and results of these units must be
-  // non-overlapping.
-  struct WorkUnit {
-    // Positions of potential lazies in 'state_' which are to be loaded by this
-    // group.
-    std::vector<OperandIdx> toLoad;
-    std::unique_ptr<core::ExecCtx> execCtx;
-    std::unique_ptr<ExprProgram> program;
-    std::vector<ExprInfo> programExprs;
-    RunState runState;
-    int32_t maxNesting{0};
-  };
-  
+  /// The value computed by instructions from begin to end.
+  OperandIdx result;
+};
 
-  
+// A unit of potentially parallel work. If the same stage has multiple units,
+// the inputs, temporary results and results of these units must be
+// non-overlapping.
+struct WorkUnit {
+  // Positions of potential lazies in 'state_' which are to be loaded by this
+  // group.
+  std::vector<OperandIdx> toLoad;
+  std::unique_ptr<core::ExecCtx> execCtx;
+  std::unique_ptr<ExprProgram> program;
+  std::vector<ExprInfo> programExprs;
+  RunState runState;
+  int32_t maxNesting{0};
+};
+
 class ProjectSequence : public Operator {
  public:
   ProjectSequence(
@@ -179,20 +177,17 @@ class ProjectSequence : public Operator {
 
   core::TypedExprPtr preprocess(const core::TypedExprPtr& tree);
 
-  core::TypedExprPtr tryFoldConstant(
-      const core::TypedExprPtr& expr);
+  core::TypedExprPtr tryFoldConstant(const core::TypedExprPtr& expr);
 
   std::optional<OperandIdx> findReusableInput(
       const core::TypedExprPtr& expr,
       StageData& stage);
 
-  void setConstantValueInfo(
-			    const core::TypedExprPtr& constant);
- 
+  void setConstantValueInfo(const core::TypedExprPtr& constant);
+
   void setCallValueInfo(const core::TypedExprPtr& call);
 
   void setCastValueInfo(const core::TypedExprPtr& cast);
-
 
   ValueInfoMap& valueMap() {
     return valueMap_;
@@ -239,10 +234,14 @@ class ProjectSequence : public Operator {
 
   void makeWorkUnits(int32_t stageIdx);
 
-  void setLeafRow(std::vector<Assignment>& assignments, const RowVectorPtr& row);
+  void setLeafRow(
+      std::vector<Assignment>& assignments,
+      const RowVectorPtr& row);
 
-
-  void initState(const std::vector<Assignment>& assignments,     const RowVectorPtr& row, bool force);
+  void initState(
+      const std::vector<Assignment>& assignments,
+      const RowVectorPtr& row,
+      bool force);
 
   void setState();
 
@@ -310,8 +309,9 @@ class TranslateCtx {
  public:
   TranslateCtx(StageData& stage, ProjectSequence* projectSequence);
 
-  OperandIdx
-  translateExpr(const core::TypedExprPtr&, std::optional<OperandIdx> result);
+  OperandIdx translateExpr(
+      const core::TypedExprPtr&,
+      std::optional<OperandIdx> result);
 
   void setProgram(ExprProgram* program) {
     program_ = program;
@@ -353,10 +353,10 @@ class TranslateCtx {
  private:
   void releaseTemp(OperandIdx idx);
   OperandIdx makeCall(
-		      const std::string& name,
+      const std::string& name,
       const TypePtr& type,
-		      const std::vector<core::TypedExprPtr>& inputs,
-		      std::optional<OperandIdx> result);
+      const std::vector<core::TypedExprPtr>& inputs,
+      std::optional<OperandIdx> result);
 
   void enterNested() {
     nestingLevel_++;
@@ -375,9 +375,10 @@ class TranslateCtx {
   // Operands are checked non-nul for active rows.
   bool inNullPropagating_{false};
 
-  // If inside a conditional, specifies the operand with the flag. The flag of the outermost if is element 1, the flag of the next inner is 1 etc.
+  // If inside a conditional, specifies the operand with the flag. The flag of
+  // the outermost if is element 1, the flag of the next inner is 1 etc.
   std::vector<OperandIdx> conditions_;
-  
+
   StageData& stage_;
 
   /// Map from type to operand index for temporary variables. A temp is a vector

@@ -53,8 +53,9 @@ core::TypedExprPtr getterForPath(
   return current;
 }
 
-
-VectorPtr* addressOfPath(const RowVectorPtr& row, const std::vector<int32_t>& path) {
+VectorPtr* addressOfPath(
+    const RowVectorPtr& row,
+    const std::vector<int32_t>& path) {
   VELOX_CHECK(!path.empty(), "Path must have at least one element");
 
   RowVector* currentRow = row.get();
@@ -68,7 +69,6 @@ VectorPtr* addressOfPath(const RowVectorPtr& row, const std::vector<int32_t>& pa
   return &currentRow->children()[path.back()];
 }
 
-  
 std::vector<OperandIdx> StageData::gatherInputs(
     const core::TypedExprPtr& expr) {
   std::unordered_set<OperandIdx> distinctInputs;
@@ -377,7 +377,7 @@ std::vector<OperandIdx> TranslateCtx::gatherNullableInputs(
               // Field is nullable, add it to the set
               // Extract the actual operand index (remove kMultiple flag if
               // present)
-              distinctInputs.insert(int32_t(it->second & ~kMultiple));
+              distinctInputs.insert(OperandIdx(it->second & ~kMultiple));
             }
           }
         }
@@ -406,7 +406,8 @@ void ProjectSequence::makeWorkUnits(int stageIdx) {
   }
   auto& stage = stages_[stageIdx];
   TranslateCtx ctx(stage, this);
-  stageInputType_ = stageIdx == 0 ? inputType_ : projects_[stageIdx - 1]->outputType();
+  stageInputType_ =
+      stageIdx == 0 ? inputType_ : projects_[stageIdx - 1]->outputType();
   int exprIdx = 0;
   for (auto& group : groups) {
     units.emplace_back();
@@ -467,13 +468,16 @@ int32_t findPrefixIdx(
   return it - paths.begin();
 }
 
-  void ProjectSequence::setLeafRow(std::vector<Assignment>& assignments, const RowVectorPtr& row) {
+void ProjectSequence::setLeafRow(
+    std::vector<Assignment>& assignments,
+    const RowVectorPtr& row) {
   for (auto& assignment : assignments) {
     if (state_[assignment.operand]) {
       continue;
     }
     state_[assignment.operand] = addressOfPath(row, assignment.path);
-  }}
+  }
+}
 
 void ProjectSequence::initialize() {
   Operator::initialize();
@@ -593,12 +597,11 @@ std::unique_ptr<ProjectSequence::WorkResult> ProjectSequence::runWork(
     // Reset selection to the first element and mark all rows as active
     unit.runState.resetSelection();
     unit.runState.state = state_.data();
-    
+
     // Process each ExprInfo
     EvalCtx evalCtx(unit.execCtx.get());
     for (const auto& exprInfo : unit.programExprs) {
-      unit.program->eval(
-			 &evalCtx, exprInfo.begin, exprInfo.end, unit.runState);
+      unit.program->eval(&evalCtx, exprInfo.begin, exprInfo.end, unit.runState);
     }
 
     // Return empty WorkResult (no error)
@@ -647,8 +650,9 @@ RowVectorPtr ProjectSequence::getOutput() {
 
       for (auto i = 0; i < stage.size(); ++i) {
         auto& unit = stage[i];
-        pending.push_back(std::make_shared<AsyncSource<WorkResult>>(
-            [this, &unit]() { return runWork(unit); }));
+        pending.push_back(
+            std::make_shared<AsyncSource<WorkResult>>(
+                [this, &unit]() { return runWork(unit); }));
         auto item = pending.back();
         operatorCtx_->task()->queryCtx()->executor()->add(
             [item]() { item->prepare(); });
@@ -682,7 +686,7 @@ void listRows(
     if (child->kind() == TypeKind::ROW) {
       path.push_back(i);
       result.push_back(path);
-      listRows(&child->as<TypeKind::ROW>(), path, result);
+      listRows(&child->asRow(), path, result);
       path.pop_back();
     }
   }
@@ -707,7 +711,7 @@ void ProjectSequence::initState(
       continue;
     }
     state_[operandIdx(assignment.operand)] =
-      addressOfPath(row, assignment.path);
+        addressOfPath(row, assignment.path);
   }
 }
 

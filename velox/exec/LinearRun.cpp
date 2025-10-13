@@ -14,9 +14,9 @@
  * limitations under the License.
  */
 
-#include "velox/exec/Linear.h"
 #include "velox/common/base/BitUtil.h"
 #include "velox/core/Expressions.h"
+#include "velox/exec/Linear.h"
 #include "velox/exec/ProjectSequence.h"
 #include "velox/exec/Task.h"
 #include "velox/expression/BooleanMix.h"
@@ -59,9 +59,8 @@ void setAtNulls(
   }
 
   // Use forEachUnsetBit to loop over nulls and set positions to constant
-  bits::forEachUnsetBit(bitMask, 0, end, [&](vector_size_t i) {
-    rawValues[i] = value;
-  });
+  bits::forEachUnsetBit(
+      bitMask, 0, end, [&](vector_size_t i) { rawValues[i] = value; });
 }
 
 void setEmptyAtNull(
@@ -97,7 +96,10 @@ void setEmptyAtNull(
   });
 }
 
-void evalCoalesce(const Coalesce* coalesceInst, RunState& runState, EvalCtx* ctx) {
+void evalCoalesce(
+    const Coalesce* coalesceInst,
+    RunState& runState,
+    EvalCtx* ctx) {
   auto resultIdx = coalesceInst->result();
   auto inputIdx = coalesceInst->input();
 
@@ -128,10 +130,12 @@ void evalCoalesce(const Coalesce* coalesceInst, RunState& runState, EvalCtx* ctx
     // Get nulls buffer and active selection
     auto* nulls = inputVec->rawNulls();
     auto end = runState.active->end();
-    const uint64_t* activeBits = runState.active ? runState.active->asRange().bits() : nullptr;
+    const uint64_t* activeBits =
+        runState.active ? runState.active->asRange().bits() : nullptr;
 
     // Allocate temp buffer for bit operations if needed
-    if (!runState.temp1 || runState.temp1->size() < bits::nwords(end) * sizeof(uint64_t)) {
+    if (!runState.temp1 ||
+        runState.temp1->size() < bits::nwords(end) * sizeof(uint64_t)) {
       runState.temp1 = AlignedBuffer::allocate<bool>(end, ctx->pool());
     }
     auto* temp = runState.temp1->asMutable<uint64_t>();
@@ -139,11 +143,19 @@ void evalCoalesce(const Coalesce* coalesceInst, RunState& runState, EvalCtx* ctx
     // Handle MAP and ARRAY types differently
     if (encoding == VectorEncoding::Simple::ARRAY ||
         encoding == VectorEncoding::Simple::MAP) {
+      // Verify that default constant has zero length
+      auto* constantComplex = defaultVec->as<ConstantVector<ComplexType>>();
+      auto* valueVec = constantComplex->valueVector()->as<ArrayVectorBase>();
+      VELOX_CHECK_EQ(
+          valueVec->sizeAt(0),
+          0,
+          "coalesce default for array/map must be empty");
+
       // Call setEmptyAtNull for MAP and ARRAY encodings
       setEmptyAtNull(nulls, end, activeBits, temp, inputVec);
     } else {
       // Call setAtNulls with dynamic type dispatch for scalar types
-      VELOX_DYNAMIC_TYPE_DISPATCH_ALL(
+      VELOX_DYNAMIC_SCALAR_TYPE_DISPATCH(
           setAtNulls,
           inputVec->typeKind(),
           nulls,
@@ -154,11 +166,17 @@ void evalCoalesce(const Coalesce* coalesceInst, RunState& runState, EvalCtx* ctx
           inputVec);
     }
     inputVec->clearAllNulls();
+    return;
   }
+  VELOX_UNSUPPORTED("coalesce must be in place");
 }
 } // namespace
 
-void ExprProgram::eval(EvalCtx* ctx, int32_t begin, int32_t end, RunState& runState) {
+void ExprProgram::eval(
+    EvalCtx* ctx,
+    int32_t begin,
+    int32_t end,
+    RunState& runState) {
   for (auto pc = begin; pc < end; ++pc) {
     const auto& instruction = *instructions_[pc];
     switch (instruction.opCode()) {
@@ -198,7 +216,9 @@ void ExprProgram::eval(EvalCtx* ctx, int32_t begin, int32_t end, RunState& runSt
 
             // Push new selection for then branch
             auto* thenSelection = runState.pushSelection();
-            thenSelection->copy(*prevSelection);
+            thenSelection->setFromBits(
+                prevSelection->asRange().bits(),
+                prevSelection->end());
 
             // AND with condition values to get rows where condition is true
             bits::andBits(
@@ -213,7 +233,9 @@ void ExprProgram::eval(EvalCtx* ctx, int32_t begin, int32_t end, RunState& runSt
             eval(ctx, pc + 1, ifInst->elseIdx(), runState);
 
             // Copy previous selection back to active
-            runState.active->copy(*prevSelection);
+            runState.active->setFromBits(
+                prevSelection->asRange().bits(),
+                prevSelection->end());
 
             // AND with negated condition values for else branch
             bits::andWithNegatedBits(
@@ -262,8 +284,11 @@ void ExprProgram::eval(EvalCtx* ctx, int32_t begin, int32_t end, RunState& runSt
         auto size = runState.active->end();
 
         // Allocate pendingNulls buffer if not already allocated
-        if (!runState.pendingNulls || runState.pendingNulls->size() < bits::nwords(size) * sizeof(uint64_t)) {
-          runState.pendingNulls = AlignedBuffer::allocate<bool>(size, ctx->pool());
+        if (!runState.pendingNulls ||
+            runState.pendingNulls->size() <
+                bits::nwords(size) * sizeof(uint64_t)) {
+          runState.pendingNulls =
+              AlignedBuffer::allocate<bool>(size, ctx->pool());
         }
 
         auto* tempNulls = runState.pendingNulls->asMutable<uint64_t>();
@@ -277,9 +302,7 @@ void ExprProgram::eval(EvalCtx* ctx, int32_t begin, int32_t end, RunState& runSt
             if (!firstFound) {
               // Copy first null buffer
               std::memcpy(
-                  tempNulls,
-                  rawNulls,
-                  bits::nwords(size) * sizeof(uint64_t));
+                  tempNulls, rawNulls, bits::nwords(size) * sizeof(uint64_t));
               firstFound = true;
             } else {
               // AND subsequent null buffers
@@ -298,10 +321,13 @@ void ExprProgram::eval(EvalCtx* ctx, int32_t begin, int32_t end, RunState& runSt
 
         // Push a new selection and copy the previous selection
         auto* newSelection = runState.pushSelection();
-        newSelection->copy(*prevSelection);
+        newSelection->setFromBits(
+            prevSelection->asRange().bits(),
+            prevSelection->end());
 
         // Deselect rows that have nulls
-        newSelection->deselectNulls(tempNulls, prevSelection->begin(), prevSelection->end());
+        newSelection->deselectNulls(
+            tempNulls, prevSelection->begin(), prevSelection->end());
 
         break;
       }
@@ -314,30 +340,13 @@ void ExprProgram::eval(EvalCtx* ctx, int32_t begin, int32_t end, RunState& runSt
         auto nullsEndInst = instruction.as<NullsEnd>();
         auto& result = runState.vectorAt(nullsEndInst->result());
 
-        // Ensure result has a nulls buffer
-        result->ensureNulls();
-
         // Pop the selection back to the previous level
         runState.popSelection();
 
-        // Get pendingNulls buffer
-        auto* tempNulls = runState.pendingNulls->asMutable<uint64_t>();
-
-        // AND negated selection over tempNulls
-        // This marks as null any rows that were deselected
-        bits::andWithNegatedBits(
-            tempNulls,
-            runState.active->asRange().bits(),
-            runState.active->begin(),
-            runState.active->end());
-
-        // AND tempNulls over rawNulls in the result
-        // This propagates the null bits to the result
-        bits::andBits(
-            const_cast<uint64_t*>(result->rawNulls()),
-            tempNulls,
-            runState.active->begin(),
-            runState.active->end());
+        // Add the pending nulls to the result
+        result->addNulls(
+            runState.pendingNulls->as<uint64_t>(),
+            *runState.active);
 
         break;
       }
@@ -346,14 +355,84 @@ void ExprProgram::eval(EvalCtx* ctx, int32_t begin, int32_t end, RunState& runSt
         evalCoalesce(coalesceInst, runState, ctx);
         break;
       }
+      case Instruction::OpCode::kCall: {
+        auto callInst = instruction.as<Call>();
+        const auto& args = callInst->args();
+
+        // Resize argTemp to size of args
+        runState.argTemp_.resize(args.size());
+
+        // Process args from last to first
+        for (int32_t i = args.size() - 1; i >= 0; --i) {
+          if (args[i] & kCopyPtr) {
+            // Copy the vector
+            runState.argTemp_[i] = runState.vectorAt(operandIdx(args[i]));
+          } else {
+            // Move the vector
+            runState.argTemp_[i] =
+                std::move(runState.vectorAt(operandIdx(args[i])));
+          }
+        }
+
+        // Determine result vector
+        VectorPtr* resultPtr;
+        if (callInst->returnedArg() == -1) {
+          resultPtr = &runState.vectorAt(callInst->result());
+        } else {
+          resultPtr = &runState.argTemp_[callInst->returnedArg()];
+        }
+
+        // Set result to mutable
+        (*resultPtr)->setMutable(true);
+
+        // Check encoding
+        auto encoding = (*resultPtr)->encoding();
+        VELOX_CHECK(
+            encoding == VectorEncoding::Simple::FLAT ||
+                encoding == VectorEncoding::Simple::ARRAY ||
+                encoding == VectorEncoding::Simple::MAP ||
+                encoding == VectorEncoding::Simple::ROW,
+            "Result vector must be flat, array, map or struct");
+
+        // Call the vector function
+        callInst->vectorFunction()->apply(
+            *runState.active,
+            runState.argTemp_,
+            callInst->type(),
+            *ctx,
+            *resultPtr);
+
+        // Move args back if kCopyPtr is not set
+        // Special handling for returned arg to ensure result is placed
+        // correctly
+        int32_t returnedArgIdx = callInst->returnedArg();
+        for (size_t i = 0; i < args.size(); ++i) {
+          bool shouldMove = !(args[i] & kCopyPtr);
+
+          // If this is the returned arg, always move it
+          if (static_cast<int32_t>(i) == returnedArgIdx) {
+            shouldMove = true;
+          }
+          // If there's a returned arg and this arg refers to the same operand,
+          // don't move it
+          else if (
+              returnedArgIdx != -1 &&
+              operandIdx(args[i]) == operandIdx(args[returnedArgIdx])) {
+            shouldMove = false;
+          }
+
+          if (shouldMove) {
+            runState.vectorAt(operandIdx(args[i])) =
+                std::move(runState.argTemp_[i]);
+          }
+        }
+
+        break;
+      }
       default:
+        VELOX_UNREACHABLE();
         break;
     }
   }
 }
-}
-
-
-
-
-
+} // namespace facebook::velox::exec

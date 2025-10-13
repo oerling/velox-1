@@ -102,13 +102,16 @@ void setupLinearMetadata();
 using OperandIdx = uint32_t;
 constexpr OperandIdx kNoOperand = ~0;
 constexpr OperandIdx kMultiple = 0x80000000;
+// Bit in arguments of call indicating that the VectorPtr must be copied by
+// value, not moved.
+constexpr OperandIdx kCopyPtr = 0x40000000;
 
 inline bool isOnlyUse(OperandIdx idx) {
   return (idx & kMultiple) == 0;
 }
 
 inline uint32_t operandIdx(OperandIdx idx) {
-  return idx & ~kMultiple;
+  return idx & ~(kMultiple | kCopyPtr);
 }
 
 class TranslateCtx;
@@ -240,8 +243,7 @@ class If : public Instruction {
 
 class Nulls : public Instruction {
  public:
-  Nulls(
-      std::vector<OperandIdx> operands)
+  Nulls(std::vector<OperandIdx> operands)
       : Instruction(OpCode::kNulls, kNoOperand),
         operands_(std::move(operands)) {}
 
@@ -260,9 +262,7 @@ class Nulls : public Instruction {
 
 class NullsEnd : public Instruction {
  public:
-  NullsEnd(OperandIdx result)
-      : Instruction(OpCode::kNullsEnd, result) {}
-
+  NullsEnd(OperandIdx result) : Instruction(OpCode::kNullsEnd, result) {}
 
   std::string toString() const override;
 };
@@ -296,13 +296,7 @@ class Call : public Instruction {
       TypePtr type,
       int32_t returnedArg,
       std::shared_ptr<VectorFunction> vectorFunction,
-      VectorFunctionMetadata vectorFunctionMetadata)
-      : Instruction(OpCode::kCall, result),
-        args_(std::move(args)),
-        vectorFunction_(std::move(vectorFunction)),
-        vectorFunctionMetadata_(std::move(vectorFunctionMetadata)),
-        type_(std::move(type)),
-        returnedArg_(returnedArg) {}
+      VectorFunctionMetadata vectorFunctionMetadata);
 
   const std::vector<OperandIdx>& args() const {
     return args_;
@@ -357,7 +351,7 @@ struct Assignment {
 };
 
 struct RunState {
-  SelectivityVector resetSelection() {
+  SelectivityVector* resetSelection() {
     active = selectionStack[0].get();
     return active;
   }
@@ -367,13 +361,13 @@ struct RunState {
   }
 
   SelectivityVector* popSelection() {
-    return active = selectionStack(--selectionIdx].get();
+    return active = selectionStack[--selectionIdx].get();
   }
 
   VectorPtr& vectorAt(OperandIdx idx) {
     return *state[idx];
   }
-  
+
   /// Current active rows. One of the items in selectionStack.
   SelectivityVector* active;
 
@@ -383,16 +377,21 @@ struct RunState {
   /// Index into selectionStack for 'active'.
   int32_t selectionIdx{0};
 
-  /// Stack of selections. Entering a conditional section pushes, leaving a conditional section pops.
+  /// Stack of selections. Entering a conditional section pushes, leaving a
+  /// conditional section pops.
   std::vector<std::unique_ptr<SelectivityVector>> selectionStack;
-  
+
   /// True when all inputs of a null propgating section were not null.
   bool noNulls{false};
 
-  /// Contains the nulls to add to the result of a section of null propagating operations where nulls are deselected at the start. 
+  /// Contains the nulls to add to the result of a section of null propagating
+  /// operations where nulls are deselected at the start.
   BufferPtr pendingNulls;
   BufferPtr temp1;
   BufferPtr temp2;
+
+  // A tenporary vector for use as arguments to a Velox function.
+  std::vector<VectorPtr> argTemp_;
 };
 
 /// Represents a sequential set of instructions for computing
@@ -411,10 +410,6 @@ class ExprProgram {
   }
 
   std::vector<std::unique_ptr<Instruction>> instructions_;
-
-  // A tenporary vector for use as arguments to a Velox function.
-  std::vector<std::vector<VectorPtr>> argTemp_;
-  std::vector<SelectivityVector> rowsStack_;
 };
 
 bool isField(const core::TypedExprPtr& expr, std::vector<int32_t>& path);
