@@ -25,6 +25,139 @@
 
 namespace facebook::velox::exec {
 
+namespace {
+template <TypeKind Kind>
+void setAtNulls(
+    const uint64_t* nulls,
+    vector_size_t end,
+    const uint64_t* active,
+    uint64_t* temp,
+    const VectorPtr& constant,
+    VectorPtr& target) {
+  using T = typename TypeTraits<Kind>::NativeType;
+
+  // Cast constant to ConstantVector and get value
+  auto* constantVec = constant->as<ConstantVector<T>>();
+  auto value = constantVec->valueAt(0);
+
+  // Cast target to FlatVector
+  auto* flatTarget = target->as<FlatVector<T>>();
+  auto* rawValues = flatTarget->mutableRawValues();
+
+  // Prepare bit mask: OR of negated active and nulls
+  const uint64_t* bitMask;
+  if (active) {
+    // OR negated active with nulls into temp
+    auto numWords = bits::nwords(end);
+    for (size_t i = 0; i < numWords; ++i) {
+      temp[i] = (~active[i]) | nulls[i];
+    }
+    bitMask = temp;
+  } else {
+    // Use nulls directly as bit mask
+    bitMask = nulls;
+  }
+
+  // Use forEachUnsetBit to loop over nulls and set positions to constant
+  bits::forEachUnsetBit(bitMask, 0, end, [&](vector_size_t i) {
+    rawValues[i] = value;
+  });
+}
+
+void setEmptyAtNull(
+    const uint64_t* nulls,
+    vector_size_t end,
+    const uint64_t* active,
+    uint64_t* temp,
+    VectorPtr& target) {
+  // Cast target to ArrayVectorBase (works for both ArrayVector and MapVector)
+  auto* arrayBase = target->as<ArrayVectorBase>();
+
+  // Make offsets and sizes mutable
+  arrayBase->mutableOffsets(end);
+  arrayBase->mutableSizes(end);
+
+  // Prepare bit mask: OR of negated active and nulls
+  const uint64_t* bitMask;
+  if (active) {
+    // OR negated active with nulls into temp
+    auto numWords = bits::nwords(end);
+    for (size_t i = 0; i < numWords; ++i) {
+      temp[i] = (~active[i]) | nulls[i];
+    }
+    bitMask = temp;
+  } else {
+    // Use nulls directly as bit mask
+    bitMask = nulls;
+  }
+
+  // Use forEachUnsetBit to loop over nulls and set offset and size to 0
+  bits::forEachUnsetBit(bitMask, 0, end, [&](vector_size_t i) {
+    arrayBase->setOffsetAndSize(i, 0, 0);
+  });
+}
+
+void evalCoalesce(const Coalesce* coalesceInst, RunState& runState, EvalCtx* ctx) {
+  auto resultIdx = coalesceInst->result();
+  auto inputIdx = coalesceInst->input();
+
+  // If result and input are the same
+  if (resultIdx == inputIdx) {
+    auto& inputVec = runState.vectorAt(inputIdx);
+
+    // If mayHaveNulls is false, return
+    if (!inputVec->mayHaveNulls()) {
+      return;
+    }
+
+    // Make input vector writable
+    inputVec->setMutable(true);
+
+    auto encoding = inputVec->encoding();
+
+    // Consider MAP and ARRAY encodings as flat, otherwise flatten
+    if (encoding != VectorEncoding::Simple::FLAT &&
+        encoding != VectorEncoding::Simple::ARRAY &&
+        encoding != VectorEncoding::Simple::MAP) {
+      inputVec->ensureWritable(*runState.active);
+    }
+
+    // Get the default value vector
+    auto& defaultVec = runState.vectorAt(coalesceInst->defaultValue());
+
+    // Get nulls buffer and active selection
+    auto* nulls = inputVec->rawNulls();
+    auto end = runState.active->end();
+    const uint64_t* activeBits = runState.active ? runState.active->asRange().bits() : nullptr;
+
+    // Allocate temp buffer for bit operations if needed
+    if (!runState.temp1 || runState.temp1->size() < bits::nwords(end) * sizeof(uint64_t)) {
+      runState.temp1 = AlignedBuffer::allocate<bool>(end, ctx->pool());
+    }
+    auto* temp = runState.temp1->asMutable<uint64_t>();
+
+    // Handle MAP and ARRAY types differently
+    if (encoding == VectorEncoding::Simple::ARRAY ||
+        encoding == VectorEncoding::Simple::MAP) {
+      // Call setEmptyAtNull for MAP and ARRAY encodings
+      setEmptyAtNull(nulls, end, activeBits, temp, inputVec);
+    } else {
+      // Call setAtNulls with dynamic type dispatch for scalar types
+      VELOX_DYNAMIC_TYPE_DISPATCH_ALL(
+          setAtNulls,
+          inputVec->typeKind(),
+          nulls,
+          end,
+          activeBits,
+          temp,
+          defaultVec,
+          inputVec);
+    }
+    inputVec->clearAllNulls();
+  }
+}
+} // namespace
+
 void ExprProgram::eval(EvalCtx* ctx, int32_t begin, int32_t end, RunState& runState) {
   for (auto pc = begin; pc < end; ++pc) {
     const auto& instruction = *instructions_[pc];
@@ -206,6 +339,11 @@ void ExprProgram::eval(EvalCtx* ctx, int32_t begin, int32_t end, RunState& runSt
             runState.active->begin(),
             runState.active->end());
 
+        break;
+      }
+      case Instruction::OpCode::kCoalesce: {
+        auto coalesceInst = instruction.as<Coalesce>();
+        evalCoalesce(coalesceInst, runState, ctx);
         break;
       }
       default:
