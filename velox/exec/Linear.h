@@ -261,13 +261,10 @@ class Nulls : public Instruction {
 class NullsEnd : public Instruction {
  public:
   NullsEnd(OperandIdx result)
-      : Instruction(OpCode::kNullsEnd, result),
- {}
+      : Instruction(OpCode::kNullsEnd, result) {}
 
 
   std::string toString() const override;
-
- private:
 };
 
 class Coalesce : public Instruction {

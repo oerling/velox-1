@@ -316,6 +316,12 @@ class TranslateCtx {
     program_ = program;
   }
 
+  template <typename Instruction, typename... Args>
+  void addInstruction(Args&&... args) {
+    program_->instructions().push_back(
+        std::make_unique<Instruction>(std::forward<Args>(args)...));
+  }
+
   void noReuseOfTemp() {
     for (auto i : distinctTemps_) {
       usedTemps_.insert(i);
@@ -326,7 +332,7 @@ class TranslateCtx {
 
   void allNewTemps();
 
-  std::vector<int32_t> gatherNullableInputs(const core::TypedExprPtr& expr);
+  std::vector<OperandIdx> gatherNullableInputs(const core::TypedExprPtr& expr);
 
  private:
   OperandIdx getTemp(const TypePtr& type);

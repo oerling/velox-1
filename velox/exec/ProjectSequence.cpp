@@ -355,9 +355,9 @@ void TranslateCtx::allNewTemps() {
   tempVectors_.clear();
 }
 
-std::vector<int32_t> TranslateCtx::gatherNullableInputs(
+std::vector<OperandIdx> TranslateCtx::gatherNullableInputs(
     const core::TypedExprPtr& expr) {
-  std::unordered_set<int32_t> distinctInputs;
+  std::unordered_set<OperandIdx> distinctInputs;
   std::vector<int32_t> path;
 
   // Helper function to recursively collect nullable field inputs
@@ -391,7 +391,7 @@ std::vector<int32_t> TranslateCtx::gatherNullableInputs(
   collectFields(expr);
 
   // Convert set to vector
-  return std::vector<int32_t>(distinctInputs.begin(), distinctInputs.end());
+  return std::vector<OperandIdx>(distinctInputs.begin(), distinctInputs.end());
 }
 
 void ProjectSequence::makeWorkUnits(int stageIdx) {
@@ -585,9 +585,10 @@ std::unique_ptr<ProjectSequence::WorkResult> ProjectSequence::runWork(
     unit.runState.active->setAll();
 
     // Process each ExprInfo
+    EvalCtx evalCtx(unit.execCtx.get());
     for (const auto& exprInfo : unit.programExprs) {
       unit.program->eval(
-          unit.execCtx.get(), exprInfo.begin, exprInfo.end, unit.runState);
+			 &evalCtx, exprInfo.begin, exprInfo.end, unit.runState);
     }
 
     // Return empty WorkResult (no error)

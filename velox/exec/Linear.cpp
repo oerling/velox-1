@@ -871,7 +871,7 @@ OperandIdx TranslateCtx::translateExpr(
       auto nullableInputs = gatherNullableInputs(expr);
 
       program_->instructions().push_back(
-          std::make_unique<Nulls>(flagOperand, std::move(nullableInputs)));
+          std::make_unique<Nulls>(std::move(nullableInputs)));
 
       OperandIdx value = translateExpr(expr, result);
 
