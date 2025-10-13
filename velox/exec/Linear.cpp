@@ -788,17 +788,14 @@ OperandIdx TranslateCtx::makeCall(
     }
   }
 
-  // Create the Call instruction
-  auto callInstruction = std::make_unique<Call>(
+  // Add the Call instruction
+  addInstruction<Call>(
       resultIdx,
       std::move(args),
       type,
       returnedArg,
       std::move(vectorFunction),
       std::move(vectorFunctionMetadata));
-
-  // Add the Call to the program's instructions
-  program_->instructions().push_back(std::move(callInstruction));
 
   return resultIdx;
 }
@@ -816,7 +813,7 @@ void TranslateCtx::makeSwitch(
   std::vector<If*> ifs;
   for (auto i = 0; i < inputs.size(); i += 2) {
     auto cond = translateExpr(inputs[i], std::nullopt);
-    program_->instructions().push_back(std::make_unique<If>(cond, 0, 0));
+    addInstruction<If>(cond, 0, 0);
     ifs.push_back(program_->instructions().back()->as<If>());
     conditions_.push_back(cond);
     translateExpr(inputs[i + 1], resultIdx);
@@ -827,8 +824,7 @@ void TranslateCtx::makeSwitch(
         auto nullValue = Variant(type->kind());
         auto null = projectSequence_->makeConstant(
             std::make_shared<core::ConstantTypedExpr>(type, nullValue));
-        program_->instructions().push_back(
-					   std::make_unique<Assign>(result.value(), null));
+        addInstruction<Assign>(result.value(), null);
       } else {
         // There is an else.
         translateExpr(inputs[i + 2], resultIdx);
@@ -870,14 +866,12 @@ OperandIdx TranslateCtx::translateExpr(
       inNullPropagating_ = true;
       auto nullableInputs = gatherNullableInputs(expr);
 
-      program_->instructions().push_back(
-          std::make_unique<Nulls>(std::move(nullableInputs)));
+      addInstruction<Nulls>(std::move(nullableInputs));
 
       OperandIdx value = translateExpr(expr, result);
 
       inNullPropagating_ = false;
-      program_->instructions().push_back(
-          std::make_unique<NullsEnd>(value));
+      addInstruction<NullsEnd>(value);
       return value;
     }
   }
@@ -904,8 +898,7 @@ OperandIdx TranslateCtx::translateExpr(
         if (result.has_value() && idx == result.value()) {
           return idx;
         }
-        program_->instructions().push_back(
-            std::make_unique<Assign>(result.value(), idx));
+        addInstruction<Assign>(result.value(), idx);
         return result.value();
       }
       VELOX_FAIL("Expect to have getters defined for : {}", expr->toString());
@@ -913,8 +906,7 @@ OperandIdx TranslateCtx::translateExpr(
     case core::ExprKind::kConstant: {
       auto idx = projectSequence_->makeConstant(expr);
       if (result.has_value() && result.value() != idx) {
-        program_->instructions().push_back(
-            std::make_unique<Assign>(idx, result.value()));
+        addInstruction<Assign>(idx, result.value());
       }
     }
     case core::ExprKind::kCall: {
