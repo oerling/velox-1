@@ -34,6 +34,7 @@ class LinearProjectTest : public test::HiveConnectorTestBase {
   void SetUp() override {
     test::HiveConnectorTestBase::SetUp();
     setupLinearMetadata();
+    setupSpecialForms();
   }
 
   // Runs the plan against the splits twice: once with use_project_sequence=false

@@ -447,9 +447,12 @@ void ProjectSequence::makeWorkUnits(int stageIdx) {
       }
       ++exprIdx;
     }
+    // Set maxNesting from TranslateCtx after translating all expressions
+    unit.maxNesting = ctx.maxNesting();
     // Clear temp vectors for the next WorkUnit
     ctx.allNewTemps();
     ctx.noReuseOfTemp();
+    ctx.clearMaxNesting();
   }
   work_.push_back(std::move(units));
 }
@@ -571,19 +574,26 @@ void ProjectSequence::initialize() {
 std::unique_ptr<ProjectSequence::WorkResult> ProjectSequence::runWork(
     WorkUnit& unit) {
   try {
-    // If selectionStack is empty, make a SelectivityVector and add it
-    if (unit.runState.selectionStack.empty()) {
-      unit.runState.selectionStack.push_back(
-          std::make_unique<SelectivityVector>(input_->size()));
+    // Ensure selectionStack has at least maxNesting SelectivityVectors
+    if (unit.runState.selectionStack.size() < unit.maxNesting) {
+      unit.runState.selectionStack.resize(unit.maxNesting);
+      for (auto& selection : unit.runState.selectionStack) {
+        if (!selection) {
+          selection = std::make_unique<SelectivityVector>(input_->size());
+        }
+      }
     }
 
-    // Set active to the first element in selectionStack
-    unit.runState.active = unit.runState.selectionStack[0].get();
+    // Resize all SelectivityVectors to current input size
+    for (auto& selection : unit.runState.selectionStack) {
+      selection->resize(input_->size());
+      selection->setAll();
+    }
 
-    // Set the size and select all elements
-    unit.runState.active->resize(input_->size());
-    unit.runState.active->setAll();
-
+    // Reset selection to the first element and mark all rows as active
+    unit.runState.resetSelection();
+    unit.runState.state = state_.data();
+    
     // Process each ExprInfo
     EvalCtx evalCtx(unit.execCtx.get());
     for (const auto& exprInfo : unit.programExprs) {

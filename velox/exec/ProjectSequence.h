@@ -103,6 +103,7 @@ struct StageData {
     std::unique_ptr<ExprProgram> program;
     std::vector<ExprInfo> programExprs;
     RunState runState;
+    int32_t maxNesting{0};
   };
   
 
@@ -334,8 +335,22 @@ class TranslateCtx {
 
   std::vector<OperandIdx> gatherNullableInputs(const core::TypedExprPtr& expr);
 
- private:
+  int32_t maxNesting() const {
+    return maxNesting_ + 1;
+  }
+
+  void clearMaxNesting() {
+    maxNesting_ = 0;
+  }
+
+  OperandIdx makeSwitch(
+      const TypePtr& type,
+      std::vector<core::TypedExprPtr>& inputs,
+      std::optional<OperandIdx> result);
+
   OperandIdx getTemp(const TypePtr& type);
+
+ private:
   void releaseTemp(OperandIdx idx);
   OperandIdx makeCall(
 		      const std::string& name,
@@ -343,10 +358,17 @@ class TranslateCtx {
 		      const std::vector<core::TypedExprPtr>& inputs,
 		      std::optional<OperandIdx> result);
 
-  void makeSwitch(
-      const TypePtr& type,
-      std::vector<core::TypedExprPtr>& inputs,
-      std::optional<OperandIdx> result);
+  void enterNested() {
+    nestingLevel_++;
+    if (nestingLevel_ > maxNesting_) {
+      maxNesting_ = nestingLevel_;
+    }
+  }
+
+  void leaveNested() {
+    nestingLevel_--;
+    VELOX_CHECK_GE(nestingLevel_, 0, "Nesting level cannot be negative");
+  }
 
   RowTypePtr inputType_;
 
@@ -371,6 +393,12 @@ class TranslateCtx {
   ProjectSequence* projectSequence_;
 
   ExprProgram* program_{nullptr};
+
+  // Tracks the maximum nesting level reached during translation
+  int32_t maxNesting_{0};
+
+  // Tracks the current nesting level
+  int32_t nestingLevel_{0};
 };
 
 } // namespace facebook::velox::exec

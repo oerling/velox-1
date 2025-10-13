@@ -357,10 +357,39 @@ struct Assignment {
 };
 
 struct RunState {
-  SelectivityVector* active;
-  VectorPtr* state;
-  std::vector<std::unique_ptr<SelectivityVector>> selectionStack;
+  SelectivityVector resetSelection() {
+    active = selectionStack[0].get();
+    return active;
+  }
 
+  SelectivityVector* pushSelection() {
+    return active = selectionStack[++selectionIdx].get();
+  }
+
+  SelectivityVector* popSelection() {
+    return active = selectionStack(--selectionIdx].get();
+  }
+
+  VectorPtr& vectorAt(OperandIdx idx) {
+    return *state[idx];
+  }
+  
+  /// Current active rows. One of the items in selectionStack.
+  SelectivityVector* active;
+
+  /// All vectors in scope. OperandIdx's are indices into this.
+  VectorPtr** state;
+
+  /// Index into selectionStack for 'active'.
+  int32_t selectionIdx{0};
+
+  /// Stack of selections. Entering a conditional section pushes, leaving a conditional section pops.
+  std::vector<std::unique_ptr<SelectivityVector>> selectionStack;
+  
+  /// True when all inputs of a null propgating section were not null.
+  bool noNulls{false};
+
+  /// Contains the nulls to add to the result of a section of null propagating operations where nulls are deselected at the start. 
   BufferPtr pendingNulls;
   BufferPtr temp1;
   BufferPtr temp2;

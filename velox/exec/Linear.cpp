@@ -800,7 +800,7 @@ OperandIdx TranslateCtx::makeCall(
   return resultIdx;
 }
 
-void TranslateCtx::makeSwitch(
+OperandIdx TranslateCtx::makeSwitch(
     const TypePtr& type,
     std::vector<core::TypedExprPtr>& inputs,
     std::optional<OperandIdx> result) {
@@ -813,7 +813,8 @@ void TranslateCtx::makeSwitch(
   std::vector<If*> ifs;
   for (auto i = 0; i < inputs.size(); i += 2) {
     auto cond = translateExpr(inputs[i], std::nullopt);
-    addInstruction<If>(cond, 0, 0);
+    enterNested();
+      addInstruction<If>(cond, 0, 0);
     ifs.push_back(program_->instructions().back()->as<If>());
     conditions_.push_back(cond);
     translateExpr(inputs[i + 1], resultIdx);
@@ -831,6 +832,7 @@ void TranslateCtx::makeSwitch(
       }
       // Set each if to end after the else.
       for (auto* ifInst : ifs) {
+	leaveNested();
         ifInst->setEnd(program_->instructions().size());
       }
       conditions_.pop_back();
@@ -838,6 +840,7 @@ void TranslateCtx::makeSwitch(
     }
     conditions_.pop_back();
   }
+  return resultIdx;
 }
 
 namespace {
@@ -867,10 +870,12 @@ OperandIdx TranslateCtx::translateExpr(
       auto nullableInputs = gatherNullableInputs(expr);
 
       addInstruction<Nulls>(std::move(nullableInputs));
-
+      enterNested();
+      
       OperandIdx value = translateExpr(expr, result);
 
       inNullPropagating_ = false;
+      leaveNested();
       addInstruction<NullsEnd>(value);
       return value;
     }
@@ -914,8 +919,11 @@ OperandIdx TranslateCtx::translateExpr(
       auto& name = call->name();
       auto special = specialForm(name);
       if (special) {
-        return special(*this, call, result);
-      }
+	auto specialResult = special(*this, call, result);
+	if (special != kNoOperand) {
+	  return specialResult;
+	}
+	}
       return makeCall(call->name(), expr->type(), call->inputs(), result);
     }
     case core::ExprKind::kCast:
@@ -1006,7 +1014,53 @@ void registerSpecialForm(const std::string& name, TranslateSpecialForm form) {
 }
 
 void setupSpecialForms() {
-  // Special forms will be registered here
+  // Register "switch" special form
+  registerSpecialForm("switch", [](
+      TranslateCtx& ctx,
+      const core::CallTypedExpr* call,
+      std::optional<OperandIdx> result) -> OperandIdx {
+    auto inputs = call->inputs();
+    return ctx.makeSwitch(call->type(), inputs, result);
+  });
+
+  // Register "if" special form
+  registerSpecialForm("if", [](
+      TranslateCtx& ctx,
+      const core::CallTypedExpr* call,
+      std::optional<OperandIdx> result) -> OperandIdx {
+    auto inputs = call->inputs();
+    return ctx.makeSwitch(call->type(), inputs, result);
+  });
+
+  // Register "coalesce" special form
+  registerSpecialForm("coalesce", [](
+      TranslateCtx& ctx,
+      const core::CallTypedExpr* call,
+      std::optional<OperandIdx> result) -> OperandIdx {
+    const auto& inputs = call->inputs();
+    VELOX_CHECK_EQ(inputs.size(), 2, "coalesce requires exactly 2 inputs");
+    VELOX_CHECK_EQ(
+        inputs[1]->kind(),
+        core::ExprKind::kConstant,
+        "coalesce second argument must be a constant");
+
+    // Translate both inputs
+    auto inputOperand = ctx.translateExpr(inputs[0], result);
+    auto defaultOperand = ctx.translateExpr(inputs[1], std::nullopt);
+
+    // Determine result operand
+    OperandIdx resultOperand;
+    if (result.has_value()) {
+      resultOperand = result.value();
+    } else {
+      resultOperand = ctx.getTemp(inputs[0]->type());
+    }
+
+    // Add Coalesce instruction
+    ctx.addInstruction<Coalesce>(resultOperand, inputOperand, defaultOperand);
+
+    return resultOperand;
+  });
 }
 
 namespace {
