@@ -326,6 +326,8 @@ class TranslateCtx {
 
   void allNewTemps();
 
+  std::vector<int32_t> gatherNullableInputs(const core::TypedExprPtr& expr);
+
  private:
   OperandIdx getTemp(const TypePtr& type);
   void releaseTemp(OperandIdx idx);

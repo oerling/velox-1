@@ -355,6 +355,45 @@ void TranslateCtx::allNewTemps() {
   tempVectors_.clear();
 }
 
+std::vector<int32_t> TranslateCtx::gatherNullableInputs(
+    const core::TypedExprPtr& expr) {
+  std::unordered_set<int32_t> distinctInputs;
+  std::vector<int32_t> path;
+
+  // Helper function to recursively collect nullable field inputs
+  std::function<void(const core::TypedExprPtr&)> collectFields =
+      [&](const core::TypedExprPtr& e) {
+        if (!e) {
+          return;
+        }
+
+        // Check if this expression is a field
+        if (isField(e, path)) {
+          auto it = stage_.fieldToOperand.find(e.get());
+          if (it != stage_.fieldToOperand.end()) {
+            // Check if the field is nullable using ValueInfo
+            auto* info = valueInfo(e.get(), projectSequence_->valueMap());
+            if (info && !info->notNull) {
+              // Field is nullable, add it to the set
+              // Extract the actual operand index (remove kMultiple flag if
+              // present)
+              distinctInputs.insert(int32_t(it->second & ~kMultiple));
+            }
+          }
+        }
+
+        // Recursively process all child expressions
+        for (const auto& input : e->inputs()) {
+          collectFields(input);
+        }
+      };
+
+  collectFields(expr);
+
+  // Convert set to vector
+  return std::vector<int32_t>(distinctInputs.begin(), distinctInputs.end());
+}
+
 void ProjectSequence::makeWorkUnits(int stageIdx) {
   const core::AbstractProjectNode* project = projects_[stageIdx].get();
   std::vector<std::vector<core::TypedExprPtr>> groups;
