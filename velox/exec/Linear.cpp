@@ -484,10 +484,17 @@ std::string ProjectSequence::explainPrograms() const {
   return result;
 }
 
-void ProjectSequence::setCallValueInfo(const core::TypedExprPtr& call) {
+core::TypedExprPtr ProjectSequence::setCallValueInfo(
+    const core::TypedExprPtr& call) {
   auto callExpr = call->asUnchecked<core::CallTypedExpr>();
   auto md = linearMetadata(callExpr->name());
   ValueCtx ctx{valueMap_};
+  if (md.rewrite) {
+    auto rewritten = rewrite(call, ctx);
+    if (rewritten != expr) {
+      return preprocess(rewritten);
+    }
+  }
   ValueInfo info(false, false);
 
   // If the function has custom makeValueInfo, use it
@@ -540,10 +547,27 @@ void ProjectSequence::setCallValueInfo(const core::TypedExprPtr& call) {
   }
 
   valueMap_[call.get()] = std::move(info);
+  return call;
 }
 
-void ProjectSequence::setCastValueInfo(const core::TypedExprPtr& cast) {
+bool isRowRenameCast(const core::castTypedExpr& cast) {
+  if (!isCall(cast->inputs()[0], "row_constructor")) {
+    return false;
+  }
+  return cast->type()->kind() == TypeKind::ROW &&
+      cast->type()->equivalent(cast->inputs()[0]->type());
+}
+
+core::TypedExprPtr ProjectSequence::setCastValueInfo(
+    const core::TypedExprPtr& cast) {
   auto castExpr = cast->asUnchecked<core::CastTypedExpr>();
+  if (isRowRenameCast(castExpr)) {
+    return preprocess(
+        std::make_shared<core::CallTypedExpr>(
+            castExpr->type(),
+            castExpr->inputs()[0]->inputs(),
+            "row_constructor"));
+  }
 
   ValueInfo info(false, false);
 
@@ -676,9 +700,9 @@ core::TypedExprPtr ProjectSequence::preprocess(const core::TypedExprPtr& tree) {
                                    : tree;
       auto result = tryFoldConstant(exprToFold);
       if (result->kind() == core::ExprKind::kCall) {
-        setCallValueInfo(result);
+        return setCallValueInfo(result);
       } else if (result->kind() == core::ExprKind::kCast) {
-        setCastValueInfo(result);
+        return setCastValueInfo(result);
       }
       return result;
     }
@@ -703,9 +727,9 @@ core::TypedExprPtr ProjectSequence::preprocess(const core::TypedExprPtr& tree) {
           : tree;
       auto result = tryFoldConstant(exprToFold);
       if (result->kind() == core::ExprKind::kCall) {
-        setCallValueInfo(result);
+        return setCallValueInfo(result);
       } else if (result->kind() == core::ExprKind::kCast) {
-        setCastValueInfo(result);
+        return setCastValueInfo(result);
       }
       return result;
     }
@@ -1070,8 +1094,7 @@ void setupSpecialForms() {
         const auto& inputs = call->inputs();
         VELOX_CHECK_EQ(inputs.size(), 2, "coalesce requires exactly 2 inputs");
         VELOX_CHECK(
-            inputs[1]->kind() ==
-            core::ExprKind::kConstant,
+            inputs[1]->kind() == core::ExprKind::kConstant,
             "coalesce second argument must be a constant");
 
         // Translate both inputs

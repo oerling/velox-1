@@ -185,9 +185,9 @@ class ProjectSequence : public Operator {
 
   void setConstantValueInfo(const core::TypedExprPtr& constant);
 
-  void setCallValueInfo(const core::TypedExprPtr& call);
+  core::TypedExprPtr setCallValueInfo(const core::TypedExprPtr& call);
 
-  void setCastValueInfo(const core::TypedExprPtr& cast);
+  core::TypedExprPtr setCastValueInfo(const core::TypedExprPtr& cast);
 
   ValueInfoMap& valueMap() {
     return valueMap_;

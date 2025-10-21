@@ -71,6 +71,84 @@ class LinearProjectTest : public test::HiveConnectorTestBase {
 };
 
 TEST_F(LinearProjectTest, basic) {
+  // Create a test dataset with 10 bigint children
+  vector_size_t numRows = 1000;
+  std::vector<VectorPtr> children;
+
+  for (int i = 0; i < 10; ++i) {
+    auto flat = makeFlatVector<int64_t>(
+        numRows,
+        [](vector_size_t row) { return row; });
+
+    // Add nulls for children 5-9
+    if (i >= 5) {
+      // Every i-th row is null
+      for (vector_size_t row = 0; row < numRows; row += i) {
+        flat->setNull(row, true);
+      }
+    }
+
+    children.push_back(flat);
+  }
+
+  // Create RowVector with default names (c0, c1, ..., c9)
+  std::vector<std::string> names;
+  std::vector<TypePtr> types;
+  for (int i = 0; i < 10; ++i) {
+    names.push_back(fmt::format("c{}", i));
+    types.push_back(BIGINT());
+  }
+  auto rowType = ROW(std::move(names), std::move(types));
+  auto rowVector = std::make_shared<RowVector>(
+      pool_.get(),
+      rowType,
+      BufferPtr(nullptr),
+      numRows,
+      std::move(children));
+
+  // Create plan with PlanBuilder
+  auto plan = PlanBuilder()
+      .values({rowVector})
+      .project({
+          "c0 + 1 as c0",
+          "c1 + c0 as c1",
+          "coalesce(c2, 0) as c2",
+          "c3 as c3",
+          "c4 as c4",
+          "coalesce(c5, 0) as c5",
+          "coalesce(c6 + c7, 0) as c6",
+          "cast(row_constructor(coalesce(c7, 0), c8, c9) as row<c0 bigint, c0 bigint, c0 bigint>) as c7"
+      })
+      .project({
+          "c0 * 2 as c0",
+          "c1 * 2 as c1",
+          "coalesce(c2, 0) * 3 as c2",
+          "clamp(coalesce(c4, 0), 100, 4000) as c3",
+          "c5 + c5 as c4",
+          "row_constructor(clamp(c7.c0, 30, 300), clamp(c7.c1, 10, 200), c7.c2) as c5"
+      })
+      .planNode();
+
+  // Run with use_project_sequence = false
+  auto resultsWithoutProjectSequence =
+      AssertQueryBuilder(plan)
+          .config(core::QueryConfig::kUseProjectSequence, "false")
+          .copyResults(pool_.get());
+
+  // Run with use_project_sequence = true
+  auto resultsWithProjectSequence =
+      AssertQueryBuilder(plan)
+          .config(core::QueryConfig::kUseProjectSequence, "true")
+          .copyResults(pool_.get());
+
+  // Compare results
+  assertEqualResults(
+      std::vector<RowVectorPtr>{resultsWithoutProjectSequence},
+      std::vector<RowVectorPtr>{resultsWithProjectSequence});
+}
+
+
+TEST_F(LinearProjectTest, featureBasic) {
   test::FeatureOptions opts;
   opts.rng.seed(1);
   auto vectors = test::makeFeatures(1, 100, opts, pool_.get());
