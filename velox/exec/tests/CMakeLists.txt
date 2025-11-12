@@ -77,6 +77,7 @@ add_executable(
   LinearProjectTest.cpp
   PartitionedOutputTest.cpp
   PlanNodeSerdeTest.cpp
+  PlanNodeStatsTest.cpp
   PlanNodeToStringTest.cpp
   PlanNodeToSummaryStringTest.cpp
   PrefixSortTest.cpp
@@ -89,6 +90,7 @@ add_executable(
   ScaledScanControllerTest.cpp
   ScaleWriterLocalPartitionTest.cpp
   SortBufferTest.cpp
+  SpatialIndexTest.cpp
   SpillerTest.cpp
   SpillTest.cpp
   SplitListenerTest.cpp
@@ -171,7 +173,6 @@ target_link_libraries(
   Boost::date_time
   Boost::filesystem
   Boost::program_options
-  Boost::regex
   Boost::thread
   Boost::system
   GTest::gtest
@@ -209,7 +210,6 @@ target_link_libraries(
   Boost::date_time
   Boost::filesystem
   Boost::program_options
-  Boost::regex
   Boost::thread
   Boost::system
   GTest::gtest
@@ -230,6 +230,7 @@ add_executable(
   PrestoQueryRunnerQDigestTransformTest.cpp
   PrestoQueryRunnerJsonTransformTest.cpp
   PrestoQueryRunnerIntervalTransformTest.cpp
+  PrestoQueryRunnerTimeTransformTest.cpp
   PrestoQueryRunnerTimestampWithTimeZoneTransformTest.cpp
 )
 
@@ -371,14 +372,6 @@ if(VELOX_ENABLE_BENCHMARKS)
     velox_spiller_aggregate_benchmark_base
   )
 endif()
-
-add_executable(cpr_http_client_test CprHttpClientTest.cpp)
-add_test(
-  NAME cpr_http_client_test
-  COMMAND cpr_http_client_test
-  WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
-)
-target_link_libraries(cpr_http_client_test cpr::cpr GTest::gtest GTest::gtest_main)
 
 add_executable(velox_driver_test OperatorReplacementTest.cpp Main.cpp)
 add_test(

@@ -200,6 +200,10 @@ class Filter : public velox::ISerializable {
     VELOX_UNSUPPORTED("{}: testBytes() is not supported.", toString());
   }
 
+  virtual bool testStringView(const StringView& view) const {
+    return testBytes(view.data(), view.size());
+  }
+
   virtual bool testTimestamp(const Timestamp& /* unused */) const {
     VELOX_UNSUPPORTED("{}: testTimestamp() is not supported.", toString());
   }
@@ -1684,10 +1688,10 @@ class BytesRange final : public AbstractRange {
   /// the filter.
   /// @param nullAllowed Null values are passing the filter if true.
   BytesRange(
-      const std::string& lower,
+      std::string lower,
       bool lowerUnbounded,
       bool lowerExclusive,
-      const std::string& upper,
+      std::string upper,
       bool upperUnbounded,
       bool upperExclusive,
       bool nullAllowed)
@@ -1698,8 +1702,10 @@ class BytesRange final : public AbstractRange {
             upperExclusive,
             nullAllowed,
             FilterKind::kBytesRange),
-        lower_(lower),
-        upper_(upper),
+        lower_(std::move(lower)),
+        upper_(std::move(upper)),
+        lowerView_(lower_),
+        upperView_(upper_),
         singleValue_(
             !lowerExclusive_ && !upperExclusive_ && !lowerUnbounded_ &&
             !upperUnbounded_ && lower_ == upper_) {
@@ -1717,6 +1723,8 @@ class BytesRange final : public AbstractRange {
             FilterKind::kBytesRange),
         lower_(other.lower_),
         upper_(other.upper_),
+        lowerView_(lower_),
+        upperView_(upper_),
         singleValue_(other.singleValue_) {}
 
   folly::dynamic serialize() const override;
@@ -1743,6 +1751,35 @@ class BytesRange final : public AbstractRange {
   }
 
   bool testBytes(const char* value, int32_t length) const final;
+
+  bool testStringView(const StringView& view) const final {
+    if (singleValue_) {
+      return view == lowerView_;
+    }
+    if (!lowerUnbounded_) {
+      if (lowerExclusive_) {
+        if (view <= lowerView_) {
+          return false;
+        }
+      } else {
+        if (view < lowerView_) {
+          return false;
+        }
+      }
+    }
+    if (!upperUnbounded_) {
+      if (upperExclusive_) {
+        if (view >= upperView_) {
+          return false;
+        }
+      } else {
+        if (view > upperView_) {
+          return false;
+        }
+      }
+    }
+    return true;
+  }
 
   bool testBytesRange(
       std::optional<std::string_view> min,
@@ -1798,6 +1835,8 @@ class BytesRange final : public AbstractRange {
  private:
   const std::string lower_;
   const std::string upper_;
+  const StringView lowerView_;
+  const StringView upperView_;
   const bool singleValue_;
 };
 
@@ -1816,19 +1855,19 @@ class NegatedBytesRange final : public Filter {
   /// the filter.
   /// @param nullAllowed Null values are passing the filter if true.
   NegatedBytesRange(
-      const std::string& lower,
+      std::string lower,
       bool lowerUnbounded,
       bool lowerExclusive,
-      const std::string& upper,
+      std::string upper,
       bool upperUnbounded,
       bool upperExclusive,
       bool nullAllowed)
       : Filter(true, nullAllowed, FilterKind::kNegatedBytesRange) {
     nonNegated_ = std::make_unique<BytesRange>(
-        lower,
+        std::move(lower),
         lowerUnbounded,
         lowerExclusive,
-        upper,
+        std::move(upper),
         upperUnbounded,
         upperExclusive,
         nullAllowed);
@@ -1854,6 +1893,10 @@ class NegatedBytesRange final : public Filter {
 
   bool testBytes(const char* value, int32_t length) const final {
     return !nonNegated_->testBytes(value, length);
+  }
+
+  bool testStringView(const StringView& view) const final {
+    return !nonNegated_->testStringView(view);
   }
 
   bool testBytesRange(
@@ -2250,13 +2293,13 @@ static inline bool applyFilter(TFilter& filter, const std::string& value) {
 }
 
 template <typename TFilter>
-static inline bool applyFilter(TFilter& filter, folly::StringPiece value) {
+static inline bool applyFilter(TFilter& filter, std::string_view value) {
   return filter.testBytes(value.data(), value.size());
 }
 
 template <typename TFilter>
 static inline bool applyFilter(TFilter& filter, StringView value) {
-  return filter.testBytes(value.data(), value.size());
+  return filter.testStringView(value);
 }
 
 // Creates a hash or bitmap based IN filter depending on value distribution.

@@ -74,14 +74,15 @@ std::unique_ptr<common::Filter> makeFloatingPointMapKeyFilter(
     if (lowerUnbounded && upperUnbounded) {
       continue;
     }
-    filters.push_back(std::make_unique<common::FloatingPointRange<T>>(
-        lower,
-        lowerUnbounded,
-        lowerExclusive,
-        upper,
-        upperUnbounded,
-        upperExclusive,
-        false));
+    filters.push_back(
+        std::make_unique<common::FloatingPointRange<T>>(
+            lower,
+            lowerUnbounded,
+            lowerExclusive,
+            upper,
+            upperUnbounded,
+            upperExclusive,
+            false));
   }
   if (filters.size() == 1) {
     return std::move(filters[0]);
@@ -613,6 +614,7 @@ void configureRowReaderOptions(
     const std::shared_ptr<const HiveConnectorSplit>& hiveSplit,
     const std::shared_ptr<const HiveConfig>& hiveConfig,
     const config::ConfigBase* sessionProperties,
+    folly::Executor* const ioExecutor,
     dwio::common::RowReaderOptions& rowReaderOptions) {
   auto skipRowsIt =
       tableParameters.find(dwio::common::TableParameter::kSkipHeaderLineCount);
@@ -620,14 +622,23 @@ void configureRowReaderOptions(
     rowReaderOptions.setSkipRows(folly::to<uint64_t>(skipRowsIt->second));
   }
   rowReaderOptions.setScanSpec(scanSpec);
+  rowReaderOptions.setIOExecutor(ioExecutor);
   rowReaderOptions.setMetadataFilter(std::move(metadataFilter));
   rowReaderOptions.setRequestedType(rowType);
   rowReaderOptions.range(hiveSplit->start, hiveSplit->length);
   if (hiveConfig && sessionProperties) {
-    rowReaderOptions.setTimestampPrecision(static_cast<TimestampPrecision>(
-        hiveConfig->readTimestampUnit(sessionProperties)));
+    rowReaderOptions.setTimestampPrecision(
+        static_cast<TimestampPrecision>(
+            hiveConfig->readTimestampUnit(sessionProperties)));
     rowReaderOptions.setPreserveFlatMapsInMemory(
         hiveConfig->preserveFlatMapsInMemory(sessionProperties));
+    rowReaderOptions.setParallelUnitLoadCount(
+        hiveConfig->parallelUnitLoadCount(sessionProperties));
+    // When parallel unit loader is enabled, all units would be loaded by
+    // ParallelUnitLoader, thus disable eagerFirstStripeLoad.
+    if (hiveConfig->parallelUnitLoadCount(sessionProperties) > 0) {
+      rowReaderOptions.setEagerFirstStripeLoad(false);
+    }
   }
   rowReaderOptions.setSerdeParameters(hiveSplit->serdeParameters);
 }
@@ -647,7 +658,7 @@ bool applyPartitionFilter(
     if (isPartitionDateDaysSinceEpoch) {
       result = folly::to<int32_t>(partitionValue);
     } else {
-      result = DATE()->toDays(static_cast<folly::StringPiece>(partitionValue));
+      result = DATE()->toDays(partitionValue);
     }
     return applyFilter(*filter, result);
   }
@@ -754,7 +765,8 @@ std::unique_ptr<dwio::common::BufferedInput> createBufferedInput(
     const ConnectorQueryCtx* connectorQueryCtx,
     std::shared_ptr<io::IoStatistics> ioStats,
     std::shared_ptr<filesystems::File::IoStats> fsStats,
-    folly::Executor* executor) {
+    folly::Executor* executor,
+    const folly::F14FastMap<std::string, std::string>& fileReadOps) {
   if (connectorQueryCtx->cache()) {
     return std::make_unique<dwio::common::CachedBufferedInput>(
         fileHandle.file,
@@ -767,7 +779,8 @@ std::unique_ptr<dwio::common::BufferedInput> createBufferedInput(
         ioStats,
         std::move(fsStats),
         executor,
-        readerOpts);
+        readerOpts,
+        fileReadOps);
   }
   if (readerOpts.fileFormat() == dwio::common::FileFormat::NIMBLE) {
     // Nimble streams (in case of single chunk) are compressed as whole and need
@@ -779,7 +792,10 @@ std::unique_ptr<dwio::common::BufferedInput> createBufferedInput(
         readerOpts.memoryPool(),
         dwio::common::MetricsLog::voidLog(),
         ioStats.get(),
-        fsStats.get());
+        fsStats.get(),
+        dwio::common::BufferedInput::kMaxMergeDistance,
+        std::nullopt,
+        fileReadOps);
   }
   return std::make_unique<dwio::common::DirectBufferedInput>(
       fileHandle.file,
@@ -791,7 +807,8 @@ std::unique_ptr<dwio::common::BufferedInput> createBufferedInput(
       std::move(ioStats),
       std::move(fsStats),
       executor,
-      readerOpts);
+      readerOpts,
+      fileReadOps);
 }
 
 namespace {
@@ -861,8 +878,6 @@ double getPrestoSampleRate(
   return std::max(0.0, std::min(1.0, rate->value().value<double>()));
 }
 
-} // namespace
-
 core::TypedExprPtr extractFiltersFromRemainingFilter(
     const core::TypedExprPtr& expr,
     core::ExpressionEvaluator* evaluator,
@@ -902,17 +917,23 @@ core::TypedExprPtr extractFiltersFromRemainingFilter(
 
   if ((call->name() == expression::kAnd && !negated) ||
       (call->name() == expression::kOr && negated)) {
-    auto lhs = extractFiltersFromRemainingFilter(
-        call->inputs()[0], evaluator, negated, filters, sampleRate);
-    auto rhs = extractFiltersFromRemainingFilter(
-        call->inputs()[1], evaluator, negated, filters, sampleRate);
-    if (!lhs) {
-      return rhs;
+    std::vector<core::TypedExprPtr> args;
+    args.reserve(call->inputs().size());
+    for (const auto& input : call->inputs()) {
+      if (auto arg = extractFiltersFromRemainingFilter(
+              input, evaluator, negated, filters, sampleRate)) {
+        args.push_back(std::move(arg));
+      }
+      // If extractFiltersFromRemainingFilter returns nullptr, it means
+      // everything in input is converted to filters.
     }
-    if (!rhs) {
-      return lhs;
+    if (args.empty()) {
+      return nullptr;
     }
-    return replaceInputs(call, {lhs, rhs});
+    if (args.size() == 1) {
+      return std::move(args[0]);
+    }
+    return replaceInputs(call, std::move(args));
   }
   if (!negated) {
     double rate = getPrestoSampleRate(expr, call, evaluator);
@@ -923,4 +944,15 @@ core::TypedExprPtr extractFiltersFromRemainingFilter(
   }
   return expr;
 }
+} // namespace
+
+core::TypedExprPtr extractFiltersFromRemainingFilter(
+    const core::TypedExprPtr& expr,
+    core::ExpressionEvaluator* evaluator,
+    common::SubfieldFilters& filters,
+    double& sampleRate) {
+  return extractFiltersFromRemainingFilter(
+      expr, evaluator, /*negated=*/false, filters, sampleRate);
+}
+
 } // namespace facebook::velox::connector::hive

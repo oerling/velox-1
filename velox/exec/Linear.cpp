@@ -21,6 +21,7 @@
 #include "velox/expression/ConstantExpr.h"
 #include "velox/expression/SimpleFunctionRegistry.h"
 #include "velox/expression/VectorFunction.h"
+#include "velox/expression/ExprUtils.h"
 
 namespace facebook::velox::exec {
 
@@ -490,8 +491,8 @@ core::TypedExprPtr ProjectSequence::setCallValueInfo(
   auto md = linearMetadata(callExpr->name());
   ValueCtx ctx{valueMap_};
   if (md.rewrite) {
-    auto rewritten = rewrite(call, ctx);
-    if (rewritten != expr) {
+    auto rewritten = md.rewrite(call, ctx);
+    if (rewritten != call) {
       return preprocess(rewritten);
     }
   }
@@ -550,18 +551,18 @@ core::TypedExprPtr ProjectSequence::setCallValueInfo(
   return call;
 }
 
-bool isRowRenameCast(const core::castTypedExpr& cast) {
-  if (!isCall(cast->inputs()[0], "row_constructor")) {
+bool isRowRenameCast(const core::CastTypedExpr& cast) {
+  if (!expression::utils::isCall(cast.inputs()[0], "row_constructor")) {
     return false;
   }
-  return cast->type()->kind() == TypeKind::ROW &&
-      cast->type()->equivalent(cast->inputs()[0]->type());
+  return cast.type()->kind() == TypeKind::ROW &&
+      cast.type()->equivalent(*cast.inputs()[0]->type());
 }
 
 core::TypedExprPtr ProjectSequence::setCastValueInfo(
     const core::TypedExprPtr& cast) {
   auto castExpr = cast->asUnchecked<core::CastTypedExpr>();
-  if (isRowRenameCast(castExpr)) {
+  if (isRowRenameCast(*castExpr)) {
     return preprocess(
         std::make_shared<core::CallTypedExpr>(
             castExpr->type(),
@@ -602,6 +603,7 @@ core::TypedExprPtr ProjectSequence::setCastValueInfo(
   }
 
   valueMap_[cast.get()] = std::move(info);
+  return cast;
 }
 
 core::TypedExprPtr ProjectSequence::tryFoldConstant(
