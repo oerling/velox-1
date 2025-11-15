@@ -16,6 +16,7 @@
 #include "velox/core/Expressions.h"
 #include "velox/common/Casts.h"
 #include "velox/common/encode/Base64.h"
+#include "velox/parse/SqlReservedWords.h"
 #include "velox/vector/ComplexVector.h"
 #include "velox/vector/ConstantVector.h"
 #include "velox/vector/SimpleVector.h"
@@ -142,7 +143,57 @@ TypedExprPtr ConstantTypedExpr::create(
   return std::make_shared<ConstantTypedExpr>(restoreVector(dataStream, pool));
 }
 
+namespace {
+/// Escapes a string for SQL representation.
+/// Single quotes are doubled, and other SQL special characters are handled.
+std::string escapeSqlString(const std::string& str) {
+  std::string result;
+  result.reserve(str.size() * 2); // Reserve space for potential escaping
+
+  for (char c : str) {
+    if (c == '\'') {
+      // Single quote becomes two single quotes
+      result += "''";
+    } else if (c == '\\') {
+      // Backslash becomes double backslash
+      result += "\\\\";
+    } else if (c == '\n') {
+      // Newline
+      result += "\\n";
+    } else if (c == '\r') {
+      // Carriage return
+      result += "\\r";
+    } else if (c == '\t') {
+      // Tab
+      result += "\\t";
+    } else if (c == '\0') {
+      // Null character
+      result += "\\0";
+    } else {
+      result += c;
+    }
+  }
+
+  return result;
+}
+} // namespace
+
 std::string ConstantTypedExpr::toString() const {
+  // Special handling for VARCHAR type
+  if (type()->kind() == TypeKind::VARCHAR) {
+    std::string strValue;
+
+    if (hasValueVector()) {
+      strValue = valueVector_->toString(0);
+    } else {
+      strValue = value_.toStringAsVector(type());
+    }
+
+    // Apply SQL escaping and wrap in single quotes
+    return "'" + escapeSqlString(strValue) + "'";
+  }
+
+  // Default behavior for non-VARCHAR types
   if (hasValueVector()) {
     return valueVector_->toString(0);
   }
@@ -433,7 +484,14 @@ size_t ConstantTypedExpr::localHash() const {
 
 std::string CallTypedExpr::toString() const {
   std::string str{};
-  str += name();
+
+  // Escape function name if it's a SQL reserved word
+  if (isSqlReservedWord(name())) {
+    str += "\"" + name() + "\"";
+  } else {
+    str += name();
+  }
+
   str += "(";
   for (size_t i = 0; i < inputs().size(); ++i) {
     auto& input = inputs().at(i);

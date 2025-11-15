@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 #include "velox/parse/Expressions.h"
+#include "velox/parse/SqlReservedWords.h"
 
 namespace facebook::velox::core {
 
@@ -59,7 +60,15 @@ size_t CallExpr::localHash() const {
 }
 
 std::string CallExpr::toString() const {
-  std::string buf{name_ + "("};
+  std::string buf;
+
+  // Escape function name if it's a SQL reserved word
+  if (isSqlReservedWord(name_)) {
+    buf = "\"" + name_ + "\"(";
+  } else {
+    buf = name_ + "(";
+  }
+
   bool first = true;
   for (auto& f : inputs()) {
     if (!first) {
