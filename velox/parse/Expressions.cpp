@@ -155,6 +155,27 @@ std::string ConstantExpr::toString() const {
     return appendAliasIfExists("'" + escapeSqlString(strValue) + "'");
   }
 
+  // Special handling for ARRAY type
+  if (value_.kind() == TypeKind::ARRAY) {
+    const auto& arrayValue = value_.value<TypeKind::ARRAY>();
+    auto elementType = type_->childAt(0);
+    std::string result = "array[";
+
+    for (size_t i = 0; i < arrayValue.size(); ++i) {
+      if (i > 0) {
+        result += ", ";
+      }
+
+      // Create a constant expression for each element and call toString recursively
+      auto elementExpr = std::make_shared<ConstantExpr>(
+							elementType, arrayValue.at(i), std::nullopt);
+      result += elementExpr->toString();
+    }
+
+    result += "]";
+    return appendAliasIfExists(result);
+  }
+
   // Default behavior for non-VARCHAR types
   return appendAliasIfExists(value_.toStringAsVector(type_));
 }

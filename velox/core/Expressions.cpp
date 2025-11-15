@@ -193,6 +193,49 @@ std::string ConstantTypedExpr::toString() const {
     return "'" + escapeSqlString(strValue) + "'";
   }
 
+  // Special handling for ARRAY type
+  if (type()->kind() == TypeKind::ARRAY) {
+    auto elementType = type()->childAt(0);
+    std::string result = "array[";
+
+    if (hasValueVector()) {
+      // Handle array from vector
+      auto* wrappedVector = valueVector_->wrappedVector();
+      auto* arrayVector = wrappedVector->asUnchecked<ArrayVector>();
+      auto wrappedIndex = valueVector_->wrappedIndex(0);
+      auto offset = arrayVector->offsetAt(wrappedIndex);
+      auto size = arrayVector->sizeAt(wrappedIndex);
+      auto elementsVector = arrayVector->elements();
+
+      for (auto i = 0; i < size; ++i) {
+        if (i > 0) {
+          result += ", ";
+        }
+
+        // Create a constant expression for each element and call toString recursively
+        auto elementConstVector = BaseVector::wrapInConstant(1, offset + i, elementsVector);
+        auto elementExpr = std::make_shared<ConstantTypedExpr>(elementConstVector);
+        result += elementExpr->toString();
+      }
+    } else {
+      // Handle array from variant
+      const auto& arrayValue = value_.value<TypeKind::ARRAY>();
+      for (size_t i = 0; i < arrayValue.size(); ++i) {
+        if (i > 0) {
+          result += ", ";
+        }
+
+        // Create a constant expression for each element and call toString recursively
+        auto elementExpr = std::make_shared<ConstantTypedExpr>(
+            elementType, arrayValue.at(i));
+        result += elementExpr->toString();
+      }
+    }
+
+    result += "]";
+    return result;
+  }
+
   // Default behavior for non-VARCHAR types
   if (hasValueVector()) {
     return valueVector_->toString(0);
