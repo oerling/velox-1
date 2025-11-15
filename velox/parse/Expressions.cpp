@@ -35,6 +35,39 @@ namespace {
 std::string escapeName(const std::string& name) {
   return folly::cEscape<std::string>(name);
 }
+
+/// Escapes a string for SQL representation.
+/// Single quotes are doubled, and other SQL special characters are handled.
+std::string escapeSqlString(const std::string& str) {
+  std::string result;
+  result.reserve(str.size() * 2); // Reserve space for potential escaping
+
+  for (char c : str) {
+    if (c == '\'') {
+      // Single quote becomes two single quotes
+      result += "''";
+    } else if (c == '\\') {
+      // Backslash becomes double backslash
+      result += "\\\\";
+    } else if (c == '\n') {
+      // Newline
+      result += "\\n";
+    } else if (c == '\r') {
+      // Carriage return
+      result += "\\r";
+    } else if (c == '\t') {
+      // Tab
+      result += "\\t";
+    } else if (c == '\0') {
+      // Null character
+      result += "\\0";
+    } else {
+      result += c;
+    }
+  }
+
+  return result;
+}
 } // namespace
 
 std::string FieldAccessExpr::toString() const {
@@ -115,6 +148,14 @@ size_t ConstantExpr::localHash() const {
 }
 
 std::string ConstantExpr::toString() const {
+  // Special handling for VARCHAR type
+  if (value_.kind() == TypeKind::VARCHAR) {
+    std::string strValue = value_.toStringAsVector(type_);
+    // Apply SQL escaping, wrap in single quotes, and then add alias
+    return appendAliasIfExists("'" + escapeSqlString(strValue) + "'");
+  }
+
+  // Default behavior for non-VARCHAR types
   return appendAliasIfExists(value_.toStringAsVector(type_));
 }
 
