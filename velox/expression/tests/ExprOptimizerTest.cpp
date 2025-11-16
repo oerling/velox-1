@@ -173,8 +173,8 @@ TEST_F(ExprOptimizerTest, lambdas) {
       "reduce(c0, 100.0E0, (s, x) -> s + x * 0.1E0, s -> (s < 101.0E0))",
       ROW({"c0"}, {ARRAY(DOUBLE())}));
   testExpression(
-      "reduce(c0, 1 - 1, (s, x) -> s + x, s -> coalesce(s, abs(2 - 10), 5 * 3) * (5 * 2))",
-      "reduce(c0, 0, (s, x) -> s + x, s -> coalesce(s, 8, 15) * 10)",
+      "reduce(c0, 1 - 1, (s, x) -> s + x, s -> coalesce(s, abs(2 - 10)) * (5 * 2))",
+      "reduce(c0, 0, (s, x) -> s + x, s -> coalesce(s, 8) * 10)",
       ROW({"c0"}, {ARRAY(SMALLINT())}));
 }
 
@@ -209,6 +209,26 @@ TEST_F(ExprOptimizerTest, rewritesWithConstantFolding) {
   testExpression(
       "filter(a, x -> (2 * 3) = x or (8 / 2) = (3 + 1))",
       "filter(a, x -> true)",
+      type);
+
+  // Switch rewrite with constant folding.
+  testExpression(
+      "case when ARRAY[abs(-1)] = ARRAY[2] then 'not_matched' when ARRAY[1] = ARRAY[2 - 1] then 'matched' else 'default' end",
+      "'matched'");
+  testExpression(
+      "case when 10 + a = 100 / 2 then 10 - 2 when a / (2 + 1) = abs(-5) then 10 * 10 when (123 * 10) + 4 = abs(-1234) then 11 * 3 else a end",
+      "case when 10 + a = 50 then 8 when a / 3 = 5 then 100 else 33 end",
+      ROW({"a"}, {BIGINT()}));
+
+  // Coalesce rewrite with constant folding.
+  type = ROW({"a", "b"}, {BIGINT(), BIGINT()});
+  testExpression(
+      "coalesce(a - (4 / 2), a - (1 * 2), null::bigint, 1 - 1, b, null::bigint)",
+      "coalesce(a - 2, 0)",
+      type);
+  testExpression(
+      "coalesce(null::bigint, a / abs(-2 * 3), coalesce(coalesce(b, 8 / 2), a * b), b)",
+      "coalesce(a / 6, b, 4)",
       type);
 }
 
@@ -303,8 +323,8 @@ TEST_F(ExprOptimizerTest, makeFailExpr) {
   // Primitive types.
   assertPrestoFailExpr("0 / 0", prestoFailCall(), ROW({}));
   assertPrestoFailExpr(
-      "if(false, a * abs(-1 * 3), 0 / 0)",
-      fmt::format("if(false, a * 3, {})", prestoFailCall()),
+      "if(a = 2 * 2, a / abs(-1 * 3), 0 / 0)",
+      fmt::format("if(a = 4, a / 3, {})", prestoFailCall()),
       ROW({"a"}, {BIGINT()}));
   assertPrestoFailExpr(
       "json_extract(a, substr(b, 1 / 0))",

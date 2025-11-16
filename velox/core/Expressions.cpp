@@ -178,6 +178,12 @@ std::string escapeSqlString(const std::string& str) {
 }
 } // namespace
 
+// static
+TypedExprPtr ConstantTypedExpr::makeNull(const TypePtr& type) {
+  return std::make_shared<core::ConstantTypedExpr>(
+      type, Variant::null(type->kind()));
+}
+
 std::string ConstantTypedExpr::toString() const {
   // Special handling for VARCHAR type
   if (type()->kind() == TypeKind::VARCHAR) {

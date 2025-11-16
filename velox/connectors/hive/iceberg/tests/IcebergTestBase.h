@@ -29,6 +29,16 @@
 
 namespace facebook::velox::connector::hive::iceberg::test {
 
+constexpr std::string_view kDefaultTestIcebergFunctionNamePrefix{
+    "$internal$.test_iceberg."};
+
+struct PartitionField {
+  // 0-based column index.
+  int32_t id;
+  TransformType type;
+  std::optional<int32_t> parameter;
+};
+
 class IcebergTestBase : public exec::test::HiveConnectorTestBase {
  protected:
   void SetUp() override;
@@ -41,22 +51,35 @@ class IcebergTestBase : public exec::test::HiveConnectorTestBase {
       vector_size_t rowsPerBatch,
       double nullRatio = 0.0);
 
-  std::shared_ptr<IcebergDataSink> createIcebergDataSink(
+  std::shared_ptr<IcebergDataSink> createDataSink(
       const RowTypePtr& rowType,
       const std::string& outputDirectoryPath,
-      const std::vector<std::string>& partitionTransforms = {});
+      const std::vector<PartitionField>& partitionFields = {});
+
+  std::shared_ptr<IcebergDataSink> createDataSinkAndAppendData(
+      const RowTypePtr& rowType,
+      const std::vector<RowVectorPtr>& vectors,
+      const std::string& dataPath,
+      const std::vector<PartitionField>& partitionFields = {});
 
   std::vector<std::shared_ptr<ConnectorSplit>> createSplitsForDirectory(
       const std::string& directory);
 
   std::vector<std::string> listFiles(const std::string& dirPath);
 
+  std::shared_ptr<IcebergPartitionSpec> createPartitionSpec(
+      const RowTypePtr& rowType,
+      const std::vector<PartitionField>& partitionFields);
+
   dwio::common::FileFormat fileFormat_{dwio::common::FileFormat::DWRF};
+  std::shared_ptr<memory::MemoryPool> opPool_;
+  std::unique_ptr<ConnectorQueryCtx> connectorQueryCtx_;
 
  private:
-  IcebergInsertTableHandlePtr createIcebergInsertTableHandle(
+  IcebergInsertTableHandlePtr createInsertTableHandle(
       const RowTypePtr& rowType,
-      const std::string& outputDirectoryPath);
+      const std::string& outputDirectoryPath,
+      const std::vector<PartitionField>& partitionFields = {});
 
   std::vector<std::string> listPartitionDirectories(
       const std::string& dataPath);
@@ -64,13 +87,12 @@ class IcebergTestBase : public exec::test::HiveConnectorTestBase {
   void setupMemoryPools();
 
   std::shared_ptr<memory::MemoryPool> root_;
-  std::shared_ptr<memory::MemoryPool> opPool_;
   std::shared_ptr<memory::MemoryPool> connectorPool_;
   std::shared_ptr<config::ConfigBase> connectorSessionProperties_;
   std::shared_ptr<HiveConfig> connectorConfig_;
-  std::unique_ptr<ConnectorQueryCtx> connectorQueryCtx_;
   VectorFuzzer::Options fuzzerOptions_;
   std::unique_ptr<VectorFuzzer> fuzzer_;
+  std::shared_ptr<core::QueryCtx> queryCtx_;
 };
 
 } // namespace facebook::velox::connector::hive::iceberg::test
