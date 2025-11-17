@@ -148,6 +148,11 @@ size_t ConstantExpr::localHash() const {
 }
 
 std::string ConstantExpr::toString() const {
+  // Check if value is null first
+  if (value_.isNull()) {
+    return appendAliasIfExists("null");
+  }
+
   // Special handling for VARCHAR type
   if (value_.kind() == TypeKind::VARCHAR) {
     std::string strValue = value_.toStringAsVector(type_);
@@ -161,15 +166,26 @@ std::string ConstantExpr::toString() const {
     auto elementType = type_->childAt(0);
     std::string result = "array[";
 
+    // Return early for empty array
+    if (arrayValue.size() == 0) {
+      return appendAliasIfExists("array[]");
+    }
+
     for (size_t i = 0; i < arrayValue.size(); ++i) {
       if (i > 0) {
         result += ", ";
       }
 
-      // Create a constant expression for each element and call toString recursively
-      auto elementExpr = std::make_shared<ConstantExpr>(
-							elementType, arrayValue.at(i), std::nullopt);
-      result += elementExpr->toString();
+      // Check if element is null
+      if (arrayValue.at(i).isNull()) {
+        result += "null";
+      } else {
+        // Create a constant expression for each element and call toString
+        // recursively
+        auto elementExpr = std::make_shared<ConstantExpr>(
+            elementType, arrayValue.at(i), std::nullopt);
+        result += elementExpr->toString();
+      }
     }
 
     result += "]";

@@ -145,7 +145,7 @@ TEST_F(IndexLookupJoinTest, joinCondition) {
   auto inFilterCondition = PlanBuilder::parseIndexJoinCondition(
       "contains(ARRAY[1,2], c2)", rowType, pool_.get());
   ASSERT_TRUE(inFilterCondition->isFilter());
-  ASSERT_EQ(inFilterCondition->toString(), "ROW[\"c2\"] IN {1, 2}");
+  ASSERT_EQ(inFilterCondition->toString(), "ROW[\"c2\"] IN array[1, 2]");
 
   auto betweenFilterCondition = PlanBuilder::parseIndexJoinCondition(
       "c0 between 0 AND 1", rowType, pool_.get());
@@ -383,7 +383,7 @@ TEST_P(IndexLookupJoinTest, planNodeAndSerde) {
     ASSERT_NE(indexLookupJoinNode->filter(), nullptr);
     ASSERT_EQ(
         indexLookupJoinNode->filter()->toString(),
-        "and(eq(mod(ROW[\"u1\"],2),0),gt(ROW[\"t2\"],5))");
+        "\"and\"(eq(mod(ROW[\"u1\"],2),0),gt(ROW[\"t2\"],5))");
     ASSERT_EQ(
         indexLookupJoinNode->lookupSource()->tableHandle()->connectorId(),
         kTestIndexConnectorName);

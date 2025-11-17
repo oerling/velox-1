@@ -185,6 +185,17 @@ TypedExprPtr ConstantTypedExpr::makeNull(const TypePtr& type) {
 }
 
 std::string ConstantTypedExpr::toString() const {
+  // Check if value is null first
+  if (hasValueVector()) {
+    if (valueVector_->isNullAt(0)) {
+      return "null";
+    }
+  } else {
+    if (value_.isNull()) {
+      return "null";
+    }
+  }
+
   // Special handling for VARCHAR type
   if (type()->kind() == TypeKind::VARCHAR) {
     std::string strValue;
@@ -211,6 +222,12 @@ std::string ConstantTypedExpr::toString() const {
       auto wrappedIndex = valueVector_->wrappedIndex(0);
       auto offset = arrayVector->offsetAt(wrappedIndex);
       auto size = arrayVector->sizeAt(wrappedIndex);
+
+      // Return early for empty array
+      if (size == 0) {
+        return "array[]";
+      }
+
       auto elementsVector = arrayVector->elements();
 
       for (auto i = 0; i < size; ++i) {
@@ -218,23 +235,43 @@ std::string ConstantTypedExpr::toString() const {
           result += ", ";
         }
 
-        // Create a constant expression for each element and call toString recursively
-        auto elementConstVector = BaseVector::wrapInConstant(1, offset + i, elementsVector);
-        auto elementExpr = std::make_shared<ConstantTypedExpr>(elementConstVector);
-        result += elementExpr->toString();
+        // Check if element is null
+        if (elementsVector->isNullAt(offset + i)) {
+          result += "null";
+        } else {
+          // Create a constant expression for each element and call toString
+          // recursively
+          auto elementConstVector =
+              BaseVector::wrapInConstant(1, offset + i, elementsVector);
+          auto elementExpr =
+              std::make_shared<ConstantTypedExpr>(elementConstVector);
+          result += elementExpr->toString();
+        }
       }
     } else {
       // Handle array from variant
       const auto& arrayValue = value_.value<TypeKind::ARRAY>();
+
+      // Return early for empty array
+      if (arrayValue.size() == 0) {
+        return "array[]";
+      }
+
       for (size_t i = 0; i < arrayValue.size(); ++i) {
         if (i > 0) {
           result += ", ";
         }
 
-        // Create a constant expression for each element and call toString recursively
-        auto elementExpr = std::make_shared<ConstantTypedExpr>(
-            elementType, arrayValue.at(i));
-        result += elementExpr->toString();
+        // Check if element is null
+        if (arrayValue.at(i).isNull()) {
+          result += "null";
+        } else {
+          // Create a constant expression for each element and call toString
+          // recursively
+          auto elementExpr = std::make_shared<ConstantTypedExpr>(
+              elementType, arrayValue.at(i));
+          result += elementExpr->toString();
+        }
       }
     }
 
